@@ -1,0 +1,4 @@
+# Windows scripts must keep their exact bytes (UTF-8 BOM + CRLF) for Windows PowerShell 5.1 and cmd.exe.
+*.ps1 -text
+*.cmd -text
+build/fse/installer/README.txt -text

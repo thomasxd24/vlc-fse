@@ -50,7 +50,7 @@ class Metadata {
   needs(key) {
     const hit = this.entries()[key];
     if (!hit) return true;
-    return hit.miss && Date.now() - hit.at > MISS_RETRY_MS;
+    return Boolean(hit.stale) || (hit.miss && Date.now() - hit.at > MISS_RETRY_MS);
   }
 
   async api(pathname, params = {}) {

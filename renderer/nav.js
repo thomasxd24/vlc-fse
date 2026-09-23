@@ -1,17 +1,31 @@
 'use strict';
 
 /*
- * Spatial navigation for a 10-foot UI.
+ * Input & spatial navigation for a couch/handheld UI.
  *
- * Anything with the `focusable` class takes part. Arrow keys (or a gamepad d-pad/stick) move focus to the
- * geometrically closest element in that direction. Elements inside a `[data-nav-group]` container remember
- * the last focused child, so moving back into a row returns to where you were rather than to whatever happens
- * to be closest. A container with `data-nav-trap` (modals) confines focus to itself.
+ * Anything with the `focusable` class takes part. Arrow keys or a gamepad d-pad/stick move focus to the
+ * nearest element in that direction (nearest row first, then the best aligned in it). Elements inside a
+ * `[data-nav-group]` remember the last focused child; `[data-nav-default]` marks where to enter a group the
+ * first time. A container with `data-nav-trap` (dialogs, menus) confines focus to itself.
+ *
+ * The current input method (pad / keyboard / mouse / touch) is tracked and exposed as a body class, so the
+ * UI can show button hints for controllers and hide them for touch.
  */
 const Nav = (() => {
   const memory = new WeakMap();
-  const listeners = { back: [], action: [] };
-  let lastInput = 'keyboard';
+  const listeners = { back: [], action: [], move: [], mode: [] };
+  let mode = 'keyboard';
+  let active = true;
+  let rumble = true;
+
+  function setMode(m) {
+    if (m === mode) return;
+    mode = m;
+    document.body.classList.remove('input-pad', 'input-keyboard', 'input-mouse', 'input-touch');
+    document.body.classList.add(`input-${m}`);
+    for (const cb of listeners.mode) cb(m);
+  }
+  document.body.classList.add('input-keyboard');
 
   function scope() {
     const traps = document.querySelectorAll('[data-nav-trap]');
@@ -107,6 +121,11 @@ const Nav = (() => {
   function move(dir) {
     const from = current();
     if (!from) return focus(first());
+    // A focused slider takes left/right itself.
+    if ((dir === 'left' || dir === 'right') && from.dataset.slider !== undefined) {
+      from.dispatchEvent(new CustomEvent('nudge', { detail: dir === 'left' ? -1 : 1 }));
+      return;
+    }
     // Nearest row (or column) first, then whatever lines up best within it: this is what people expect on a TV,
     // e.g. Down from a button lands on the tabs just below it even if a bigger card further down is better aligned.
     const scored = [];
@@ -115,7 +134,10 @@ const Nav = (() => {
       const s = score(from, el, dir);
       if (s) scored.push({ el, ...s });
     }
-    if (!scored.length) return;
+    if (!scored.length) {
+      for (const cb of listeners.move) cb('edge');
+      return;
+    }
     const r = from.getBoundingClientRect();
     const band = (dir === 'up' || dir === 'down' ? r.height : r.width) / 2;
     const nearest = Math.min(...scored.map((c) => c.primary));
@@ -147,25 +169,59 @@ const Nav = (() => {
       g = groupOf(g.parentElement);
     }
     focus(best);
+    for (const cb of listeners.move) cb('move');
+  }
+
+  /** Jump about a screen: along a horizontal row of cards, or up/down a grid or list. */
+  function page(delta) {
+    const from = current();
+    if (!from) return;
+    const track = from.closest('.track');
+    const dir = track ? (delta > 0 ? 'right' : 'left') : delta > 0 ? 'down' : 'up';
+    const container = track || from.closest('.rows, .page') || document.body;
+    const span = track ? container.clientWidth : container.clientHeight;
+    const start = from.getBoundingClientRect();
+    const quiet = listeners.move.splice(0); // one sound for the whole jump, not one per step
+    try {
+      for (let i = 0; i < 80; i++) {
+        const before = current();
+        move(dir);
+        const now = current();
+        if (now === before) break;
+        const r = now.getBoundingClientRect();
+        const dist = track ? Math.abs(r.left - start.left) : Math.abs(r.top - start.top);
+        if (dist >= span * 0.75) break;
+      }
+    } finally {
+      listeners.move.push(...quiet);
+    }
+    for (const cb of listeners.move) cb('move');
   }
 
   const onBack = (cb) => listeners.back.push(cb);
-  const emitBack = () => {
+  function emitBack() {
     for (const cb of [...listeners.back].reverse()) if (cb() !== false) return;
-  };
+  }
+  function emitAction(name) {
+    for (const cb of listeners.action) cb(name);
+  }
 
   function activate() {
     const el = current();
-    if (el) el.click();
+    if (el) {
+      for (const cb of listeners.move) cb('select');
+      el.click();
+    }
   }
 
   function isTextInput(el) {
     return el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'range'].includes(el.type)));
   }
 
+  // ---- Keyboard (also what TV remotes and many handheld "desktop modes" send) ----
   document.addEventListener('keydown', (e) => {
-    lastInput = 'keyboard';
-    document.body.classList.remove('using-mouse');
+    if (!active) return;
+    setMode('keyboard');
     const el = document.activeElement;
     const typing = isTextInput(el);
     const dirs = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
@@ -186,7 +242,6 @@ const Nav = (() => {
         e.preventDefault();
         return;
       }
-      if (el && el.tagName === 'BUTTON' && e.key === 'Enter') return; // native click fires
       e.preventDefault();
       activate();
       return;
@@ -195,88 +250,217 @@ const Nav = (() => {
       e.preventDefault();
       if (typing && e.key === 'Escape') el.blur();
       emitBack();
+      return;
+    }
+    if (e.key === 'PageDown' || e.key === 'PageUp') {
+      e.preventDefault();
+      page(e.key === 'PageDown' ? 1 : -1);
+      return;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      emitAction(e.shiftKey ? 'lb' : 'rb');
+      return;
+    }
+    if (e.key === 'ContextMenu') {
+      e.preventDefault();
+      emitAction('x');
     }
   });
 
-  // Mouse: hovering focuses, so mouse and remote never disagree about what is selected.
-  document.addEventListener('mousemove', (e) => {
-    if (lastInput !== 'mouse') {
-      lastInput = 'mouse';
-      document.body.classList.add('using-mouse');
-    }
+  // ---- Pointer: mouse hover focuses; touch never focuses on hover ----
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      setMode(e.pointerType === 'touch' || e.pointerType === 'pen' ? 'touch' : 'mouse');
+      if (e.pointerType === 'mouse' && e.button === 3) emitBack(); // mouse "back" button
+    },
+    true
+  );
+  document.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    if (mode !== 'mouse' && (Math.abs(e.movementX) > 2 || Math.abs(e.movementY) > 2)) setMode('mouse');
+    if (mode !== 'mouse') return;
     const el = e.target.closest && e.target.closest('.focusable');
     if (el && el !== document.activeElement && !isTextInput(document.activeElement) && scope().contains(el)) focus(el, { scroll: false });
   });
-  document.addEventListener('mouseup', (e) => {
-    if (e.button === 3) emitBack(); // mouse "back" button
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (mode === 'touch') return; // handled by long-press below
+    const el = e.target.closest && e.target.closest('.focusable');
+    if (el) focus(el, { scroll: false });
+    emitAction('x');
   });
 
-  // Keep something focused at all times.
+  // Swipe in from the left edge to go back, like on a phone.
+  let edge = null;
+  document.addEventListener(
+    'touchstart',
+    (e) => {
+      const t = e.touches[0];
+      edge = e.touches.length === 1 && t.clientX < 28 ? { x: t.clientX, y: t.clientY } : null;
+    },
+    { passive: true }
+  );
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!edge) return;
+      const t = e.touches[0];
+      if (Math.abs(t.clientY - edge.y) > 60) edge = null;
+      else if (t.clientX - edge.x > 90) {
+        edge = null;
+        emitBack();
+      }
+    },
+    { passive: true }
+  );
+
+  // Long-press opens the options menu on touch, like right-click with a mouse or X on a controller.
+  let press = null;
+  let pressFired = false;
+  let pressStart = null;
+  document.addEventListener(
+    'touchstart',
+    (e) => {
+      clearTimeout(press);
+      pressFired = false;
+      const el = e.target.closest && e.target.closest('[data-opts]');
+      if (!el || e.touches.length !== 1) return;
+      pressStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      press = setTimeout(() => {
+        pressFired = true;
+        focus(el, { scroll: false });
+        if (navigator.vibrate) navigator.vibrate(12);
+        emitAction('x');
+      }, 550);
+    },
+    { passive: true }
+  );
+  document.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!pressStart) return;
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - pressStart.x, t.clientY - pressStart.y) > 12) clearTimeout(press);
+    },
+    { passive: true }
+  );
+  document.addEventListener('touchend', () => {
+    clearTimeout(press);
+    pressStart = null;
+  });
+  document.addEventListener(
+    'click',
+    (e) => {
+      // Swallow the tap that ends a long-press, so it doesn't also open the item.
+      if (pressFired) {
+        pressFired = false;
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    },
+    true
+  );
+
+  // Keep something focused at all times (but never pull focus while someone's typing).
   document.addEventListener('focusout', () => {
     setTimeout(() => {
-      if (!current() && !isTextInput(document.activeElement)) focus(first(), { scroll: false });
+      if (active && !current() && !isTextInput(document.activeElement)) focus(first(), { scroll: false });
     }, 0);
   });
 
-  // ---- Gamepad (Xbox layout: A=0 B=1 X=2 Y=3, d-pad 12-15, Start=9, View=8) ----
-  const pad = { held: {}, next: {} };
-  const REPEAT_DELAY = 380;
-  const REPEAT_RATE = 110;
+  // ---- Gamepad (Xbox layout: A=0 B=1 X=2 Y=3 LB=4 RB=5 LT=6 RT=7 View=8 Menu=9, d-pad 12-15) ----
+  const held = {};
+  const next = {};
+  const REPEAT_DELAY = 360;
+  const REPEAT_RATE = 95;
+  let lastPad = null;
+  let rafId = null;
 
   function padButton(name, pressed, fire, repeat) {
     const now = performance.now();
     if (pressed) {
-      if (!pad.held[name]) {
-        pad.held[name] = true;
-        pad.next[name] = now + REPEAT_DELAY;
+      if (!held[name]) {
+        held[name] = true;
+        next[name] = now + REPEAT_DELAY;
         fire();
-      } else if (repeat && now >= pad.next[name]) {
-        pad.next[name] = now + REPEAT_RATE;
+      } else if (repeat && now >= next[name]) {
+        next[name] = now + REPEAT_RATE;
         fire();
       }
     } else {
-      pad.held[name] = false;
+      held[name] = false;
     }
   }
 
   function pollGamepads() {
+    rafId = null;
+    if (!active || document.hidden) return; // resumes on visibilitychange / setActive
     const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
-    for (const gp of pads) {
-      const b = (i) => Boolean(gp.buttons[i] && gp.buttons[i].pressed);
+    // Use the pad with something pressed (handhelds can expose both built-in and Bluetooth pads).
+    const gp = pads.find((p) => p.buttons.some((x) => x.pressed) || p.axes.some((a) => Math.abs(a) > 0.55)) || lastPad && pads.find((p) => p.index === lastPad.index);
+    if (gp) {
+      const b = (i) => Boolean(gp.buttons[i] && (gp.buttons[i].pressed || gp.buttons[i].value > 0.5));
       const ax = gp.axes[0] || 0;
       const ay = gp.axes[1] || 0;
       const T = 0.55;
-      const input = () => {
-        lastInput = 'gamepad';
-        document.body.classList.remove('using-mouse');
+      const run = (fn) => () => {
+        lastPad = gp;
+        setMode('pad');
+        fn();
       };
-      padButton('up', b(12) || ay < -T, () => (input(), move('up')), true);
-      padButton('down', b(13) || ay > T, () => (input(), move('down')), true);
-      padButton('left', b(14) || ax < -T, () => (input(), move('left')), true);
-      padButton('right', b(15) || ax > T, () => (input(), move('right')), true);
-      padButton('a', b(0), () => (input(), activate()));
-      padButton('b', b(1), () => (input(), emitBack()));
-      for (const [i, name] of [[2, 'x'], [3, 'y'], [9, 'start'], [8, 'view'], [4, 'lb'], [5, 'rb']]) {
-        padButton(name, b(i), () => {
-          input();
-          for (const cb of listeners.action) cb(name);
-        });
+      padButton('up', b(12) || ay < -T, run(() => move('up')), true);
+      padButton('down', b(13) || ay > T, run(() => move('down')), true);
+      padButton('left', b(14) || ax < -T, run(() => move('left')), true);
+      padButton('right', b(15) || ax > T, run(() => move('right')), true);
+      padButton('a', b(0), run(activate));
+      padButton('b', b(1), run(emitBack));
+      padButton('lt', b(6), run(() => page(-1)), true);
+      padButton('rt', b(7), run(() => page(1)), true);
+      for (const [i, name] of [[2, 'x'], [3, 'y'], [4, 'lb'], [5, 'rb'], [8, 'view'], [9, 'menu']]) {
+        padButton(name, b(i), run(() => emitAction(name)), name === 'lb' || name === 'rb');
       }
-      break; // first connected pad only
     }
-    requestAnimationFrame(pollGamepads);
+    rafId = requestAnimationFrame(pollGamepads);
   }
-  requestAnimationFrame(pollGamepads);
+
+  function startPolling() {
+    if (rafId === null && active && !document.hidden) rafId = requestAnimationFrame(pollGamepads);
+  }
+  window.addEventListener('gamepadconnected', () => startPolling());
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) startPolling();
+  });
+  startPolling();
+
+  /** A tiny tick of vibration on the pad that was used last. */
+  function haptic(strength = 0.25, ms = 14) {
+    if (!rumble || mode !== 'pad' || !lastPad || !lastPad.vibrationActuator) return;
+    try {
+      lastPad.vibrationActuator.playEffect('dual-rumble', { duration: ms, strongMagnitude: 0, weakMagnitude: strength });
+    } catch {}
+  }
 
   return {
     focus,
     move,
+    page,
     first,
     current,
     onBack,
     onAction: (cb) => listeners.action.push(cb),
+    onMove: (cb) => listeners.move.push(cb),
+    onMode: (cb) => listeners.mode.push(cb),
+    mode: () => mode,
     back: emitBack,
     remember,
+    haptic,
+    setRumble: (on) => (rumble = on),
+    setActive(on) {
+      active = on;
+      if (on) startPolling();
+    },
     focusFirst: () => focus(first()),
     /** Focus the remembered element of a group, or its first focusable. */
     focusGroup(group) {

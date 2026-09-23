@@ -6,7 +6,7 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
     />
-    <title>Marquee</title>
+    <title>Foyer</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -17,21 +17,35 @@
     </div>
 
     <header id="topbar">
-      <div class="brand"><span class="brand-mark"></span>Marquee</div>
-      <nav id="tabs" data-nav-group></nav>
+      <button id="back-btn" class="icon-btn" type="button"></button>
+      <div class="brand"><span class="brand-mark"></span>Foyer</div>
+      <div class="tabs-wrap">
+        <span class="glyph g-lb tab-glyph" aria-hidden="true">LB</span>
+        <nav id="tabs" data-nav-group></nav>
+        <span class="glyph g-rb tab-glyph" aria-hidden="true">RB</span>
+      </div>
       <div class="topbar-right">
         <div id="status" class="status" hidden></div>
+        <span id="wifi" class="wifi" hidden></span>
+        <span id="battery" class="battery" hidden></span>
         <div id="clock" class="clock"></div>
+        <button id="menu-btn" class="icon-btn" type="button"></button>
       </div>
     </header>
 
     <main id="page"></main>
 
+    <div id="hints" hidden></div>
+    <div id="quick-menu" hidden></div>
     <div id="now-playing" hidden></div>
+    <div id="game-layer" hidden></div>
     <div id="modal-root"></div>
     <div id="toasts" aria-live="polite"></div>
 
+    <script src="i18n.js"></script>
     <script src="nav.js"></script>
+    <script src="core.js"></script>
+    <script src="views.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

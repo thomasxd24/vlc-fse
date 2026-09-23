@@ -18,9 +18,10 @@
   color-scheme: dark;
 }
 
-/* Size everything off the viewport so the UI reads the same on a 1080p monitor and a 4K TV. */
+/* Size everything off the viewport, with a floor that keeps text readable on an 8" handheld
+   (the Legion Go's 2560x1600 panel is ~1280 CSS px wide at 200% scaling) and room to grow on a 4K TV. */
 html {
-  font-size: calc(clamp(12px, 0.84vw, 40px) * var(--scale));
+  font-size: calc(clamp(14px, 0.6vw + 8px, 44px) * var(--scale));
 }
 
 * {
@@ -121,10 +122,19 @@ body.dim-backdrop #backdrop .layer.on {
   background: linear-gradient(180deg, rgba(7, 8, 12, 0.85), rgba(7, 8, 12, 0));
   transition: opacity 0.3s var(--ease), transform 0.3s var(--ease);
 }
-body.hide-topbar #topbar {
-  opacity: 0;
-  transform: translateY(-100%);
-  pointer-events: none;
+/* Detail pages: tabs make way for a back button; status stays visible. */
+#back-btn {
+  display: none;
+}
+body.detail #back-btn {
+  display: grid;
+}
+body.detail .brand,
+body.detail .tabs-wrap {
+  display: none;
+}
+body.detail #topbar {
+  background: linear-gradient(180deg, rgba(7, 8, 12, 0.6), rgba(7, 8, 12, 0));
 }
 
 .brand {
@@ -1043,5 +1053,712 @@ body.hide-topbar #topbar {
   *::after {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+
+/* ================================================================== Foyer additions */
+
+/* ---------- Top bar: tab glyphs, icon buttons, Wi-Fi & battery ---------- */
+
+.tabs-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.tab-glyph {
+  display: none;
+}
+body.show-tab-glyphs .tab-glyph {
+  display: inline-grid;
+}
+.icon-btn {
+  width: 2.8rem;
+  height: 2.8rem;
+  border-radius: 50%;
+  place-items: center;
+  display: grid;
+  background: var(--surface);
+  color: var(--text);
+  transition: background 0.15s, transform 0.15s var(--ease);
+}
+.icon-btn .ico {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+.icon-btn:hover,
+.icon-btn:focus {
+  background: var(--surface-2);
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
+/* The ☰ button is for touch/mouse; controllers use the Menu button. */
+body.input-pad #menu-btn,
+body.input-keyboard #menu-btn {
+  display: none;
+}
+body.input-pad #back-btn,
+body.input-keyboard #back-btn {
+  display: none;
+}
+.wifi,
+.battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wifi .ico {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+.wifi.off {
+  opacity: 0.5;
+}
+.bat {
+  position: relative;
+  width: 1.9rem;
+  height: 0.95rem;
+  border: 2px solid currentColor;
+  border-radius: 0.25rem;
+  padding: 1px;
+}
+.bat::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: 25%;
+  width: 3px;
+  height: 50%;
+  border-radius: 0 2px 2px 0;
+  background: currentColor;
+}
+.bat > i {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+  background: currentColor;
+}
+.battery.charging {
+  color: var(--good);
+}
+.battery.low {
+  color: #ff5a5a;
+}
+
+/* ---------- Controller glyphs & hint bar ---------- */
+
+.glyph {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.7rem;
+  height: 1.7rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #0b0c10;
+  background: #d9dce3;
+  line-height: 1;
+}
+.g-a {
+  background: #6cc24a;
+}
+.g-b {
+  background: #e5534b;
+}
+.g-x {
+  background: #3b8eea;
+}
+.g-y {
+  background: #f2c230;
+}
+.g-lb,
+.g-rb,
+.g-lt,
+.g-rt {
+  border-radius: 0.45rem;
+  font-size: 0.75rem;
+  min-width: 2.2rem;
+}
+.g-menu {
+  font-size: 1rem;
+}
+.kcap {
+  display: inline-grid;
+  place-items: center;
+  height: 1.7rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+#hints {
+  position: fixed;
+  right: var(--gutter);
+  bottom: 1.4rem;
+  z-index: 45;
+  display: flex;
+  gap: 1.3rem;
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  background: rgba(10, 11, 16, 0.72);
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 1px var(--line);
+  pointer-events: none;
+}
+.hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.controls-help {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem 1.6rem;
+  margin: 0.8rem 0 0.4rem;
+}
+#toasts {
+  bottom: 5.5rem;
+}
+
+/* ---------- Cards for games ---------- */
+
+.badge-fav {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #ffc53d;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+}
+.badge-fav .ico {
+  width: 1rem;
+  height: 1rem;
+}
+.game-ph {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 0.8rem;
+  background: radial-gradient(90% 60% at 30% 20%, hsl(var(--h) 55% 38%), transparent 70%), linear-gradient(160deg, hsl(var(--h) 45% 22%), hsl(calc(var(--h) + 50) 50% 9%));
+}
+.ph-icon {
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 0.6rem;
+  object-fit: contain;
+  display: grid;
+  place-items: center;
+}
+span.ph-icon .ico {
+  width: 2.6rem;
+  height: 2.6rem;
+  opacity: 0.8;
+}
+.art-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.65), rgba(0, 0, 0, 0) 60%);
+}
+.card-logo {
+  position: absolute;
+  left: 1rem;
+  bottom: 0.9rem;
+  max-width: 60%;
+  max-height: 42%;
+  object-fit: contain;
+  object-position: left bottom;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.6));
+}
+.card-logo-text {
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  bottom: 0.9rem;
+  font-size: 1.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+}
+.shots .card.shot {
+  width: 22rem;
+}
+.shots .card.shot .art {
+  aspect-ratio: 16 / 9;
+}
+
+/* ---------- Hero & detail logos ---------- */
+
+.hero-logo {
+  display: block;
+  max-width: min(34rem, 60vw);
+  max-height: 9rem;
+  object-fit: contain;
+  object-position: left bottom;
+  margin: 0 0 1rem;
+  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.55));
+}
+.detail-logo {
+  display: block;
+  max-width: min(36rem, 55vw);
+  max-height: 10rem;
+  object-fit: contain;
+  object-position: left bottom;
+  margin-bottom: 1.1rem;
+  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.55));
+}
+.game-main {
+  min-height: 64vh;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.pill .ico {
+  width: 1rem;
+  height: 1rem;
+}
+.pill.fav {
+  color: #ffc53d;
+  border-color: rgba(255, 197, 61, 0.4);
+}
+.pill.score {
+  color: #1a1a1a;
+  background: #6cc24a;
+  border-color: transparent;
+  font-weight: 800;
+}
+.btn.icon-only {
+  padding: 0.95rem 1.1rem;
+}
+.chip.accent {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+.chip.accent .ico {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.chip.accent:focus {
+  background: var(--focus);
+}
+
+/* ---------- Dialog extras: text prompt, pickers, lightbox ---------- */
+
+.dialog {
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.dialog.wide {
+  max-width: min(92vw, 90rem);
+  width: 92vw;
+}
+.dialog .choices .btn span {
+  flex: 1;
+}
+.text-input {
+  width: 100%;
+  padding: 0.9rem 1.2rem;
+  margin-bottom: 1.1rem;
+  border: 0;
+  border-radius: 0.6rem;
+  background: rgba(0, 0, 0, 0.35);
+  font-size: 1.4rem;
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.text-input:focus {
+  box-shadow: inset 0 0 0 0.18rem var(--focus);
+}
+.dialog .keyboard {
+  grid-template-columns: repeat(9, 1fr);
+}
+.key.full {
+  grid-column: 1 / -1;
+}
+.key.ok {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.picker {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+}
+.picker.wide {
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+}
+.picker.logo {
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+.picker .card {
+  width: auto;
+}
+.picker.wide .art {
+  aspect-ratio: 96 / 31;
+}
+.picker.logo .art {
+  aspect-ratio: 16 / 9;
+  background: repeating-conic-gradient(#20232c 0% 25%, #171920 0% 50%) 50% / 1.4rem 1.4rem;
+}
+.picker .art img {
+  object-fit: cover;
+}
+.picker.logo .art img {
+  object-fit: contain;
+  padding: 0.8rem;
+}
+.lightbox-modal .dialog {
+  background: #000;
+  padding: 1rem;
+}
+.lightbox {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.lightbox-img {
+  width: 100%;
+  max-height: 74vh;
+  object-fit: contain;
+  border-radius: 0.5rem;
+}
+.lightbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.flip .ico {
+  transform: scaleX(-1);
+}
+
+/* ---------- Quick menu ---------- */
+
+#quick-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(3, 4, 6, 0.45);
+  animation: fade 0.2s var(--ease);
+}
+.qm-panel {
+  width: min(30rem, 92vw);
+  height: 100%;
+  overflow-y: auto;
+  padding: 2.4rem 1.8rem;
+  background: rgba(19, 21, 29, 0.97);
+  box-shadow: -2rem 0 5rem rgba(0, 0, 0, 0.5), inset 1px 0 0 var(--line);
+  animation: slide-in 0.25s var(--ease);
+}
+@keyframes slide-in {
+  from {
+    transform: translateX(2rem);
+    opacity: 0;
+  }
+}
+.qm-time {
+  font-size: 3.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.qm-date {
+  color: var(--muted);
+  font-size: 1.15rem;
+  text-transform: capitalize;
+}
+.qm-facts {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.6rem;
+  color: var(--muted);
+  font-size: 1rem;
+}
+.qm-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 1.8rem 0 1.2rem;
+}
+.qm-slider {
+  display: grid;
+  grid-template-columns: 2rem auto 1fr 2.6rem;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.95rem 1rem;
+  border-radius: 0.7rem;
+  background: var(--surface);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.qm-slider:focus {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 0.18rem var(--focus);
+}
+.qm-ico .ico {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+.qm-label {
+  font-weight: 600;
+}
+.qm-bar {
+  position: relative;
+  height: 0.55rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.16);
+  cursor: pointer;
+  touch-action: none;
+}
+.qm-bar::before {
+  content: '';
+  position: absolute;
+  inset: -0.9rem 0;
+}
+.qm-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 1rem;
+  background: var(--accent);
+}
+.qm-val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.qm-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+.qm-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 1.1rem;
+  border-radius: 0.8rem;
+  background: var(--surface);
+  font-weight: 600;
+  font-size: 1.05rem;
+  transition: background 0.15s, color 0.15s, transform 0.15s var(--ease);
+}
+.qm-btn .ico {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+.qm-btn:focus {
+  background: var(--focus);
+  color: var(--accent-ink);
+  transform: scale(1.03);
+}
+.qm-btn.danger:focus {
+  background: #ff5a5a;
+  color: #1a0000;
+}
+
+/* ---------- Game running layer ---------- */
+
+#game-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 42;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  animation: fade 0.3s var(--ease);
+}
+.gl-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.35;
+  filter: blur(6px) saturate(1.1);
+  transform: scale(1.05);
+}
+.gl-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(70% 70% at 50% 50%, rgba(7, 8, 12, 0.3), var(--bg));
+}
+.gl {
+  position: relative;
+  text-align: center;
+  max-width: 60rem;
+  padding: 0 2rem;
+}
+.gl h1 {
+  margin: 0 0 1rem;
+  font-size: 3.6rem;
+  letter-spacing: -0.03em;
+}
+.gl-logo {
+  max-width: min(40rem, 70vw);
+  max-height: 12rem;
+  object-fit: contain;
+  margin-bottom: 1.4rem;
+  filter: drop-shadow(0 4px 24px rgba(0, 0, 0, 0.6));
+}
+.gl-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 1.3rem;
+  color: var(--muted);
+  margin-bottom: 2rem;
+}
+.gl .actions {
+  justify-content: center;
+}
+.gl-note {
+  margin-top: 2rem;
+  color: var(--faint);
+  font-size: 1rem;
+}
+
+/* ---------- Settings extras ---------- */
+
+.fse-card {
+  padding: 1.2rem 1.4rem;
+  margin-bottom: 0.45rem;
+  border-radius: 0.6rem;
+  background: var(--surface);
+}
+.fse-card p {
+  margin: 0.6rem 0 0.4rem;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+.fse-card .check {
+  margin-top: 0;
+}
+.settings-actions .s-desc {
+  align-self: center;
+  color: var(--faint);
+}
+.lib-stats {
+  color: var(--faint);
+  margin-top: 0.4rem;
+  font-size: 1rem;
+}
+
+/* ---------- Touch: bigger targets, swipeable rows, no hover scaling ---------- */
+
+body.input-touch .chip {
+  padding: 0.75rem 1.3rem;
+}
+body.input-touch .tab {
+  padding: 0.75rem 1.4rem;
+}
+body.input-touch .key {
+  min-height: 3rem;
+}
+body.input-touch .track {
+  scroll-snap-type: x proximity;
+}
+body.input-touch .track > .card {
+  scroll-snap-align: start;
+}
+body.input-touch .card:focus {
+  transform: none;
+}
+body.input-touch .card:focus .art {
+  box-shadow: 0 0.6rem 1.6rem rgba(0, 0, 0, 0.45);
+}
+body.input-touch .card:active {
+  transform: scale(0.97);
+}
+body.input-touch .btn:focus,
+body.input-touch .chip:focus,
+body.input-touch .tab:focus,
+body.input-touch .setting:focus {
+  transform: none;
+}
+body.input-touch #hints {
+  display: none;
+}
+.track,
+.page,
+.rows {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* ---------- Handheld / small screens ---------- */
+
+.status-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 18rem;
+}
+.topbar-right {
+  flex-shrink: 0;
+}
+.clock {
+  white-space: nowrap;
+}
+
+@media (max-width: 1400px) {
+  .status-text {
+    display: none;
+  }
+  :root {
+    --gutter: 3rem;
+  }
+  #topbar {
+    gap: 1.6rem;
+    padding-top: 1.4rem;
+  }
+  .brand {
+    font-size: 1.15rem;
+  }
+  .tab {
+    padding: 0.5rem 1rem;
+    font-size: 1.05rem;
+  }
+  .hero {
+    min-height: 40vh;
+    padding-top: 6rem;
+  }
+  .hero h1 {
+    font-size: 3.4rem;
+  }
+  .detail-poster {
+    width: 14rem;
+  }
+  .detail-info h1 {
+    font-size: 3.2rem;
+  }
+  .search {
+    grid-template-columns: 24rem 1fr;
   }
 }

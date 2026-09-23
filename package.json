@@ -1,8 +1,8 @@
 {
-  "name": "marquee",
-  "productName": "Marquee",
-  "version": "1.0.0",
-  "description": "A fullscreen, remote-friendly launcher for your movies and TV shows that plays everything in VLC.",
+  "name": "foyer",
+  "productName": "Foyer",
+  "version": "2.0.0",
+  "description": "Fullscreen game and media launcher for Windows handhelds and living-room PCs: Steam and your own games, films and TV in VLC.",
   "main": "main.js",
   "author": "Thomas Tse",
   "license": "UNLICENSED",
@@ -21,8 +21,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.marquee.launcher",
-    "productName": "Marquee",
+    "appId": "com.foyer.launcher",
+    "productName": "Foyer",
     "files": [
       "main.js",
       "preload.js",
@@ -56,7 +56,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Marquee",
+      "shortcutName": "Foyer",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     }
   },
