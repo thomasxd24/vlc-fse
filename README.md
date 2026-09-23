@@ -34,8 +34,17 @@ in **VLC**.
 
 1. Install [VLC](https://www.videolan.org/vlc/). Marquee finds it through the registry or the usual
    Program Files paths. You can also set its location in Settings.
-2. Download `Marquee-Setup-x.y.z.exe` (installer) or `Marquee-x.y.z-portable.exe` from the latest build's
-   artifacts, or build it yourself (see below).
+2. Get Marquee from the [Releases](../../releases) page, or from the artifacts of the latest
+   [Build](../../actions/workflows/build.yml) run:
+   - **Zip (no installer):** download `Marquee-x.y.z-win-x64.zip`, extract it anywhere (for example
+     `C:\Program Files\Marquee` or `C:\Users\<you>\Apps\Marquee`), then run `Marquee.exe`. You can
+     right-click `Marquee.exe` and choose *Pin to Start* or *Send to → Desktop* to make a shortcut. To
+     uninstall, delete the folder.
+   - **Installer:** run `Marquee-Setup-x.y.z.exe`. It adds Start menu and desktop shortcuts and an
+     uninstaller.
+
+   The app isn't code-signed, so Windows SmartScreen may warn the first time. Choose *More info → Run
+   anyway*.
 3. Launch Marquee and add your movies and TV folders.
 
 ### Recommended folder layout
@@ -81,7 +90,7 @@ example `--sub-language=eng`) is passed through unchanged.
 npm install
 npm start          # run the app
 npm test           # unit tests (parser, scanner, VLC args, metadata)
-npm run dist       # build the NSIS installer + portable exe into dist/
+npm run dist       # build the installer + zip into dist/ (run on Windows)
 ```
 
 The code is plain JavaScript with no bundler:
@@ -97,4 +106,16 @@ The code is plain JavaScript with no bundler:
 Settings, the library cache, watch progress and downloaded artwork are stored in
 `%APPDATA%\Marquee`.
 
-CI (`.github/workflows/build.yml`) runs the tests and builds the Windows installer on every push.
+### Releases
+
+CI (`.github/workflows/build.yml`) runs on a Windows runner for every push and pull request. It runs the
+tests, then builds the zip and the installer and uploads them as workflow artifacts. To publish a release,
+push a version tag:
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow stamps that version into the build and creates a GitHub Release with
+`Marquee-1.0.0-win-x64.zip` and `Marquee-Setup-1.0.0.exe` attached.
