@@ -14,7 +14,8 @@ const JUNK_TOKENS = [
   'hdtv', 'dvdrip', 'dvdscr', 'dvd', 'hdrip', 'x264', 'x265', 'h264', 'h265', 'hevc', 'avc', 'xvid',
   'divx', 'aac', 'ac3', 'dts', 'ddp5', 'dd5', 'atmos', 'truehd', 'flac', '10bit', '8bit',
   'proper', 'repack', 'extended', 'unrated', 'remastered', 'directors', 'imax', 'multi',
-  'subbed', 'dubbed', 'internal', 'limited'
+  'subbed', 'dubbed', 'internal', 'limited', 'vff', 'vfq', 'vfi', 'vf2', 'vostfr', 'truefrench', 'french',
+  'complete', 'integrale', 'intégrale'
 ];
 const JUNK_RE = new RegExp(`(^|[\\s._\\-\\[(])(${JUNK_TOKENS.map(escapeRe).join('|')})(?=$|[\\s._\\-\\])])`, 'i');
 
@@ -129,10 +130,31 @@ function parseSeasonFolder(raw) {
 }
 
 /** Parse a TV show folder name, e.g. "The Office (US) (2005)". */
+// "S02", "Season 2", "Saison 2" etc. inside a release-style folder name, e.g. "Fallout.S02.1080p.WEBrip-GRP".
+const SEASON_IN_NAME = /(?:^|[\s._\-\[(])(?:s(\d{1,2})(?:e\d{1,3})?|(?:season|saison|series|staffel|temporada)[\s._\-]*(\d{1,2}))(?=$|[\s._\-\])])/i;
+
+/**
+ * Parse a TV show folder name: "The Office (US) (2005)", "Dark", or a season-pack release name like
+ * "Fallout S02 MULTi VFF 1080p WEBrip x265-GRP" (-> title "Fallout", season 2).
+ */
 function parseShowFolder(raw) {
-  const m = /^(.*?)[\s._]*[(\[]((?:19|20)\d{2})[)\]]\s*$/.exec(raw);
-  if (m) return { title: tidy(m[1]), year: Number(m[2]) };
-  return { title: titleCase(tidy(raw)), year: null };
+  let name = raw.replace(/^\s*\[[^\]]*\]\s*/, '');
+  let season = null;
+  const sm = SEASON_IN_NAME.exec(name);
+  if (sm && sm.index > 0) {
+    season = Number(sm[1] ?? sm[2]);
+    name = name.slice(0, sm.index);
+  }
+  const junk = JUNK_RE.exec(name);
+  if (junk && junk.index > 0) name = name.slice(0, junk.index);
+
+  let year = null;
+  const m = /^(.*?)[\s._]*[(\[]?((?:19|20)\d{2})[)\]]?\s*$/.exec(name);
+  if (m && tidy(m[1])) {
+    year = Number(m[2]);
+    name = m[1];
+  }
+  return { title: titleCase(tidy(name)) || tidy(raw), year, season };
 }
 
 /** Case/punctuation-insensitive key used to group episodes into shows. */

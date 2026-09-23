@@ -93,7 +93,7 @@ function buildArgs(queue, { port, password, fullscreen = true, extraArgs = [] })
     '--no-repeat',
     '--qt-continue=0', // this launcher owns resume; don't let VLC ask as well
     '--no-qt-privacy-ask', // VLC's first-run network-policy dialog would otherwise block fullscreen playback
-    '--one-instance-when-started-from-file=0',
+    '--no-one-instance-when-started-from-file', // on/off options take --no-, never =0 (VLC refuses to start)
     '--no-one-instance'
   ];
   if (fullscreen) args.push('--fullscreen');

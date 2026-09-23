@@ -294,11 +294,17 @@ async function play(req) {
     session = null;
     nowPlaying = null;
     send('now-playing', null);
-    if (error) send('toast', { kind: 'error', text: `Could not start VLC: ${error.message}` });
+    if (error) send('toast', { kind: 'error', text: error.syscall ? `Could not start VLC: ${error.message}` : error.message });
     pushLibrary();
     bringToFront();
   };
-  s.on('exit', () => finish());
+  const startedAt = Date.now();
+  s.on('exit', ({ code, last }) => {
+    // VLC that dies within seconds without ever reporting a position failed to start or open the file.
+    if (code && !last && Date.now() - startedAt < 15000) {
+      finish(new Error(`VLC closed with an error (exit code ${code}). Check "Extra VLC options" in Settings, or that the file plays in VLC.`));
+    } else finish();
+  });
   s.on('error', (err) => finish(err));
 
   try {

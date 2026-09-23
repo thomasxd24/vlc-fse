@@ -38,7 +38,11 @@ test('scans movies and shows with local artwork', async () => {
     'Dark (2017)/Season 2/Dark.S02E01.srt',
     'Planet Earth/Season 1/01 From Pole to Pole.mkv',
     'Planet Earth/Season 1/02 Mountains.mkv',
-    'Planet Earth/Specials/Making Of.mkv'
+    'Planet Earth/Specials/Making Of.mkv',
+    'Fallout S01 MULTi 1080p WEB x265-GRP/Fallout.S01E01.MULTi.1080p.WEB.x265-GRP.mkv',
+    'Fallout S02 MULTi VFF 1080p WEBrip 10 bits x265-Tyrell/Fallout.S02E01.MULTi.VFF.1080p.mkv',
+    'Fallout S02 MULTi VFF 1080p WEBrip 10 bits x265-Tyrell/Fallout.S02E02.MULTi.VFF.1080p.mkv',
+    'Fallout S02 MULTi VFF 1080p WEBrip 10 bits x265-Tyrell/poster.jpg'
   ]);
 
   const lib = await scanLibraries([
@@ -56,13 +60,17 @@ test('scans movies and shows with local artwork', async () => {
   // A generic poster.jpg in a shared folder must not be attributed to an arbitrary film.
   assert.equal(lib.movies.find((m) => m.title === 'Alien').poster, null);
 
-  assert.deepEqual(lib.shows.map((s) => s.title), ['Dark', 'Planet Earth']);
+  assert.deepEqual(lib.shows.map((s) => s.title), ['Dark', 'Fallout', 'Planet Earth']);
   const dark = lib.shows[0];
+  // Two season-pack folders merge into one show, and art from either folder is picked up.
+  const fallout = lib.shows[1];
+  assert.deepEqual(fallout.episodes.map((e) => [e.season, e.episode]), [[1, 1], [2, 1], [2, 2]]);
+  assert.ok(fallout.poster.endsWith('poster.jpg'));
   assert.equal(dark.year, 2017);
   assert.ok(dark.poster.endsWith('poster.jpg'));
   assert.deepEqual(dark.episodes.map((e) => [e.season, e.episode]), [[1, 1], [1, 2], [2, 1]]);
 
-  const earth = lib.shows[1];
+  const earth = lib.shows[2];
   assert.deepEqual(earth.episodes.map((e) => [e.season, e.episode]), [[0, 1], [1, 1], [1, 2]]);
   fs.rmSync(root, { recursive: true, force: true });
 });

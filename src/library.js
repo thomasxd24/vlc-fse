@@ -157,7 +157,8 @@ async function scanShows(root) {
       showDir = root;
       showInfo = { title: (ep && ep.show) || parseMovieName(fileName).title, year: null };
     }
-    const key = parts.length > 1 ? showDir.toLowerCase() : `${root.toLowerCase()}::${normalizeKey(showInfo.title)}`;
+    // Group by title rather than folder so season packs ("Show S01 ...", "Show S02 ...") merge into one show.
+    const key = `${root.toLowerCase()}::${normalizeKey(showInfo.title)}`;
 
     let show = shows.get(key);
     if (!show) {
@@ -174,13 +175,17 @@ async function scanShows(root) {
       };
       if (parts.length > 1) Object.assign(show, await localArt(showDir));
       shows.set(key, show);
+    } else if (parts.length > 1 && !show.poster) {
+      Object.assign(show, await localArt(showDir));
     }
+    if (!show.year && showInfo.year) show.year = showInfo.year;
 
     // Season: filename marker wins, then the nearest "Season N" folder, then 1.
     let season = ep ? ep.season : null;
     if (season === null) {
       for (let i = parts.length - 2; i >= 1 && season === null; i--) season = parseSeasonFolder(parts[i]);
     }
+    if (season === null && showInfo.season !== undefined) season = showInfo.season;
     if (season === null) season = 1;
 
     const st = await statSafe(file);

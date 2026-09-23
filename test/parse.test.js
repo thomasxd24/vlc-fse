@@ -42,8 +42,15 @@ test('season and show folders', () => {
   assert.equal(parseSeasonFolder('Series 3'), 3);
   assert.equal(parseSeasonFolder('Specials'), 0);
   assert.equal(parseSeasonFolder('Extras'), null);
-  assert.deepEqual(parseShowFolder('The Office (US) (2005)'), { title: 'The Office (US)', year: 2005 });
-  assert.deepEqual(parseShowFolder('Dark'), { title: 'Dark', year: null });
+  assert.deepEqual(parseShowFolder('The Office (US) (2005)'), { title: 'The Office (US)', year: 2005, season: null });
+  assert.deepEqual(parseShowFolder('Dark'), { title: 'Dark', year: null, season: null });
+  // Season-pack release folders.
+  assert.deepEqual(parseShowFolder('Fallout S02 MULTi VFF 1080p WEBrip 10 bits x265-Tyrell'), { title: 'Fallout', year: null, season: 2 });
+  assert.deepEqual(parseShowFolder('Fallout.S01.MULTi.1080p.AMZN.WEB-DL'), { title: 'Fallout', year: null, season: 1 });
+  assert.deepEqual(parseShowFolder('The.Last.of.Us.2023.S01.2160p.WEB'), { title: 'The Last of Us', year: 2023, season: 1 });
+  assert.deepEqual(parseShowFolder('Shogun.2024.Saison.1.FRENCH.1080p'), { title: 'Shogun', year: 2024, season: 1 });
+  assert.deepEqual(parseShowFolder('Dark.COMPLETE.1080p.NF.WEB-DL'), { title: 'Dark', year: null, season: null });
+  assert.deepEqual(parseShowFolder('9-1-1 (2018)'), { title: '9-1-1', year: 2018, season: null });
 });
 
 test('video extensions', () => {

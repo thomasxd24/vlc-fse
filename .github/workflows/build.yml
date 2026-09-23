@@ -20,6 +20,10 @@ jobs:
 
       - run: npm ci
 
+      # Real VLC, so test/vlc-real.test.js checks VLC accepts the exact command line Marquee launches it with.
+      - name: Install VLC
+        run: choco install vlc -y --no-progress
+
       - run: npm test
 
       # For a release tag like v1.2.0, stamp that version into the build so file names match the tag.
