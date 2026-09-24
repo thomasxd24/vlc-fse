@@ -440,6 +440,11 @@ const ACTIONS = {
     await save({ uiLanguage: v });
     await refreshState();
   },
+  'cycle-animations': async () => {
+    await save({ animations: S.settings.animations === 'reduced' ? 'full' : 'reduced' });
+    applyMotion();
+    render({ keepFocus: true });
+  },
   'cycle-scale': async () => {
     const steps = [0.9, 1, 1.15, 1.3, 1.5];
     const cur = S.settings.uiScale || 1;
@@ -451,6 +456,17 @@ const ACTIONS = {
     await api.clearMetadata();
     toast(t('set.refreshing'));
   },
+  'check-update': async () => {
+    toast(t('upd.checking'));
+    const st = await api.checkUpdate();
+    if (!st) return;
+    S.update = st;
+    if (st.status === 'available') maybePromptUpdate(true);
+    else if (st.status === 'uptodate') toast(t('upd.upToDate'));
+    else if (st.status === 'error') toast(t('err.update', { message: st.error }), 'error');
+    render({ keepFocus: true });
+  },
+  'install-update': () => startUpdate(),
   'open-gaming-settings': () => api.openExternal('ms-settings:gaming-gamebar'),
   'open-releases': () => api.openExternal('https://github.com/thomasxd24/vlc-fse/releases/latest'),
   minimize: () => api.minimize(),
@@ -555,6 +571,107 @@ Nav.onAction((btn) => {
   }
 });
 
+// ============================================================================ Updates
+
+const promptedVersions = new Set();
+let updateLayerOpen = false;
+
+function updateNotes(md) {
+  // First few meaningful lines of the release notes, without Markdown noise.
+  return String(md || '')
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^#+\s*/, '').replace(/^[-*]\s+/, '• ').replace(/\*\*|__|`/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/\s+by @[\w-]+( in https?:\/\/\S+)?/g, '').replace(/https?:\/\/\S+/g, '').trim())
+    .filter((l) => l && !/^(full changelog|what's changed)/i.test(l))
+    .slice(0, 6)
+    .join('\n');
+}
+
+/** "Foyer x.y.z is available": asked once per version per session, only when nothing else is going on. */
+async function maybePromptUpdate(force = false) {
+  const up = S.update;
+  if (!up || up.status !== 'available') return;
+  if (!force && (promptedVersions.has(up.version) || up.version === S.settings.skippedVersion)) return;
+  if (modals.length || S.game || S.nowPlaying || QuickMenu.isOpen()) {
+    setTimeout(() => maybePromptUpdate(force), 5000);
+    return;
+  }
+  promptedVersions.add(up.version);
+  const size = up.size ? ` (${Math.round(up.size / 1048576)} MB)` : '';
+  const v = await choose({
+    title: t('upd.availableTitle', { version: up.version }),
+    text: [t('upd.availableText', { current: up.current }) + size, updateNotes(up.notes)].filter(Boolean).join('\n\n'),
+    choices: [
+      { label: t('upd.now'), value: 'now', primary: true, icon: ICON.refresh },
+      { label: t('upd.later'), value: 'later' },
+      { label: t('upd.skip'), value: 'skip' }
+    ]
+  });
+  if (v === 'now') startUpdate();
+  else if (v === 'skip') api.skipUpdate(up.version).then(refreshState);
+}
+
+async function startUpdate() {
+  updateLayerOpen = true;
+  renderUpdateLayer();
+  const r = await api.installUpdate();
+  if (!r.ok) {
+    updateLayerOpen = false;
+    renderUpdateLayer();
+    if (r.errorKey) toast(t(r.errorKey, r.vars), 'error');
+  }
+}
+
+function renderUpdateLayer() {
+  const box = $('#update-layer');
+  const up = S.update || {};
+  const show = updateLayerOpen && ['downloading', 'ready', 'installing', 'checking', 'available'].includes(up.status);
+  if (!show) {
+    if (!box.hidden) {
+      box.hidden = true;
+      box.removeAttribute('data-nav-trap');
+      box.innerHTML = '';
+      Nav.focus(page.querySelector('[data-autofocus]') || page.querySelector('.focusable'), { scroll: false });
+    }
+    renderStatus();
+    return;
+  }
+  const installing = up.status === 'installing' || up.status === 'ready';
+  const pctDone = installing ? 100 : up.progress || 0;
+  if (box.hidden) {
+    box.hidden = false;
+    box.setAttribute('data-nav-trap', '');
+    box.innerHTML = `
+      <div class="upd">
+        <div class="brand-mark big"></div>
+        <h1 id="upd-title"></h1>
+        <div class="bar"><i id="upd-bar"></i></div>
+        <div class="upd-status" id="upd-status"></div>
+        <div class="actions"><button class="btn focusable" data-upd="hide" data-autofocus>${h(t('upd.background'))}</button></div>
+      </div>`;
+    box.querySelector('[data-upd="hide"]').addEventListener('click', () => {
+      updateLayerOpen = false;
+      renderUpdateLayer();
+    });
+    Nav.focusFirst();
+  }
+  $('#upd-title').textContent = t('upd.updatingTo', { version: up.version || '' });
+  $('#upd-bar').style.width = `${pctDone}%`;
+  $('#upd-status').textContent = installing ? t('upd.installing') : t('upd.downloading', { n: pctDone });
+  box.querySelector('[data-upd="hide"]').hidden = installing;
+  Hints.update();
+}
+
+function onUpdateState(st) {
+  const prev = S.update && S.update.status;
+  S.update = st;
+  // Once installing starts, show it even if the user sent the download to the background.
+  if (st.status === 'installing') updateLayerOpen = true;
+  renderUpdateLayer();
+  if (st.status === 'available' && prev !== 'available') maybePromptUpdate();
+  if (st.status === 'error' && prev === 'downloading') toast(t('err.update', { message: st.error }), 'error');
+  if (route().name === 'settings' && !modals.length && prev !== st.status) render({ keepFocus: true });
+}
+
 // ============================================================================ Boot
 
 let lastSig = '';
@@ -623,6 +740,8 @@ function onState(next) {
     S.game = g;
     renderGameLayer();
   });
+  api.onUpdate(onUpdateState);
+  if (S.update && S.update.status === 'available') maybePromptUpdate();
   api.onToast((m) => toast(m.key ? t(m.key, m.vars) : m.text, m.kind));
   for (const m of initial.toasts || []) toast(t(m.key, m.vars), m.kind);
   if (S.nowPlaying) renderNowPlaying();

@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('foyer', {
   wifi: call('wifi'),
   power: call('power'),
   openExternal: call('open-external'),
+  checkUpdate: call('update-check'),
+  installUpdate: call('update-install'),
+  skipUpdate: call('update-skip'),
   toggleFullscreen: call('toggle-fullscreen'),
   minimize: call('minimize'),
   quit: call('quit'),
@@ -51,5 +54,6 @@ contextBridge.exposeInMainWorld('foyer', {
   onState: on('state'),
   onNowPlaying: on('now-playing'),
   onGame: on('game'),
-  onToast: on('toast')
+  onToast: on('toast'),
+  onUpdate: on('update')
 });

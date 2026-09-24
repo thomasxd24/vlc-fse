@@ -9,7 +9,7 @@
     3. Installs (or updates) Foyer-FSE.msix.
     4. Optionally sets Foyer as the full screen experience home app.
 #>
-param([switch]$SetHomeApp, [switch]$Quiet)
+param([switch]$SetHomeApp, [switch]$Quiet, [switch]$Update, [switch]$Launch)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
@@ -21,6 +21,8 @@ if (-not $admin) {
   $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$($MyInvocation.MyCommand.Path)`"")
   if ($SetHomeApp) { $argList += '-SetHomeApp' }
   if ($Quiet) { $argList += '-Quiet' }
+  if ($Update) { $argList += '-Update' }
+  if ($Launch) { $argList += '-Launch' }
   Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList
   exit
 }
@@ -53,8 +55,8 @@ if (-not $pkg) { throw 'Installation failed: package not found after install.' }
 $aumid = "$($pkg.PackageFamilyName)!App"
 Say "Installed Foyer $($pkg.Version)." "Foyer $($pkg.Version) installé."
 
-# 4. Home app
-if (-not $SetHomeApp -and -not $Quiet) {
+# 4. Home app (left as it is when updating)
+if (-not $SetHomeApp -and -not $Quiet -and -not $Update) {
   $answer = Read-Host 'Make Foyer the full screen experience home app? / Faire de Foyer l''application d''accueil ? [Y/n / O/n]'
   $SetHomeApp = ($answer -eq '' -or $answer -match '^[yYoO]')
 }
@@ -63,12 +65,18 @@ if ($SetHomeApp) {
   if (-not (Test-Path $gc)) { New-Item -Path $gc -Force | Out-Null }
   Set-ItemProperty -Path $gc -Name GamingHomeApp -Value $aumid -Type String
   Say 'Foyer is now the home app. You can change it in Settings > Gaming > Full screen experience.' 'Foyer est maintenant l''application d''accueil. Modifiable dans Paramètres > Jeux > Expérience plein écran.'
-} else {
+} elseif (-not $Update) {
   Say 'Choose Foyer in Settings > Gaming > Full screen experience > Home app.' 'Choisissez Foyer dans Paramètres > Jeux > Expérience plein écran > Application d''accueil.'
 }
 
+if (-not $Update) {
 $oem = (Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\OEM' -Name DeviceForm -ErrorAction SilentlyContinue).DeviceForm
 if ($oem -ne 46) {
   Say 'Note: if you don''t see "Full screen experience" in Settings > Gaming, this Windows build hasn''t enabled it for your device yet.' 'Remarque : si « Expérience plein écran » n''apparaît pas dans Paramètres > Jeux, cette version de Windows ne l''a pas encore activée pour votre appareil.'
+}
+}
+if ($Launch) {
+  # Start Foyer through Explorer so it runs as the signed-in user, not with this script's admin rights.
+  Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$aumid"
 }
 if (-not $Quiet) { Read-Host 'Press Enter to close / Entrée pour fermer' | Out-Null }

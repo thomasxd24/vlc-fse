@@ -163,7 +163,10 @@ class Metadata {
         const [key, run] = jobs[i++];
         try {
           const result = await run();
-          this.entries()[key] = result ? { ...result, at: Date.now() } : { miss: true, at: Date.now() };
+          const prev = this.entries()[key];
+          if (result) this.entries()[key] = { ...result, at: Date.now() };
+          else if (prev && !prev.miss) this.entries()[key] = { ...prev, stale: false, at: Date.now() }; // keep what we had
+          else this.entries()[key] = { miss: true, at: Date.now() };
           this.store.save();
           onUpdate();
         } catch (err) {

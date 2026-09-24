@@ -252,6 +252,10 @@ function paintHero(key) {
     overview = g.overview;
     bg = g.hero || g.header || g.poster;
   }
+  hero.classList.remove('swap');
+  void hero.offsetWidth; // restart the crossfade
+  hero.classList.add('swap');
+  parallaxFrom(document.activeElement);
   hero.innerHTML = `
     <div class="kicker">${h(kicker)}</div>
     ${logo ? `<img class="hero-logo logo-img" src="${h(logo)}" alt="${h(title)}">` : `<h1>${h(title)}</h1>`}
@@ -261,6 +265,15 @@ function paintHero(key) {
 }
 
 // ============================================================================ Grids
+
+/** Nudge the backdrop a little against the focused card's position, for depth. */
+function parallaxFrom(el) {
+  const bd = $('#backdrop');
+  if (!el || !el.getBoundingClientRect || !bd) return;
+  const r = el.getBoundingClientRect();
+  const x = (r.left + r.width / 2) / window.innerWidth - 0.5;
+  bd.style.setProperty('--px', x.toFixed(3));
+}
 
 function sortItems(items, sort) {
   const list = [...items];
@@ -366,6 +379,7 @@ function ambientFromFocus() {
   const [type, id] = key.split(':');
   const item = type === 'movie' ? idx.movies.get(id) : type === 'show' ? idx.shows.get(id) : idx.games.get(id);
   document.body.classList.add('dim-backdrop');
+  parallaxFrom(a);
   if (item) Backdrop.set(item.backdrop || item.hero || item.header || null);
 }
 
@@ -649,6 +663,7 @@ VIEWS.settings = {
           ${toggleRow(t('set.haptics'), t('set.hapticsDesc'), st.haptics, 'haptics', 't-haptics')}
           ${toggleRow(t('set.sounds'), t('set.soundsDesc'), st.sounds, 'sounds', 't-sounds')}
           ${valueRow(t('set.textSize'), t('set.textSizeDesc'), `${Math.round((st.uiScale || 1) * 100)}%`, 'cycle-scale', 'scale')}
+          ${valueRow(t('set.animations'), t('set.animationsDesc'), st.animations === 'reduced' ? t('set.animReduced') : t('set.animFull'), 'cycle-animations', 'anim')}
           <div class="controls-help">${controlsHelp()}</div>
 
           <div class="section-title">${h(t('set.fse'))}</div>
@@ -662,6 +677,9 @@ VIEWS.settings = {
           </div>
           ${toggleRow(t('set.fullscreen'), t('set.fullscreenDesc'), st.startFullscreen, 'startFullscreen', 't-fs')}
           ${S.fsePackage ? '' : toggleRow(t('set.login'), t('set.loginDesc'), st.launchAtLogin, 'launchAtLogin', 't-login')}
+
+          <div class="section-title">${h(t('upd.section'))}</div>
+          ${updateRows(st)}
 
           <div class="section-title">${h(t('set.system'))}</div>
           <div class="settings-actions" data-nav-group>
@@ -681,6 +699,31 @@ VIEWS.settings = {
     Backdrop.set(null);
   }
 };
+
+function updateRows(st) {
+  const up = S.update;
+  if (!up || up.status === 'unsupported') {
+    return `<div class="fse-card"><p>${h(t('upd.unsupported', { version: S.version }))}</p></div>`;
+  }
+  const statusText = {
+    idle: t('upd.idle'),
+    checking: t('upd.checking'),
+    uptodate: t('upd.upToDate'),
+    available: t('upd.availableShort', { version: up.version }),
+    downloading: t('upd.downloading', { n: up.progress || 0 }),
+    ready: t('upd.installing'),
+    installing: t('upd.installing'),
+    error: t('err.update', { message: up.error || '' })
+  }[up.status];
+  const busy = ['checking', 'downloading', 'installing', 'ready'].includes(up.status);
+  return `
+    ${valueRow(t('upd.version'), statusText, `Foyer ${S.version}`, busy ? 'noop' : up.status === 'available' ? 'install-update' : 'check-update', 'upd-row')}
+    <div class="settings-actions" data-nav-group>
+      ${up.status === 'available' ? `<button class="btn small primary focusable" data-act="install-update" data-key="upd-install">${ICON.refresh}${h(t('upd.now'))}</button>` : ''}
+      <button class="btn small focusable" data-act="check-update" data-key="upd-check" ${busy ? 'disabled' : ''}>${ICON.search}${h(t('upd.checkNow'))}</button>
+    </div>
+    ${toggleRow(t('upd.auto'), t('upd.autoDesc'), st.autoCheckUpdates, 'autoCheckUpdates', 't-upd')}`;
+}
 
 function controlsHelp() {
   const g = (b, label) => `<span class="hint"><span class="glyph g-${b}">${{ a: 'A', b: 'B', x: 'X', y: 'Y', lb: 'LB', rb: 'RB', lt: 'LT', rt: 'RT', menu: '☰' }[b]}</span><span>${h(label)}</span></span>`;

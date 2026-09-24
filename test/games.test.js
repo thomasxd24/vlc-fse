@@ -146,3 +146,12 @@ test('game info: Steam store details, CDN art and manual-game matching', async (
 test('stripHtml', () => {
   assert.equal(stripHtml('<p>A &quot;b&quot;<br>c</p>'), 'A "b"\nc');
 });
+
+test('a refetch that finds nothing keeps the info we already had', async (t) => {
+  const store = { data: { games: { 'steam-1': { title: 'Old', overview: 'Kept', art: {}, stale: true, at: 1 } } }, get(k) { return this.data[k]; }, set(k, v) { this.data[k] = v; }, save() {} };
+  const gi = new GameInfo({ store, imageDir: os.tmpdir() });
+  gi.fetchGame = async () => ({ steamAppId: '1', art: {} }); // store page gone
+  await gi.enrich([{ id: 'steam-1', source: 'steam', appid: '1', title: 'Old', art: {}, override: {} }], () => {});
+  assert.equal(gi.lookup('steam-1').overview, 'Kept');
+  assert.equal(gi.needs('steam-1'), false);
+});

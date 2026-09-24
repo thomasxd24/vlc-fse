@@ -164,7 +164,7 @@ class GameInfo {
 
   needs(id) {
     const e = this.entries()[id];
-    return !e || e.stale || (e.miss && Date.now() - e.at > RETRY_MS);
+    return Boolean(!e || e.stale || (e.miss && Date.now() - e.at > RETRY_MS));
   }
 
   /**
@@ -226,7 +226,10 @@ class GameInfo {
         if (!this.needs(g.id)) continue;
         try {
           const r = await this.fetchGame(g);
-          this.entries()[g.id] = r ? { ...r, at: Date.now() } : { miss: true, at: Date.now() };
+          const prev = this.entries()[g.id];
+          if (r && (r.title || r.overview || Object.keys(r.art || {}).length)) this.entries()[g.id] = { ...r, at: Date.now() };
+          else if (prev && !prev.miss) this.entries()[g.id] = { ...prev, stale: false, at: Date.now() }; // keep what we had
+          else this.entries()[g.id] = { miss: true, at: Date.now() };
           this.store.save();
           onUpdate();
         } catch (err) {

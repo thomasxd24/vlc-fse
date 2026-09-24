@@ -52,6 +52,10 @@ with the built-in controller, touch or a keyboard. Films and shows play in **VLC
 - **Status bar:** battery level and charging state, Wi-Fi signal and the clock.
 - **Screen size:** laid out for the Legion Go's 8.8" 16:10 screen, and scales up to a TV. The text size is
   adjustable.
+- **Motion:** opening a card morphs its artwork into the detail page, the tab highlight slides, rows fade
+  in one after another, focus has a spring to it, the backdrop drifts slowly with a touch of depth, and
+  artwork fades in over a loading shimmer. *Settings › Animations › Reduced* calms it all down and saves a
+  little battery. Windows' own "reduce motion" setting is respected too.
 - **Language:** English or French, switchable in Settings. Automatic follows Windows. Game descriptions and
   synopses switch language too.
 
@@ -70,6 +74,23 @@ All three share the same settings and library, which are stored in `%APPDATA%\Fo
 Marquee (the previous name), your settings, library and progress are copied over on first launch.
 
 Films and shows need [VLC](https://www.videolan.org/vlc/).
+
+### Updates
+
+Foyer checks GitHub Releases when it starts and every few hours after that. It never installs anything
+without asking. When a new version is out, you get **Update now / Later / Skip this version**. It doesn't
+ask, download or install while a game is running. The download is checked against the SHA-256 checksum
+GitHub publishes for each file. Foyer then updates itself using the method that matches how it was
+installed, and restarts:
+
+| Installed with | Update method |
+| --- | --- |
+| Installer (`Foyer-Setup`) | Runs the new installer silently over the old one. |
+| Zip | Unpacks the new version over the folder once Foyer has closed (asks for admin only if the folder needs it). |
+| FSE package | Runs the package's installer in update mode: one admin prompt; your home-app choice is kept. |
+
+*Settings › Updates* shows your version and has *Check for updates*. You can also turn automatic checking
+off there.
 
 ### Full screen experience (home app)
 
@@ -120,6 +141,7 @@ src/vdf.js          Parser for Steam's .vdf/.acf files
 src/games.js        Launching and tracking games (Steam via RunningAppID, others by process)
 src/gameinfo.js     Steam store details, Steam CDN and SteamGridDB artwork, cached on disk
 src/system.js       Volume, brightness, Wi-Fi, power and process priority (Windows)
+src/updater.js      Checks GitHub Releases, downloads and verifies updates, hands off to the right installer
 src/library.js      Film & TV folder scanning; src/parse.js name parsing; src/metadata.js TMDB
 src/vlc.js          Finding and driving VLC
 renderer/           The interface: nav.js (controller/touch/keyboard), core.js, views.js, app.js, i18n.js

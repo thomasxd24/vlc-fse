@@ -1762,3 +1762,407 @@ body.input-touch #hints {
     grid-template-columns: 24rem 1fr;
   }
 }
+
+/* ================================================================== Motion */
+
+:root {
+  --spring: cubic-bezier(0.34, 1.45, 0.64, 1);
+  --out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---------- Page transitions (View Transitions API) ---------- */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.32s;
+  animation-timing-function: var(--out);
+}
+::view-transition-old(root) {
+  animation-name: vt-out;
+}
+::view-transition-new(root) {
+  animation-name: vt-in;
+}
+html:has(body[data-nav='back'])::view-transition-old(root) {
+  animation-name: vt-out-back;
+}
+html:has(body[data-nav='back'])::view-transition-new(root) {
+  animation-name: vt-in-back;
+}
+@keyframes vt-out {
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+@keyframes vt-in {
+  from {
+    opacity: 0;
+    transform: scale(1.03);
+  }
+}
+@keyframes vt-out-back {
+  to {
+    opacity: 0;
+    transform: scale(1.03);
+  }
+}
+@keyframes vt-in-back {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+/* A card's artwork flies into the detail poster (and back). */
+::view-transition-group(morph) {
+  animation-duration: 0.42s;
+  animation-timing-function: var(--out);
+  z-index: 10;
+}
+::view-transition-old(morph),
+::view-transition-new(morph) {
+  animation-duration: 0.42s;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* ---------- Tab switches slide in from the side you moved to ---------- */
+
+.page {
+  animation: none;
+}
+.page[data-enter='yes'],
+#page[data-enter='yes'] > .page {
+  animation: page-in 0.38s var(--out);
+}
+body[data-nav='right'] #page[data-enter='yes'] > .page {
+  animation-name: page-from-right;
+}
+body[data-nav='left'] #page[data-enter='yes'] > .page {
+  animation-name: page-from-left;
+}
+@keyframes page-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(3rem);
+  }
+}
+@keyframes page-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(-3rem);
+  }
+}
+
+/* ---------- Sliding tab indicator ---------- */
+
+.tabs-track {
+  position: relative;
+}
+#tab-ind {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--surface);
+  opacity: 0;
+  transition: transform 0.42s var(--spring), width 0.42s var(--spring), opacity 0.2s;
+  pointer-events: none;
+}
+.tab {
+  position: relative;
+}
+.tab.active {
+  background: transparent;
+}
+.tab.active:focus {
+  background: var(--focus);
+}
+
+/* ---------- Staggered entrance of rows and grid items ---------- */
+
+#page[data-enter='yes'] .rows > .row,
+#page[data-enter='yes'] .settings-grid > * {
+  animation: rise 0.5s var(--out) both;
+  animation-delay: calc(min(sibling-index(), 10) * 55ms);
+}
+#page[data-enter='yes'] .grid > .card,
+#page[data-enter='yes'] .track > .card {
+  animation: rise 0.45s var(--out) both;
+  animation-delay: calc(min(sibling-index(), 14) * 28ms);
+}
+#page[data-enter='yes'] .detail-info > *,
+#page[data-enter='yes'] .hero > * {
+  animation: rise 0.5s var(--out) both;
+  animation-delay: calc(sibling-index() * 45ms);
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(1.1rem);
+  }
+}
+
+/* ---------- Home banner crossfade ---------- */
+
+.hero.swap > * {
+  animation: hero-swap 0.42s var(--out) both;
+}
+.hero.swap > *:nth-child(2) {
+  animation-delay: 30ms;
+}
+.hero.swap > *:nth-child(3) {
+  animation-delay: 60ms;
+}
+.hero.swap > *:nth-child(4) {
+  animation-delay: 90ms;
+}
+@keyframes hero-swap {
+  from {
+    opacity: 0;
+    transform: translateX(-0.9rem);
+  }
+}
+
+/* ---------- Backdrop: slow drift + parallax ---------- */
+
+#backdrop {
+  --px: 0;
+}
+#backdrop .layer {
+  inset: -3%;
+  transform: translateX(calc(var(--px) * -2%)) scale(1.04);
+  transition: opacity 0.9s var(--ease), transform 1.4s var(--out);
+}
+#backdrop .layer.on {
+  transform: translateX(calc(var(--px) * -2%)) scale(1);
+  animation: drift 38s ease-in-out infinite alternate;
+}
+@keyframes drift {
+  to {
+    translate: -1.2% -1%;
+    scale: 1.06;
+  }
+}
+
+/* ---------- Cards: springy focus, shine sweep, image fade-in, shimmer ---------- */
+
+.card {
+  transition: transform 0.32s var(--spring);
+}
+.card .art {
+  transition: box-shadow 0.25s var(--ease), transform 0.32s var(--spring);
+}
+.card .art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.22) 50%, transparent 65%);
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+.card:focus .art::after {
+  animation: shine 0.9s var(--ease) 0.1s;
+}
+@keyframes shine {
+  to {
+    transform: translateX(120%);
+  }
+}
+.art img,
+.detail-poster img,
+.hero-logo,
+.detail-logo {
+  opacity: 0;
+  transition: opacity 0.45s var(--ease);
+}
+.art img.loaded,
+.detail-poster img.loaded,
+.hero-logo.loaded,
+.detail-logo.loaded {
+  opacity: 1;
+}
+.art:has(> img:not(.loaded)) {
+  background: linear-gradient(100deg, var(--bg-2) 30%, #1a1d27 50%, var(--bg-2) 70%) 0 0 / 300% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer {
+  to {
+    background-position: -150% 0;
+  }
+}
+.pressed,
+.btn.pressed,
+.card.pressed {
+  transform: scale(0.95) !important;
+  transition-duration: 0.08s !important;
+}
+.btn,
+.chip,
+.tab,
+.key,
+.setting,
+.qm-btn {
+  transition-timing-function: var(--spring) !important;
+  transition-duration: 0.26s !important;
+}
+
+/* ---------- Dialogs, menu, toasts, overlays ---------- */
+
+.modal {
+  animation: fade 0.22s var(--ease);
+}
+.dialog {
+  animation: pop 0.34s var(--spring);
+}
+.dialog p {
+  white-space: pre-line;
+}
+.modal.closing {
+  animation: fade-out 0.17s var(--ease) forwards;
+}
+.modal.closing .dialog {
+  animation: pop-out 0.17s var(--ease) forwards;
+}
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes pop-out {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+.choices .btn {
+  animation: rise 0.35s var(--out) both;
+  animation-delay: calc(sibling-index() * 35ms);
+}
+.qm-panel {
+  animation: slide-in 0.34s var(--out);
+}
+#quick-menu.closing {
+  animation: fade-out 0.2s var(--ease) forwards;
+}
+#quick-menu.closing .qm-panel {
+  animation: slide-out 0.2s var(--ease) forwards;
+}
+@keyframes slide-out {
+  to {
+    transform: translateX(3rem);
+    opacity: 0;
+  }
+}
+.qm-btn,
+.qm-slider {
+  animation: rise 0.4s var(--out) both;
+  animation-delay: calc(sibling-index() * 30ms + 80ms);
+}
+.toast {
+  animation: toast-in 0.4s var(--spring);
+}
+.toast.out {
+  animation: toast-out 0.26s var(--ease) forwards;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(2rem) scale(0.96);
+  }
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+}
+.gl > * {
+  animation: rise 0.6s var(--out) both;
+  animation-delay: calc(sibling-index() * 80ms);
+}
+.gl-logo {
+  animation: float-in 0.9s var(--out) both, bob 5s ease-in-out 1s infinite alternate;
+}
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(1.5rem) scale(0.96);
+  }
+}
+@keyframes bob {
+  to {
+    transform: translateY(-0.5rem);
+  }
+}
+
+/* ---------- Update overlay ---------- */
+
+#update-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 58;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(80% 80% at 50% 40%, rgba(20, 22, 30, 0.94), rgba(3, 4, 6, 0.98));
+  animation: fade 0.3s var(--ease);
+}
+.upd {
+  text-align: center;
+  padding: 0 2rem;
+}
+.upd h1 {
+  margin: 1.2rem 0 1.6rem;
+  font-size: 2.6rem;
+  letter-spacing: -0.02em;
+}
+.upd .bar {
+  width: 30rem;
+  max-width: 80vw;
+  height: 0.4rem;
+  margin: 0 auto 0.9rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+.upd .bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.4s var(--ease);
+}
+.upd-status {
+  color: var(--muted);
+  font-size: 1.1rem;
+  margin-bottom: 2rem;
+  font-variant-numeric: tabular-nums;
+}
+.brand-mark.big {
+  display: inline-block;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 0.8rem;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    transform: scale(0.9);
+    filter: brightness(1.3);
+  }
+}
+
+/* ---------- Reduced motion (setting or Windows preference) ---------- */
+
+body.reduce-motion *,
+body.reduce-motion *::before,
+body.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

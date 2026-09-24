@@ -57,7 +57,52 @@ function applyState(next) {
   I18N.setLang(S.lang);
   Sound.enable(S.settings.sounds !== false);
   Nav.setRumble(S.settings.haptics !== false);
+  applyMotion();
   renderStatus();
+}
+
+// ============================================================================ Motion
+
+const prefersReduced = matchMedia('(prefers-reduced-motion: reduce)');
+function reducedMotion() {
+  return S.settings.animations === 'reduced' || prefersReduced.matches;
+}
+function applyMotion() {
+  document.body.classList.toggle('reduce-motion', reducedMotion());
+}
+prefersReduced.addEventListener('change', applyMotion);
+
+/**
+ * Run `update` (which re-renders) as an animated view transition. When `from` is given, that element
+ * morphs into whatever `to()` returns in the new view (e.g. a card's artwork into the detail poster).
+ */
+function viewTransition(update, { from = null, to = null } = {}) {
+  if (!document.startViewTransition || reducedMotion()) return update();
+  if (from) from.style.viewTransitionName = 'morph';
+  let target = null;
+  const vt = document.startViewTransition(() => {
+    if (from) from.style.viewTransitionName = '';
+    update();
+    target = to ? to() : null;
+    if (target) target.style.viewTransitionName = 'morph';
+  });
+  vt.finished.finally(() => {
+    if (target) target.style.viewTransitionName = '';
+  });
+}
+
+// Fade artwork in once it has loaded (the .art box shows a shimmer until then).
+document.addEventListener(
+  'load',
+  (e) => {
+    if (e.target.tagName === 'IMG') e.target.classList.add('loaded');
+  },
+  true
+);
+function markLoadedImages(root) {
+  root.querySelectorAll('img').forEach((i) => {
+    if (i.complete && i.naturalWidth) i.classList.add('loaded');
+  });
 }
 
 // ============================================================================ Helpers
@@ -288,16 +333,28 @@ const route = () => stack[stack.length - 1];
 const page = $('#page');
 const VIEWS = {};
 
+const artOf = (el) => (el && el.closest ? (el.closest('.card') || el).querySelector('.art') : null);
+
 function go(r) {
   saveView();
-  stack.push(r);
   Sound.open();
-  render();
+  const from = artOf(document.activeElement);
+  document.body.dataset.nav = 'forward';
+  viewTransition(
+    () => {
+      stack.push(r);
+      render();
+    },
+    { from, to: () => page.querySelector('.detail-poster') }
+  );
 }
 
 function switchTab(name) {
   if (stack.length === 1 && route().name === name) return;
   saveView();
+  const before = TABS.findIndex((tab) => tab.name === stack[0].name);
+  const after = TABS.findIndex((tab) => tab.name === name);
+  document.body.dataset.nav = stack.length > 1 ? 'back' : after > before ? 'right' : 'left';
   stack.length = 0;
   stack.push({ name });
   render({ focusTab: Nav.mode() !== 'touch' });
@@ -308,9 +365,16 @@ function back() {
   if (QuickMenu.isOpen()) return QuickMenu.close();
   if (S.nowPlaying || S.game) return;
   if (stack.length > 1) {
-    stack.pop();
     Sound.back();
-    render({ restore: true });
+    const from = page.querySelector('.detail-poster');
+    document.body.dataset.nav = 'back';
+    viewTransition(
+      () => {
+        stack.pop();
+        render({ restore: true, animate: true });
+      },
+      { from, to: () => artOf(document.activeElement) }
+    );
     return;
   }
   const inTabs = document.activeElement && document.activeElement.closest('#tabs');
@@ -367,9 +431,27 @@ function renderTabs() {
       `<button class="tab focusable ${tab.name === root && topLevel ? 'active' : ''}" ${tab.name === root ? 'data-nav-default' : ''} data-tab="${tab.name}" data-key="tab-${tab.name}">${h(t(tab.key))}</button>`
   ).join('');
   document.body.classList.toggle('detail', !topLevel);
+  requestAnimationFrame(moveTabIndicator);
 }
 
-function render({ restore = false, focusTab = false, keepFocus = false } = {}) {
+/** The pill behind the active tab slides from tab to tab. */
+function moveTabIndicator() {
+  const ind = $('#tab-ind');
+  const active = $('#tabs .tab.active');
+  if (!ind) return;
+  if (!active) {
+    ind.style.opacity = '0';
+    return;
+  }
+  const wrap = $('#tabs').getBoundingClientRect();
+  const r = active.getBoundingClientRect();
+  ind.style.opacity = '1';
+  ind.style.width = `${r.width}px`;
+  ind.style.transform = `translateX(${r.left - wrap.left}px)`;
+}
+window.addEventListener('resize', () => requestAnimationFrame(moveTabIndicator));
+
+function render({ restore = false, focusTab = false, keepFocus = false, animate = !(restore || keepFocus) } = {}) {
   const r = route();
   const active = document.activeElement;
   const prevFocusKey = keepFocus && active ? active.dataset.key : null;
@@ -379,6 +461,9 @@ function render({ restore = false, focusTab = false, keepFocus = false } = {}) {
   document.body.classList.remove('dim-backdrop');
   const view = VIEWS[r.name];
   page.innerHTML = view.render(r);
+  // Staggered entrance when arriving on a page; none when refreshing it in place (e.g. new artwork).
+  page.dataset.enter = animate ? 'yes' : 'no';
+  markLoadedImages(page);
   if (view.mount) view.mount(r);
 
   let target = null;
@@ -414,7 +499,9 @@ function openModal(html, { wide = false, onMount } = {}) {
     const entry = {
       root,
       close(value = null) {
-        root.remove();
+        root.removeAttribute('data-nav-trap');
+        root.classList.add('closing');
+        setTimeout(() => root.remove(), reducedMotion() ? 0 : 170);
         modals.splice(modals.indexOf(entry), 1);
         if (returnFocus && returnFocus.isConnected) Nav.focus(returnFocus, { scroll: false });
         else Nav.focusFirst();
@@ -519,7 +606,10 @@ function toast(text, kind = 'info') {
   el.className = `toast ${kind}`;
   el.textContent = text;
   $('#toasts').appendChild(el);
-  setTimeout(() => el.remove(), kind === 'error' ? 6500 : 2600);
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 260);
+  }, kind === 'error' ? 6500 : 2600);
 }
 
 async function confirmExit() {
@@ -589,7 +679,9 @@ function renderTabHints() {
 function renderStatus() {
   const el = $('#status');
   let text = '';
-  if (S.scanning) text = t('status.scanning');
+  const up = S.update;
+  if (up && up.status === 'downloading' && !$('#update-layer').innerHTML) text = t('upd.downloadingShort', { n: up.progress || 0 });
+  else if (S.scanning) text = t('status.scanning');
   else if (S.metaStatus && S.metaStatus.running) text = t('status.artwork');
   else if (S.gameInfoStatus && S.gameInfoStatus.running) text = t('status.gameInfo');
   el.hidden = !text;
@@ -819,9 +911,18 @@ const QuickMenu = (() => {
   function close() {
     if (!open) return;
     open = false;
-    root.hidden = true;
     root.removeAttribute('data-nav-trap');
-    root.innerHTML = '';
+    const finish = () => {
+      if (open) return;
+      root.hidden = true;
+      root.classList.remove('closing');
+      root.innerHTML = '';
+    };
+    if (reducedMotion()) finish();
+    else {
+      root.classList.add('closing');
+      setTimeout(finish, 200);
+    }
     if (returnFocus && returnFocus.isConnected) Nav.focus(returnFocus, { scroll: false });
     else Nav.focusFirst();
     Hints.update();

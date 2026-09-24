@@ -210,6 +210,8 @@ const Nav = (() => {
     const el = current();
     if (el) {
       for (const cb of listeners.move) cb('select');
+      el.classList.add('pressed');
+      setTimeout(() => el.classList.remove('pressed'), 170);
       el.click();
     }
   }

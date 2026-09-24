@@ -12,6 +12,11 @@ const { scanSteam } = require('./src/steam');
 const { GameInfo } = require('./src/gameinfo');
 const { GameSession, titleFromExe, manualId } = require('./src/games');
 const { SystemHelper, wifi, power, setPriority, hasBattery } = require('./src/system');
+const { Updater, detectInstallType } = require('./src/updater');
+
+const REPO = 'thomasxd24/vlc-fse';
+const UPDATE_FIRST_CHECK_MS = 30 * 1000;
+const UPDATE_INTERVAL_MS = 6 * 3600 * 1000;
 
 const WATCHED_RATIO = 0.9;
 const MIN_RESUME_SECONDS = 60;
@@ -33,7 +38,10 @@ const DEFAULT_SETTINGS = {
   uiScale: 1,
   haptics: true,
   sounds: true,
-  freeWhilePlaying: true
+  animations: 'full', // 'full' | 'reduced'
+  freeWhilePlaying: true,
+  autoCheckUpdates: true,
+  skippedVersion: ''
 };
 
 if (!app.requestSingleInstanceLock()) {
@@ -61,6 +69,7 @@ let metaStatus = { running: false, error: null };
 let gameInfoStatus = { running: false, error: null };
 const ui = { suspended: false, state: null };
 const helper = new SystemHelper();
+let updater = null;
 let batteryPresent = null;
 
 const userFile = (name) => path.join(app.getPath('userData'), name);
@@ -266,6 +275,7 @@ function state() {
     packaged: app.isPackaged,
     fsePackage: Boolean(process.windowsStore),
     systemControls: helper.supported,
+    update: updater ? updater.state : null,
     hasBattery: batteryPresent,
     version: app.getVersion()
   };
@@ -652,6 +662,49 @@ function removeGame(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Updates (always the user's call: we only check, then ask)
+
+function setupUpdater() {
+  updater = new Updater({
+    repo: REPO,
+    version: app.getVersion(),
+    installType: process.env.FOYER_UPDATE_TYPE || detectInstallType({ packaged: app.isPackaged, windowsStore: process.windowsStore, exePath: process.execPath }),
+    dir: userFile('updates')
+  });
+  updater.on('state', (st) => send('update', st));
+  if (!updater.supported) return;
+  const auto = () => {
+    if (settings.get('autoCheckUpdates') && !gameSession && updater.state.status !== 'downloading') updater.check();
+  };
+  setTimeout(auto, UPDATE_FIRST_CHECK_MS);
+  setInterval(auto, UPDATE_INTERVAL_MS);
+}
+
+async function installUpdate() {
+  if (!updater || !updater.supported) return { ok: false };
+  if (gameSession) return { ok: false, errorKey: 'err.updateWhilePlaying' };
+  try {
+    if (updater.state.status !== 'ready') await updater.download();
+    if (gameSession) return { ok: false, errorKey: 'err.updateWhilePlaying' };
+    const { command, args } = await updater.installCommand({ pid: process.pid, exePath: process.execPath });
+    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore]) if (s.timer) s.flush();
+    if (session) session.kill();
+    const child = require('child_process').spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    await new Promise((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+    child.unref();
+    // Give the UI a moment to show "Installing…", then get out of the installer's way.
+    setTimeout(() => app.quit(), 1200);
+    return { ok: true };
+  } catch (err) {
+    updater.set({ status: 'error', error: err.message });
+    return { ok: false, errorKey: 'err.update', vars: { message: err.message } };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Window & IPC
 
 function bringToFront() {
@@ -857,6 +910,13 @@ function registerIpc() {
     if (/^(https:\/\/|ms-settings:)/.test(url)) shell.openExternal(url);
   });
 
+  ipcMain.handle('update-check', () => (updater ? updater.check() : null));
+  ipcMain.handle('update-install', () => installUpdate());
+  ipcMain.handle('update-skip', (_e, version) => {
+    settings.set('skippedVersion', String(version || ''));
+    pushLibrary();
+  });
+
   ipcMain.handle('toggle-fullscreen', () => win && win.setFullScreen(!win.isFullScreen()));
   ipcMain.handle('minimize', () => win && win.minimize());
   ipcMain.handle('quit', () => app.quit());
@@ -886,6 +946,7 @@ app.whenReady().then(() => {
 
   registerIpc();
   createWindow();
+  setupUpdater();
   // Show the cached library immediately, then refresh it in the background.
   win.webContents.once('did-finish-load', () => rescan());
 });
