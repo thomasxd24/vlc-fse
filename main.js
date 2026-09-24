@@ -256,7 +256,7 @@ function buildViewModel() {
     .sort((a, b) => b.at - a.at)
     .slice(0, 20);
 
-  return { movies, shows, games: buildGames(), continueWatching, scannedAt: library.scannedAt, steamFound: Boolean(library.steamPath) };
+  return { movies, shows, games: buildGames(), continueWatching, scannedAt: library.scannedAt, steamFound: Boolean(library.steamPath), steamUser: library.steamUser || null };
 }
 
 function state() {
@@ -310,6 +310,7 @@ async function scanGamesOnly() {
   });
   library.games = steam ? steam.games : [];
   library.steamPath = steam ? steam.steamPath : null;
+  library.steamUser = steam && steam.user ? steam.user.name : null;
 }
 
 async function rescan() {

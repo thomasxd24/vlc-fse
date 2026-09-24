@@ -128,9 +128,12 @@ const Nav = (() => {
     }
     // Nearest row (or column) first, then whatever lines up best within it: this is what people expect on a TV,
     // e.g. Down from a button lands on the tabs just below it even if a bigger card further down is better aligned.
+    // Left/right inside a row of cards stays in that row: at its end, you stay put rather than jumping
+    // diagonally into the neighbouring row.
+    const track = (dir === 'left' || dir === 'right') && from.closest('.track');
     const scored = [];
     for (const el of candidates()) {
-      if (el === from) continue;
+      if (el === from || (track && !track.contains(el))) continue;
       const s = score(from, el, dir);
       if (s) scored.push({ el, ...s });
     }

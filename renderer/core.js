@@ -59,6 +59,7 @@ function applyState(next) {
   Nav.setRumble(S.settings.haptics !== false);
   applyMotion();
   renderStatus();
+  if (typeof Status !== 'undefined') Status.tick(); // the clock's format follows the language
 }
 
 // ============================================================================ Motion

@@ -335,6 +335,13 @@ const ACTIONS = {
   'edit-game': (d) => editGame(d.id),
   'add-game': () => addGame(),
   screenshot: (d) => showScreenshot(d.id, Number(d.index)),
+  'see-all': (d) => {
+    if (d.pref) {
+      prefs[d.pref] = d.value;
+      savePrefs();
+    }
+    switchTab(d.tab);
+  },
   'toggle-fav': (d) => {
     const item = idx.games.get(d.id) || idx.movies.get(d.id) || idx.shows.get(d.id);
     if (item) setPref(d.id, 'favorites', !item.favorite);

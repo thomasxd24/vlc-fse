@@ -289,7 +289,7 @@ body.detail #topbar {
   overflow-y: auto;
   scroll-padding: 0.5rem 0 2rem;
   padding-bottom: 6rem;
-  mask-image: linear-gradient(180deg, transparent 0, #000 1.2rem);
+  mask-image: linear-gradient(180deg, transparent 0, #000 0.35rem);
 }
 
 .meta {
@@ -914,10 +914,12 @@ body.detail #topbar {
 
 /* ------------------------------------------------------------------ Modal */
 
+/* Layers: page 1 · top bar 20 · VLC 40 · game 42 · hints 45 · quick menu 55 · update 58 · dialogs 70 · toasts 80.
+   Dialogs sit above every overlay because the overlays open them (e.g. "Shut down now?" from the quick menu). */
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 70;
   display: grid;
   place-items: center;
   background: rgba(3, 4, 6, 0.72);
@@ -1028,7 +1030,7 @@ body.detail #topbar {
   position: fixed;
   right: var(--gutter);
   bottom: 3rem;
-  z-index: 60;
+  z-index: 80;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
@@ -2165,4 +2167,137 @@ body.reduce-motion *::after {
   animation-delay: 0ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
+}
+
+/* ================================================================== Home v2 */
+
+.rows {
+  position: relative; /* rows align to this box (see alignRow) */
+}
+.hero {
+  min-height: 0;
+  flex: 0 0 auto;
+  height: 48vh;
+  padding: 6.5rem var(--gutter) 1.2rem;
+  justify-content: flex-end;
+}
+.hero .overview {
+  -webkit-line-clamp: 2;
+  max-width: 44rem;
+  font-size: 1.15rem;
+}
+.hero-actions {
+  margin-top: 1.1rem;
+  gap: 0.7rem;
+}
+.hero-actions .btn {
+  padding: 0.75rem 1.4rem;
+  font-size: 1.1rem;
+}
+.hero-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 0.9rem;
+  color: var(--muted);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+.hero-progress .bar {
+  width: 16rem;
+  height: 0.3rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+.hero-progress .bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.hero .kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.spot-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(255, 138, 30, 0.6);
+  animation: spot 1.8s ease-out infinite;
+}
+@keyframes spot {
+  70% {
+    box-shadow: 0 0 0 0.6rem rgba(255, 138, 30, 0);
+  }
+}
+.hero.spotlight .hero-actions {
+  opacity: 0.85;
+}
+
+.row h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+.row-kicker {
+  flex-basis: 100%;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.row-count {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.card.see-all .art {
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.see-all-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: var(--muted);
+}
+.see-all-inner .ico {
+  width: 2.2rem;
+  height: 2.2rem;
+}
+.card.see-all:focus .see-all-inner {
+  color: var(--text);
+}
+
+@media (max-width: 1400px) {
+  .hero {
+    height: 50vh;
+    padding-top: 5.2rem;
+  }
+  .hero h1 {
+    font-size: 3rem;
+  }
+  .hero-logo {
+    max-height: 7rem;
+  }
+  .hero .overview {
+    -webkit-line-clamp: 2;
+  }
+}
+@media (max-height: 820px) {
+  .hero .overview {
+    -webkit-line-clamp: 1;
+  }
 }

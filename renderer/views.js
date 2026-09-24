@@ -54,7 +54,7 @@ function gameWideCard(g, keyPrefix) {
   const bg = g.hero || g.header || g.poster;
   const logo = g.logo ? `<img class="card-logo logo-img" src="${h(g.logo)}" alt="">` : `<div class="card-logo-text">${h(g.title)}</div>`;
   return `
-    <button class="card wide focusable" data-key="${keyPrefix}-${g.id}" data-hero="game:${g.id}" data-opts="game:${g.id}" data-act="open-game" data-id="${g.id}">
+    <button class="card wide focusable" data-key="${keyPrefix}-${g.id}" data-hero="game:${g.id}" data-opts="game:${g.id}" data-act="play-game" data-id="${g.id}" data-hint="hint.play">
       <div class="art">${bg ? img(bg, g.title, '') : placeholder(g.title, '')}<div class="art-shade"></div>${logo}</div>
       <div class="label">${h(g.title)}</div>
       <div class="sublabel">${h([fmtAgo(g.lastPlayed), fmtPlaytime(g.playtime)].filter(Boolean).join(' · '))}</div>
@@ -99,12 +99,23 @@ function episodeCard(e, show) {
     </button>`;
 }
 
-function row(title, cards, key) {
+/**
+ * A horizontal row of cards. `opts.total` shows a count next to the title; `opts.seeAll` ({tab, pref, value})
+ * ends the row with a card that opens that tab already sorted/filtered.
+ */
+function row(title, cards, key, opts = {}) {
   if (!cards.length) return '';
+  const count = opts.total ? `<span class="row-count">${opts.total}</span>` : '';
+  const kicker = opts.kicker ? `<span class="row-kicker">${h(opts.kicker)}</span>` : '';
+  const seeAll = opts.seeAll
+    ? `<button class="card see-all focusable ${opts.wide ? 'wide' : ''}" data-act="see-all" data-tab="${opts.seeAll.tab}" data-pref="${opts.seeAll.pref || ''}" data-value="${opts.seeAll.value || ''}" data-key="${key}-all">
+         <div class="art"><span class="see-all-inner">${ICON.more}<span>${h(t('home.seeAll'))}</span></span></div>
+       </button>`
+    : '';
   return `
-    <section class="row" data-nav-group>
-      <h2>${h(title)}</h2>
-      <div class="track" data-scroll="${key}">${cards.join('')}</div>
+    <section class="row" data-nav-group data-row="${key}">
+      <h2>${kicker}${h(title)}${count}</h2>
+      <div class="track" data-scroll="${key}">${cards.join('')}${seeAll}</div>
     </section>`;
 }
 
@@ -153,6 +164,13 @@ VIEWS.welcome = {
   }
 };
 
+function greeting() {
+  const hr = new Date().getHours();
+  const part = hr < 5 ? 'night' : hr < 12 ? 'morning' : hr < 18 ? 'afternoon' : hr < 22 ? 'evening' : 'night';
+  const name = S.library.steamUser;
+  return name ? t(`greet.${part}Name`, { name }) : t(`greet.${part}`);
+}
+
 VIEWS.home = {
   render(r) {
     const L = S.library;
@@ -164,33 +182,68 @@ VIEWS.home = {
       return VIEWS.welcome.render();
     }
     r.welcome = false;
-    const played = games.filter((g) => g.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed).slice(0, 12);
-    const recentGames = [...games].sort((a, b) => b.addedAt - a.addedAt).slice(0, 20);
+    const played = games.filter((g) => g.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed);
+    const recentGames = [...games].sort((a, b) => b.addedAt - a.addedAt);
     const favorites = [...games, ...movies, ...shows].filter((x) => x.favorite).sort((a, b) => a.title.localeCompare(b.title));
-    const recentMovies = [...movies].sort((a, b) => b.addedAt - a.addedAt).slice(0, 20);
-    const recentShows = [...shows].sort((a, b) => b.addedAt - a.addedAt).slice(0, 20);
+    const recentMovies = [...movies].sort((a, b) => b.addedAt - a.addedAt);
+    const recentShows = [...shows].sort((a, b) => b.addedAt - a.addedAt);
     const unwatched = movies.filter((m) => !m.progress.watched && !m.progress.resumable);
+    const cw = L.continueWatching.map(continueCard).filter(Boolean);
+
+    // Whatever you did most recently leads: games or films/TV.
+    const lastGame = played.length ? played[0].lastPlayed : 0;
+    const lastWatch = L.continueWatching.length ? L.continueWatching[0].at : 0;
+    const gameRow = { key: 'jb', html: (kicker) => row(t('home.jumpBackIn'), played.slice(0, 12).map((g) => gameWideCard(g, 'jb')), 'jb', { kicker, wide: true, seeAll: played.length > 12 ? { tab: 'games', pref: 'gameSort', value: 'recent' } : null }) };
+    const watchRow = { key: 'cw', html: (kicker) => row(t('home.continueWatching'), cw, 'cw', { kicker, wide: true }) };
+    const lead = lastWatch > lastGame ? [watchRow, gameRow] : [gameRow, watchRow];
+    const leadHtml = [];
+    for (const r0 of lead) {
+      const html = r0.html(leadHtml.length ? '' : greeting());
+      if (html) leadHtml.push(html);
+    }
+    const g1 = leadHtml.length ? '' : greeting();
     const rows = [
-      row(t('home.jumpBackIn'), played.map((g) => gameWideCard(g, 'jb')), 'jb'),
-      row(t('home.continueWatching'), L.continueWatching.map(continueCard).filter(Boolean), 'cw'),
-      row(t('home.favorites'), favorites.map((x) => posterCard(x, 'fv')), 'fv'),
-      row(t('home.recentGames'), recentGames.map((g) => posterCard(g, 'rg')), 'rg'),
-      row(t('home.recentMovies'), recentMovies.map((m) => posterCard(m, 'rm')), 'rm'),
-      row(t('home.recentShows'), recentShows.map((s) => posterCard(s, 'rs')), 'rs'),
-      row(t('home.unwatchedMovies'), unwatched.slice(0, 30).map((m) => posterCard(m, 'um')), 'um')
+      ...leadHtml,
+      row(t('home.favorites'), favorites.map((x) => posterCard(x, 'fv')), 'fv', { kicker: g1, total: favorites.length }),
+      row(t('home.recentGames'), recentGames.slice(0, 16).map((g) => posterCard(g, 'rg')), 'rg', { kicker: leadHtml.length || favorites.length ? '' : g1, total: games.length, seeAll: games.length > 16 ? { tab: 'games', pref: 'gameSort', value: 'added' } : null }),
+      row(t('home.recentMovies'), recentMovies.slice(0, 16).map((m) => posterCard(m, 'rm')), 'rm', { total: movies.length, seeAll: movies.length > 16 ? { tab: 'movies', pref: 'movieSort', value: 'added' } : null }),
+      row(t('home.recentShows'), recentShows.slice(0, 16).map((x) => posterCard(x, 'rs')), 'rs', { total: shows.length, seeAll: shows.length > 16 ? { tab: 'shows', pref: 'showSort', value: 'added' } : null }),
+      row(t('home.unwatchedMovies'), unwatched.slice(0, 16).map((m) => posterCard(m, 'um')), 'um', { total: unwatched.length, seeAll: unwatched.length > 16 ? { tab: 'movies', pref: 'movieFilter', value: 'unwatched' } : null })
     ].join('');
     const empty = !rows.trim() ? `<div class="page-head"><div class="empty-hint">${h(t('status.scanning'))}</div></div>` : '';
     return `
       <div class="page home">
-        <div class="hero" id="hero"></div>
+        <section class="hero" id="hero" data-nav-group></section>
         <div class="rows" data-scroll="home">${rows}${empty}</div>
       </div>`;
   },
   mount() {
+    // Start on the first card (the banner shows it); the banner's buttons are one press Up.
+    const first = page.querySelector('.rows .card');
+    if (first) first.setAttribute('data-autofocus', '');
+    alignedRow = null;
     if ($('#hero')) heroFromFocus();
+    Spotlight.arm();
   },
-  onFocus: () => heroFromFocus()
+  onFocus(r, target) {
+    heroFromFocus();
+    alignRow(target);
+  }
 };
+
+/** Keep the row you're on in the same place under the banner, so moving up/down never jumps around. */
+let alignedRow = null;
+function alignRow(target) {
+  const rowEl = target.closest && target.closest('.row');
+  const rows = rowEl && rowEl.closest('.rows');
+  if (!rows || rowEl === alignedRow) return;
+  alignedRow = rowEl;
+  // After Nav's own scrollIntoView, so ours wins.
+  requestAnimationFrame(() => {
+    const top = rowEl.offsetTop;
+    rows.scrollTo({ top: Math.max(0, top), behavior: reducedMotion() ? 'auto' : 'smooth' });
+  });
+}
 
 function heroFromFocus() {
   const hero = $('#hero');
@@ -198,19 +251,46 @@ function heroFromFocus() {
   if (!hero || !a) return;
   const key = a.dataset && a.dataset.hero;
   if (!key) {
-    if (!hero.innerHTML) {
+    // Focus on the banner's own buttons keeps what it shows.
+    if (!hero.dataset.item) {
       const first = page.querySelector('[data-hero]');
       if (first) paintHero(first.dataset.hero);
     }
     return;
   }
+  Spotlight.stop();
   paintHero(key);
 }
 
-function paintHero(key) {
+/** The banner's buttons for an item: the main action (play/resume) and its details page. */
+function heroActions(type, id) {
+  const btn = (act, attrs, icon, label, primary) =>
+    `<button class="btn ${primary ? 'primary' : ''} focusable" data-act="${act}" ${attrs} ${primary ? 'data-nav-default' : ''} data-key="hero-${primary ? 'play' : 'info'}">${icon}${h(label)}</button>`;
+  if (type === 'game') return btn('play-game', `data-id="${id}"`, ICON.play, t('game.play'), true) + btn('open-game', `data-id="${id}"`, ICON.more, t('opt.details'));
+  if (type === 'movie') {
+    const m = idx.movies.get(id);
+    const label = m.progress.resumable ? t('media.resumeFrom', { time: fmtTime(m.progress.time) }) : t('media.play');
+    return btn('play-movie', `data-id="${id}" data-mode="${m.progress.resumable ? 'resume' : 'start'}"`, ICON.play, label, true) + btn('open-movie', `data-id="${id}"`, ICON.more, t('opt.details'));
+  }
+  if (type === 'show') {
+    const s = idx.shows.get(id);
+    const next = s.nextUp ? idx.episodes.get(s.nextUp) : null;
+    const main = next ? btn('play-episode', `data-show="${s.id}" data-id="${next.id}"`, ICON.play, next.progress.resumable ? t('show.resumeEp', { ep: epCode(next) }) : t('show.playEp', { ep: epCode(next) }), true) : '';
+    return main + btn('open-show', `data-id="${id}"`, ICON.more, t('opt.details'), !main);
+  }
+  if (type === 'episode') {
+    const e = idx.episodes.get(id);
+    return (
+      btn('play-episode', `data-show="${e.show.id}" data-id="${e.id}"`, ICON.play, e.progress.resumable ? t('media.resumeFrom', { time: fmtTime(e.progress.time) }) : t('media.play'), true) +
+      btn('open-show', `data-id="${e.show.id}"`, ICON.more, t('opt.goToShow'))
+    );
+  }
+  return '';
+}
+
+function paintHero(key, { spotlight = false } = {}) {
   const hero = $('#hero');
   if (!hero || hero.dataset.item === key) return;
-  hero.dataset.item = key;
   const [type, id] = key.split(':');
   let kicker = '';
   let title = '';
@@ -218,6 +298,7 @@ function paintHero(key) {
   let meta = '';
   let overview = '';
   let bg = null;
+  let progress = null;
   if (type === 'movie') {
     const m = idx.movies.get(id);
     if (!m) return;
@@ -226,6 +307,7 @@ function paintHero(key) {
     meta = metaLine(m);
     overview = m.overview;
     bg = m.backdrop || m.poster;
+    if (m.progress.resumable) progress = m.progress;
   } else if (type === 'show') {
     const s = idx.shows.get(id);
     if (!s) return;
@@ -242,6 +324,7 @@ function paintHero(key) {
     meta = `<div class="meta">${e.runtime ? `<span>${fmtRuntime(e.runtime)}</span>` : ''}<span>${h(e.progress.resumable ? remaining(e.progress) : t('media.upNext'))}</span></div>`;
     overview = e.overview || e.show.overview;
     bg = e.show.backdrop || e.thumb || e.show.poster;
+    if (e.progress.resumable) progress = e.progress;
   } else if (type === 'game') {
     const g = idx.games.get(id);
     if (!g) return;
@@ -251,18 +334,95 @@ function paintHero(key) {
     meta = gameMetaLine(g);
     overview = g.overview;
     bg = g.hero || g.header || g.poster;
-  }
+  } else return;
+  hero.dataset.item = key;
   hero.classList.remove('swap');
   void hero.offsetWidth; // restart the crossfade
   hero.classList.add('swap');
-  parallaxFrom(document.activeElement);
+  hero.classList.toggle('spotlight', spotlight);
+  if (!spotlight) parallaxFrom(document.activeElement);
+  // Keep focus if it was on the banner's buttons (a spotlight change re-renders them).
+  const refocus = hero.contains(document.activeElement) ? document.activeElement.dataset.key : null;
   hero.innerHTML = `
-    <div class="kicker">${h(kicker)}</div>
+    <div class="kicker">${spotlight ? `<span class="spot-dot"></span>${h(t('home.spotlight'))} · ` : ''}${h(kicker)}</div>
     ${logo ? `<img class="hero-logo logo-img" src="${h(logo)}" alt="${h(title)}">` : `<h1>${h(title)}</h1>`}
     ${meta}
-    ${overview ? `<p class="overview">${h(overview)}</p>` : ''}`;
+    ${overview ? `<p class="overview">${h(overview)}</p>` : ''}
+    ${progress ? `<div class="hero-progress"><div class="bar"><i style="width:${pct(progress)}%"></i></div><span>${h(t('media.timeOf', { time: fmtTime(progress.time), total: fmtTime(progress.length) }))}</span></div>` : ''}
+    <div class="actions hero-actions">${heroActions(type, id)}</div>`;
+  if (refocus) {
+    const el = hero.querySelector(`[data-key="${refocus}"]`) || hero.querySelector('.btn');
+    if (el) Nav.focus(el, { scroll: false });
+  }
   Backdrop.set(bg);
 }
+
+/**
+ * Spotlight: after a while without input on Home, the banner slowly cycles through your recent games and
+ * shows (the TV-launcher "attract" loop). Any input snaps it back to what's selected.
+ */
+const Spotlight = (() => {
+  const IDLE_MS = 45000;
+  const EVERY_MS = 11000;
+  let idleTimer = null;
+  let cycleTimer = null;
+  let index = 0;
+  let running = false;
+
+  function items() {
+    return [...page.querySelectorAll('.rows [data-row="jb"] [data-hero], .rows [data-row="cw"] [data-hero], .rows [data-row="fv"] [data-hero]')]
+      .map((el) => el.dataset.hero)
+      .filter((k, i, all) => all.indexOf(k) === i)
+      .slice(0, 10);
+  }
+
+  function next() {
+    const list = items();
+    const hero = $('#hero');
+    if (list.length < 2 || !hero || route().name !== 'home' || document.hidden || modals.length || S.game || S.nowPlaying) return;
+    index = (index + 1) % list.length;
+    if (list[index] === hero.dataset.item) index = (index + 1) % list.length;
+    paintHero(list[index], { spotlight: true });
+  }
+
+  function start() {
+    if (running || reducedMotion()) return;
+    running = true;
+    index = Math.max(0, items().indexOf(($('#hero') || {}).dataset?.item));
+    next();
+    cycleTimer = setInterval(next, EVERY_MS);
+  }
+
+  function stop() {
+    clearInterval(cycleTimer);
+    const was = running;
+    running = false;
+    if (was) {
+      // Back to whatever is actually selected.
+      const hero = $('#hero');
+      const a = document.activeElement;
+      if (hero) {
+        delete hero.dataset.item;
+        const key = a && a.dataset && a.dataset.hero;
+        paintHero(key || (page.querySelector('[data-hero]') || {}).dataset?.hero || '');
+      }
+    }
+  }
+
+  function arm() {
+    clearTimeout(idleTimer);
+    if (route().name === 'home') idleTimer = setTimeout(start, IDLE_MS);
+  }
+
+  const wake = () => {
+    if (running) stop();
+    arm();
+  };
+  for (const ev of ['keydown', 'pointerdown', 'wheel', 'touchstart']) document.addEventListener(ev, wake, { passive: true, capture: true });
+  Nav.onMove(wake);
+  Nav.onAction(wake);
+  return { arm, stop, isRunning: () => running };
+})();
 
 // ============================================================================ Grids
 
