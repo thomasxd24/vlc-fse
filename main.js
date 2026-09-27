@@ -21,6 +21,8 @@ const UPDATE_INTERVAL_MS = 6 * 3600 * 1000;
 const WATCHED_RATIO = 0.9;
 const MIN_RESUME_SECONDS = 60;
 const SUSPEND_DELAY_MS = 4000;
+const MAX_SESSIONS = 20000; // the play/watch log behind the stats page (~1 MB at most)
+const MAX_WATCH_STEP = 5; // seconds of playback credited per VLC poll; bigger jumps are seeks, not watching
 
 const DEFAULT_SETTINGS = {
   libraries: [], // { path, type: 'movies' | 'tv' }
@@ -57,6 +59,7 @@ let progressStore;
 let metaStore;
 let gamesStore; // { manual: [], overrides: {}, stats: {} }
 let gameInfoStore;
+let statsStore; // { sessions: [{ kind: 'game' | 'watch', id, start, minutes }] }
 let prefsStore; // { favorites: {}, hidden: {}, languages: { [movie or show id]: {audio, subs} } }
 let metadata;
 let gameInfo;
@@ -421,7 +424,7 @@ function buildQueue(req) {
     const m = library.movies.find((x) => x.id === req.id);
     if (!m) throw new Error('notFound');
     const pr = progressFor(m.path);
-    return { title: m.title, queue: [{ path: m.path, startTime: req.resume && resumable(pr) ? pr.time : 0, languages: languagesOf(m.id) }] };
+    return { title: m.title, queue: [{ path: m.path, startTime: req.resume && resumable(pr) ? pr.time : 0, languages: languagesOf(m.id), itemId: m.id }] };
   }
   const show = library.shows.find((s) => s.id === req.showId);
   const idx = show ? show.episodes.findIndex((e) => e.id === req.id) : -1;
@@ -433,7 +436,10 @@ function buildQueue(req) {
   const languages = languagesOf(show.id);
   return {
     title: label(first),
-    queue: [{ path: first.path, startTime: req.resume && resumable(pr) ? pr.time : 0, languages, label: label(first) }, ...rest.map((e) => ({ path: e.path, languages, label: label(e) }))]
+    queue: [
+      { path: first.path, startTime: req.resume && resumable(pr) ? pr.time : 0, languages, label: label(first), itemId: show.id },
+      ...rest.map((e) => ({ path: e.path, languages, label: label(e), itemId: show.id }))
+    ]
   };
 }
 
@@ -453,6 +459,9 @@ async function play(req) {
     return { ok: false, errorKey: 'err.notFound' };
   }
 
+  const watched = new Map(); // item id -> seconds actually spent watching during this session
+  const watchStart = Date.now();
+  let lastPos = null;
   const s = new VlcSession(vlcPath, job.queue, {
     fullscreen: settings.get('vlcFullscreen'),
     languages: { audio: settings.get('audioLanguage'), subs: settings.get('subLanguage') },
@@ -465,6 +474,12 @@ async function play(req) {
   s.on('progress', (p) => {
     if (session !== s) return;
     recordProgress(p);
+    const q = job.queue.find((x) => x.path === p.path);
+    if (lastPos && lastPos.path === p.path && !p.paused && q && q.itemId) {
+      const step = p.time - lastPos.time;
+      if (step > 0) watched.set(q.itemId, (watched.get(q.itemId) || 0) + Math.min(step, MAX_WATCH_STEP));
+    }
+    lastPos = { path: p.path, time: p.time };
     const index = Math.max(0, job.queue.findIndex((q) => q.path === p.path));
     const title = job.queue[index].label || nowPlaying.title;
     nowPlaying = { ...nowPlaying, title, current: p.path, time: p.time, length: p.length, paused: p.paused ?? nowPlaying.paused, index };
@@ -472,6 +487,8 @@ async function play(req) {
   });
   const finish = (errorKey, vars) => {
     if (powerSaveBlocker.isStarted(blocker)) powerSaveBlocker.stop(blocker);
+    for (const [id, sec] of watched) logSession('watch', id, watchStart, sec / 60);
+    watched.clear();
     if (session !== s) return;
     session = null;
     nowPlaying = null;
@@ -566,6 +583,29 @@ function recordPlay(id, playedMs) {
   s.playtime = (s.playtime || 0) + Math.round(playedMs / 60000);
   stats[id] = s;
   gamesStore.save();
+  logSession('game', id, Date.now() - playedMs, playedMs / 60000);
+}
+
+/** One entry in the log behind the stats page: a game played or a film/show watched, from `start` (ms). */
+function logSession(kind, id, start, minutes) {
+  const m = Math.round(minutes);
+  if (m < 1) return;
+  const list = statsStore.get('sessions');
+  list.push({ kind, id, start: Math.round(start), minutes: m });
+  if (list.length > MAX_SESSIONS) list.splice(0, list.length - MAX_SESSIONS);
+  statsStore.save();
+}
+
+/** Everything the stats page needs: the session log, plus names and art for whatever it mentions. */
+function statsData() {
+  const sessions = statsStore.get('sessions');
+  const ids = new Set(sessions.map((x) => x.id));
+  const vm = buildViewModel();
+  const items = {};
+  for (const g of vm.games) if (ids.has(g.id) || g.playtime) items[g.id] = { type: 'game', title: g.title, poster: g.poster, icon: g.icon, playtime: g.playtime };
+  for (const m of vm.movies) if (ids.has(m.id)) items[m.id] = { type: 'movie', title: m.title, poster: m.poster };
+  for (const x of vm.shows) if (ids.has(x.id)) items[x.id] = { type: 'show', title: x.title, poster: x.poster };
+  return { sessions, items, now: Date.now() };
 }
 
 async function playGame(id) {
@@ -732,7 +772,7 @@ async function installUpdate() {
     if (updater.state.status !== 'ready') await updater.download();
     if (gameSession) return { ok: false, errorKey: 'err.updateWhilePlaying' };
     const { command, args } = await updater.installCommand({ pid: process.pid, exePath: process.execPath });
-    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore]) if (s.timer) s.flush();
+    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore]) if (s.timer) s.flush();
     if (session) session.kill();
     const child = require('child_process').spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
     await new Promise((resolve, reject) => {
@@ -819,6 +859,7 @@ function registerIpc() {
   ipcMain.handle('stop', () => {
     if (session) session.kill();
   });
+  ipcMain.handle('get-stats', () => statsData());
   ipcMain.handle('np-command', (_e, name) => nowPlayingCommand(name));
   ipcMain.handle('set-languages', (_e, { id, languages }) => setLanguages(id, languages));
   ipcMain.handle('set-watched', (_e, req) => setWatched(pathsFor(req), req.watched));
@@ -950,7 +991,7 @@ function registerIpc() {
   ipcMain.handle('power', async (_e, action) => {
     if (action === 'desktop') return win.minimize();
     if (!['sleep', 'restart', 'shutdown'].includes(action)) return;
-    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore]) if (s.timer) s.flush();
+    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore]) if (s.timer) s.flush();
     return power(action, helper).catch(() => null);
   });
   ipcMain.handle('open-external', (_e, url) => {
@@ -983,6 +1024,7 @@ app.whenReady().then(() => {
   gamesStore = new JsonStore(userFile('games.json'), { manual: [], overrides: {}, stats: {} });
   gameInfoStore = new JsonStore(userFile('gameinfo.json'), { games: {} });
   prefsStore = new JsonStore(userFile('prefs.json'), { favorites: {}, hidden: {}, languages: {} });
+  statsStore = new JsonStore(userFile('stats.json'), { sessions: [] });
   library = { games: [], ...libraryStore.data };
   metadata = new Metadata({ store: metaStore, imageDir: userFile('artwork'), apiKey: settings.get('tmdbKey') });
   makeGameInfo();
@@ -1001,7 +1043,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   if (session) session.kill();
   helper.stop();
-  for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore]) if (s && s.timer) s.flush();
+  for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore]) if (s && s.timer) s.flush();
 });
 
 app.on('window-all-closed', () => app.quit());

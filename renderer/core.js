@@ -29,7 +29,8 @@ const VIEW_PREFS_DEFAULT = {
   showSort: 'title',
   showFilter: 'all',
   gameSort: 'recent',
-  gameFilter: 'all'
+  gameFilter: 'all',
+  statsPeriod: 'week'
 };
 const prefs = loadPrefs();
 function loadPrefs() {
@@ -240,7 +241,8 @@ const ICON = {
   rewind: svg('<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8.5v4l2.5 1.5"/>'),
   forward: svg('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><path d="M12 8.5v4l2.5 1.5"/>'),
   next: svg('<path d="M5 5.5v13a1 1 0 0 0 1.5.86L16 13.5v5h2.5v-13H16v5L6.5 4.64A1 1 0 0 0 5 5.5z"/>', true),
-  subs: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M13 15h4M7 11.5h2M11 11.5h6"/>')
+  subs: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M13 15h4M7 11.5h2M11 11.5h6"/>'),
+  chart: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>')
 };
 
 // ============================================================================ Sound
@@ -810,6 +812,7 @@ const QuickMenu = (() => {
           ${showPower ? `<button class="qm-btn focusable" data-qm="sleep" data-key="qm-sleep">${ICON.moon}<span>${h(t('qm.sleep'))}</span></button>` : ''}
           ${showPower ? `<button class="qm-btn focusable" data-qm="restart" data-key="qm-restart">${ICON.restart}<span>${h(t('qm.restart'))}</span></button>` : ''}
           ${showPower ? `<button class="qm-btn focusable" data-qm="shutdown" data-key="qm-shutdown">${ICON.power}<span>${h(t('qm.shutdown'))}</span></button>` : ''}
+          <button class="qm-btn focusable" data-qm="stats" data-key="qm-stats">${ICON.chart}<span>${h(t('stats.title'))}</span></button>
           <button class="qm-btn focusable" data-qm="settings" data-key="qm-settings">${ICON.gamepad}<span>${h(t('tab.settings'))}</span></button>
           <button class="qm-btn danger focusable" data-qm="quit" data-key="qm-quit">${ICON.exit}<span>${h(t('qm.quit'))}</span></button>
         </div>
@@ -875,6 +878,11 @@ const QuickMenu = (() => {
     if (action === 'settings') {
       close();
       switchTab('settings');
+      return;
+    }
+    if (action === 'stats') {
+      close();
+      if (route().name !== 'stats') openStats();
       return;
     }
     if (action === 'desktop') {

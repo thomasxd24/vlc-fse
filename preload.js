@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('foyer', {
   setWatched: call('set-watched'),
   setPref: call('set-pref'),
   showInFolder: call('show-in-folder'),
+  getStats: call('get-stats'),
   // Games
   playGame: call('play-game'),
   endGame: call('end-game'),

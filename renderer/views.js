@@ -1,6 +1,6 @@
 'use strict';
 
-/* global S, idx, prefs, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
+/* global S, idx, prefs, api, Stats, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
    ICON, Backdrop, VIEWS, page, route, render, Nav, $, keyboardHtml */
 
 // ============================================================================ Cards
@@ -488,6 +488,7 @@ VIEWS.games = {
     );
     const toolbar = `
       <button class="chip accent focusable" data-act="add-game" data-key="add-game">${ICON.plus}${h(t('games.add'))}</button>
+      <button class="chip icon-chip focusable" data-act="open-stats" data-key="open-stats">${ICON.chart}${h(t('stats.title'))}</button>
       <span class="chip-sep"></span>
       ${chips('gameSort', prefs.gameSort, [['recent', 'sort.recent'], ['az', 'sort.az'], ['playtime', 'sort.playtime'], ['added', 'sort.added']])}
       <span class="chip-sep"></span>
@@ -901,3 +902,151 @@ function controlsHelp() {
     g('menu', t('hint.menu'))
   ].join('');
 }
+
+// ============================================================================ Playtime stats
+
+let statsData = null; // the session log and item names, fetched when the page opens
+
+async function loadStats() {
+  statsData = await api.getStats();
+  return statsData;
+}
+
+const STATS_PERIODS = [
+  ['week', 'stats.week'],
+  ['month', 'stats.month'],
+  ['year', 'stats.year'],
+  ['all', 'stats.all']
+];
+
+function fmtMinutes(min) {
+  return min ? fmtRuntime(Math.round(min)) : t('fmt.m', { m: 0 });
+}
+
+function bucketLabel(b, { long = false } = {}) {
+  const d = new Date(b.start);
+  if (b.unit === 'year') return String(d.getFullYear());
+  if (b.unit === 'month') return d.toLocaleDateString(S.lang, long ? { month: 'long', year: 'numeric' } : { month: 'short' });
+  if (long) return d.toLocaleDateString(S.lang, { weekday: 'long', day: 'numeric', month: 'long' });
+  return prefs.statsPeriod === 'week' ? d.toLocaleDateString(S.lang, { weekday: 'short' }) : String(d.getDate());
+}
+
+function bucketSummary(b) {
+  if (!b.game && !b.watch) return `${bucketLabel(b, { long: true })} · ${t('stats.none')}`;
+  return `${bucketLabel(b, { long: true })} · ${t('stats.bucketLine', { playing: fmtMinutes(b.game), watching: fmtMinutes(b.watch) })}`;
+}
+
+function statsChart(r) {
+  const grid = Stats.gridSteps(r.max);
+  const top = grid[grid.length - 1];
+  const n = r.buckets.length;
+  // Label every bucket for weeks and months of the year; thin out 30 days and long all-time spans.
+  const every = n <= 12 ? 1 : n <= 31 ? 5 : Math.ceil(n / 12);
+  const bars = r.buckets
+    .map((b, i) => {
+      const gh = (b.game / top) * 100;
+      const wh = (b.watch / top) * 100;
+      const label = i % every === 0 || i === n - 1 ? bucketLabel(b) : '';
+      return `
+        <button class="bar-col focusable" data-bucket="${i}" data-key="bar-${r.period}-${i}" aria-label="${h(bucketSummary(b))}" ${i === n - 1 ? 'data-nav-default' : ''}>
+          <span class="bar-stack">
+            ${b.watch ? `<i class="seg watch" style="height:${wh}%"></i>` : ''}
+            ${b.game ? `<i class="seg game" style="height:${gh}%"></i>` : ''}
+          </span>
+          <span class="bar-label">${h(label)}</span>
+        </button>`;
+    })
+    .join('');
+  const axis = (v) => (!v ? '0' : v % 60 ? fmtRuntime(v) : t('fmt.h', { h: v / 60 }));
+  const lines = grid.map((v) => `<div class="grid-line" style="bottom:${(v / top) * 100}%"><span>${h(axis(v))}</span></div>`).join('');
+  return `
+    <section class="stats-chart">
+      <div class="chart-head">
+        <div class="chart-readout" id="chart-readout">${h(t('stats.hoverHint'))}</div>
+        <div class="chart-legend">
+          <span class="legend-key"><i class="swatch game"></i>${h(t('stats.playing'))}</span>
+          <span class="legend-key"><i class="swatch watch"></i>${h(t('stats.watching'))}</span>
+        </div>
+      </div>
+      <div class="chart-plot">
+        <div class="chart-grid">${lines}</div>
+        <div class="chart-bars" data-nav-group data-scroll="stats-bars" style="--n:${n}">${bars}</div>
+      </div>
+    </section>`;
+}
+
+function statsList(title, list, kind) {
+  const max = list.length ? list[0].minutes : 0;
+  const rows = list.slice(0, 8).map((x, i) => {
+    const act = x.type === 'game' ? 'open-game' : x.type === 'show' ? 'open-show' : 'open-movie';
+    const art = x.poster ? `<img src="${h(x.poster)}" alt="" loading="lazy">` : x.icon ? `<img class="icon" src="${h(x.icon)}" alt="">` : `<span class="stat-ph" style="--h:${hueOf(x.title)}"></span>`;
+    return `
+      <button class="stat-row focusable" data-act="${act}" data-id="${x.id}" data-key="st-${kind}-${x.id}" data-opts="${x.type}:${x.id}">
+        <span class="stat-rank">${i + 1}</span>
+        <span class="stat-art">${art}</span>
+        <span class="stat-main">
+          <span class="stat-title">${h(x.title)}</span>
+          <span class="stat-bar"><i class="${kind}" style="width:${max ? (x.minutes / max) * 100 : 0}%"></i></span>
+        </span>
+        <span class="stat-time">${h(fmtMinutes(x.minutes))}</span>
+      </button>`;
+  });
+  return `
+    <section class="stat-list" data-nav-group>
+      <h2>${h(title)}</h2>
+      ${rows.join('') || `<div class="empty-hint">${h(t('stats.nothing'))}</div>`}
+    </section>`;
+}
+
+VIEWS.stats = {
+  render(r) {
+    const head = `
+      <div class="page-head stats-head">
+        <h1 class="page-title">${h(t('stats.title'))}</h1>
+      </div>`;
+    if (!statsData) return `<div class="page stats">${head}<div class="empty-hint stats-pad">${h(t('stats.loading'))}</div></div>`;
+    const a = Stats.aggregate(statsData, prefs.statsPeriod, Date.now());
+    r.stats = a;
+    const tile = (label, value, sub = '') => `<div class="stat-tile"><div class="stat-label">${h(label)}</div><div class="stat-value">${h(value)}</div>${sub ? `<div class="stat-sub">${h(sub)}</div>` : ''}</div>`;
+    const topGame = a.games[0];
+    return `
+      <div class="page stats" data-scroll="stats">
+        ${head}
+        <div class="toolbar stats-pad" data-nav-group>${chips('statsPeriod', prefs.statsPeriod, STATS_PERIODS).replace('data-nav-default', 'data-nav-default data-autofocus')}</div>
+        <div class="stat-tiles stats-pad">
+          ${tile(t('stats.playing'), fmtMinutes(a.totals.game), topGame ? t('stats.mostly', { name: topGame.title }) : '')}
+          ${tile(t('stats.watching'), fmtMinutes(a.totals.watch), a.watched[0] ? t('stats.mostly', { name: a.watched[0].title }) : '')}
+          ${tile(t('stats.dailyAvg'), fmtMinutes(a.totals.dailyAverage))}
+          ${tile(t('stats.activeDays'), String(a.totals.activeDays), t('stats.sessions', { n: a.totals.sessions }))}
+        </div>
+        <div class="stats-pad">
+          ${a.hasLog ? statsChart(a) : `<div class="stats-empty">${ICON.chart}<p>${h(t('stats.empty'))}</p></div>`}
+        </div>
+        <div class="stat-lists stats-pad">
+          ${statsList(t('stats.mostPlayed'), a.games, 'game')}
+          ${statsList(t('stats.mostWatched'), a.watched, 'watch')}
+        </div>
+        <p class="stats-note stats-pad">${h(t('stats.note'))}</p>
+      </div>`;
+  },
+  mount(r) {
+    Backdrop.set(null);
+    if (!statsData) loadStats().then(() => route() === r && render({ keepFocus: true }));
+    const readout = $('#chart-readout');
+    if (!readout) return;
+    const show = (el) => {
+      const b = el && r.stats && r.stats.buckets[Number(el.dataset.bucket)];
+      readout.textContent = b ? bucketSummary(b) : t('stats.hoverHint');
+    };
+    const bars = page.querySelector('.chart-bars');
+    bars.addEventListener('pointerover', (e) => show(e.target.closest('.bar-col')));
+    bars.addEventListener('pointerleave', () => show(bars.contains(document.activeElement) ? document.activeElement : null));
+  },
+  onFocus(r, target) {
+    const readout = $('#chart-readout');
+    if (readout && target.closest('.bar-col')) {
+      const b = r.stats && r.stats.buckets[Number(target.dataset.bucket)];
+      if (b) readout.textContent = bucketSummary(b);
+    }
+  }
+};

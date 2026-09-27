@@ -347,6 +347,11 @@ async function showScreenshot(gameId, index) {
   );
 }
 
+async function openStats() {
+  await loadStats().catch(() => null);
+  go({ name: 'stats' });
+}
+
 // ============================================================================ Settings actions
 
 async function save(patch) {
@@ -390,6 +395,7 @@ const ACTIONS = {
   options: (d) => openOptions(d.opts),
   'edit-game': (d) => editGame(d.id),
   'add-game': () => addGame(),
+  'open-stats': () => openStats(),
   screenshot: (d) => showScreenshot(d.id, Number(d.index)),
   'see-all': (d) => {
     if (d.pref) {
