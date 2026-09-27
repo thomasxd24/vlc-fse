@@ -75,6 +75,17 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Hand-written notes for the tag (.github/release-notes/<tag>.md), when there are any; the app shows
+      # their first lines in its "update available" prompt. GitHub's generated notes are appended.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/release-notes
+
+      - id: notes
+        run: |
+          f=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then echo "path=$f" >> "$GITHUB_OUTPUT"; fi
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -85,4 +96,5 @@ jobs:
           files: |
             dist/*.zip
             dist/*.exe
+          body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
