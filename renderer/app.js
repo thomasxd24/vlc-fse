@@ -1156,9 +1156,40 @@ function onState(next) {
   render(page.querySelector('.focusable') ? { keepFocus: true } : {});
 }
 
+/**
+ * The startup intro (see #splash): the mark blooms in and the name rises letter by letter while the library
+ * loads underneath, then the splash lifts and the top bar and first rows come in. At least INTRO_MS long so it
+ * reads as intended, never longer than the page takes to be ready.
+ */
+const INTRO_MS = 1300;
+const introStart = performance.now();
+function endIntro({ play }) {
+  const splash = $('#splash');
+  document.body.classList.remove('booting');
+  if (!splash) return;
+  if (!play) {
+    splash.remove();
+    return;
+  }
+  const wait = Math.max(0, INTRO_MS - (performance.now() - introStart));
+  setTimeout(() => {
+    splash.classList.add('out');
+    document.body.classList.add('boot-reveal');
+    // Replay the page's own staggered entrance now that it's visible.
+    page.dataset.enter = 'no';
+    void page.offsetWidth;
+    page.dataset.enter = 'yes';
+    setTimeout(() => splash.remove(), 700);
+    setTimeout(() => document.body.classList.remove('boot-reveal'), 1200);
+  }, wait);
+}
+
 (async function boot() {
+  const intro = !document.documentElement.classList.contains('no-intro') && $('#splash');
   const initial = await api.getState();
   applyState(initial);
+  const playIntro = Boolean(intro) && !reducedMotion() && !(initial.uiState && initial.uiState.stack && initial.uiState.stack.length);
+  if (playIntro) Sound.boot();
   $('#back-btn').innerHTML = ICON.back;
   $('#menu-btn').innerHTML = ICON.menu;
   $('#back-btn').setAttribute('aria-label', t('hint.back'));
@@ -1176,6 +1207,7 @@ function onState(next) {
   } else {
     render();
   }
+  endIntro({ play: playIntro });
 
   api.onState(onState);
   api.onNowPlaying((np) => {

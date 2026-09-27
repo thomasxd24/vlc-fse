@@ -77,6 +77,10 @@ function reducedMotion() {
 }
 function applyMotion() {
   document.body.classList.toggle('reduce-motion', reducedMotion());
+  // Remembered for boot.js, which decides about the startup intro before settings arrive.
+  try {
+    localStorage.setItem('animations', S.settings.animations === 'reduced' ? 'reduced' : 'full');
+  } catch {}
 }
 prefersReduced.addEventListener('change', applyMotion);
 
@@ -296,7 +300,12 @@ const Sound = (() => {
     select: () => tone(700, 0.07, 0.04, 'sine', 1050),
     back: () => tone(560, 0.07, 0.03, 'sine', 360),
     edge: () => tone(170, 0.05, 0.025, 'triangle'),
-    open: () => tone(440, 0.09, 0.03, 'sine', 880)
+    open: () => tone(440, 0.09, 0.03, 'sine', 880),
+    // Startup: a soft rising two-note chime under the intro.
+    boot: () => {
+      tone(392, 0.5, 0.03, 'sine', 523);
+      setTimeout(() => tone(659, 0.7, 0.025, 'sine', 784), 170);
+    }
   };
 })();
 

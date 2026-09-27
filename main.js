@@ -588,7 +588,7 @@ function resumeUi() {
   if (ui.suspended) {
     ui.suspended = false;
     setPriority(app.getAppMetrics().map((m) => m.pid), false);
-    win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+    win.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query: { resume: '1' } }); // no startup intro
   }
   bringToFront();
 }
