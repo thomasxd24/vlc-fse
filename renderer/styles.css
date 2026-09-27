@@ -1023,6 +1023,23 @@ body.detail #topbar {
 .np .actions {
   justify-content: center;
 }
+.np-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.6rem;
+}
+.np-controls .btn {
+  border-radius: 999px;
+}
+.np-controls .np-play {
+  padding: 1.3rem 1.45rem;
+}
+.np-controls .np-play .ico {
+  width: 1.8rem;
+  height: 1.8rem;
+}
 
 /* ------------------------------------------------------------------ Toasts */
 

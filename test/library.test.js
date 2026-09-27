@@ -84,3 +84,17 @@ test('builds VLC arguments with per-item resume', () => {
   assert.equal(args[i + 2], 'C:\\b.mkv');
   assert.equal(args[args.length - 1], 'C:\\b.mkv');
 });
+
+test('builds VLC language options, with per-item overrides and the user\'s own options last', () => {
+  const args = buildArgs(
+    [{ path: 'a.mkv', languages: { audio: 'original', subs: 'off' } }, { path: 'b.mkv' }],
+    { port: 1, password: 'pw', languages: { audio: 'en', subs: 'en' }, extraArgs: ['--sub-language=fre'] }
+  );
+  assert.ok(args.indexOf('--audio-language=eng,en,any') < args.indexOf('--sub-language=fre'));
+  assert.ok(args.includes('--sub-language=eng,en'));
+  const a = args.indexOf('a.mkv');
+  assert.deepEqual(args.slice(a, a + 4), ['a.mkv', ':audio-language=any', ':sub-language=none', 'b.mkv']);
+  // No preference: VLC's own defaults.
+  const plain = buildArgs([{ path: 'a.mkv' }], { port: 1, password: 'pw', languages: { audio: 'original', subs: '' } });
+  assert.ok(!plain.some((x) => /sub-language/.test(x)));
+});

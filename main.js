@@ -28,6 +28,8 @@ const DEFAULT_SETTINGS = {
   vlcFullscreen: true,
   vlcExtraArgs: '',
   autoplayNext: true,
+  audioLanguage: 'en', // a language code, or 'original' for the file's default track
+  subLanguage: 'en', // a language code, or 'off'
   tmdbKey: '',
   sgdbKey: '',
   steamEnabled: true,
@@ -55,7 +57,7 @@ let progressStore;
 let metaStore;
 let gamesStore; // { manual: [], overrides: {}, stats: {} }
 let gameInfoStore;
-let prefsStore; // { favorites: {}, hidden: {} }
+let prefsStore; // { favorites: {}, hidden: {}, languages: { [movie or show id]: {audio, subs} } }
 let metadata;
 let gameInfo;
 let library = { movies: [], shows: [], games: [], scannedAt: 0 };
@@ -117,6 +119,11 @@ function resumable(pr) {
 
 function prefsOf(id) {
   return { favorite: Boolean(prefsStore.get('favorites')[id]), hidden: Boolean(prefsStore.get('hidden')[id]) };
+}
+
+/** Audio/subtitle languages chosen for one film or show, overriding the defaults in Settings (null if none). */
+function languagesOf(id) {
+  return prefsStore.get('languages')[id] || null;
 }
 
 /** Raw games (Steam scan + manual), with overrides applied, as fed to both the UI and GameInfo. */
@@ -188,6 +195,7 @@ function buildViewModel() {
       path: m.path,
       addedAt: m.addedAt,
       progress: { time: pr.time, length: pr.length, watched: pr.watched, updatedAt: pr.updatedAt, resumable: resumable(pr) },
+      languages: languagesOf(m.id),
       ...prefsOf(m.id)
     };
   });
@@ -244,6 +252,7 @@ function buildViewModel() {
       watchedCount: episodes.filter((e) => e.progress.watched).length,
       nextUp: nextUp ? nextUp.id : null,
       lastActivity: lastWatched ? lastWatched.updatedAt : 0,
+      languages: languagesOf(s.id),
       ...prefsOf(s.id)
     };
   });
@@ -412,7 +421,7 @@ function buildQueue(req) {
     const m = library.movies.find((x) => x.id === req.id);
     if (!m) throw new Error('notFound');
     const pr = progressFor(m.path);
-    return { title: m.title, queue: [{ path: m.path, startTime: req.resume && resumable(pr) ? pr.time : 0 }] };
+    return { title: m.title, queue: [{ path: m.path, startTime: req.resume && resumable(pr) ? pr.time : 0, languages: languagesOf(m.id) }] };
   }
   const show = library.shows.find((s) => s.id === req.showId);
   const idx = show ? show.episodes.findIndex((e) => e.id === req.id) : -1;
@@ -420,10 +429,11 @@ function buildQueue(req) {
   const first = show.episodes[idx];
   const pr = progressFor(first.path);
   const rest = settings.get('autoplayNext') ? show.episodes.slice(idx + 1) : [];
-  const label = `${show.title} · S${String(first.season).padStart(2, '0')}E${String(first.episode).padStart(2, '0')}`;
+  const label = (e) => `${show.title} · S${String(e.season).padStart(2, '0')}E${String(e.episode).padStart(2, '0')}`;
+  const languages = languagesOf(show.id);
   return {
-    title: label,
-    queue: [{ path: first.path, startTime: req.resume && resumable(pr) ? pr.time : 0 }, ...rest.map((e) => ({ path: e.path }))]
+    title: label(first),
+    queue: [{ path: first.path, startTime: req.resume && resumable(pr) ? pr.time : 0, languages, label: label(first) }, ...rest.map((e) => ({ path: e.path, languages, label: label(e) }))]
   };
 }
 
@@ -445,16 +455,19 @@ async function play(req) {
 
   const s = new VlcSession(vlcPath, job.queue, {
     fullscreen: settings.get('vlcFullscreen'),
+    languages: { audio: settings.get('audioLanguage'), subs: settings.get('subLanguage') },
     extraArgs: splitArgs(settings.get('vlcExtraArgs'))
   });
   session = s;
-  nowPlaying = { title: job.title, request: req, current: job.queue[0].path, time: 0, length: 0 };
+  nowPlaying = { title: job.title, request: req, current: job.queue[0].path, time: 0, length: 0, paused: false, queueSize: job.queue.length, index: 0 };
   const blocker = powerSaveBlocker.start('prevent-display-sleep');
 
   s.on('progress', (p) => {
     if (session !== s) return;
     recordProgress(p);
-    nowPlaying = { ...nowPlaying, current: p.path, time: p.time, length: p.length };
+    const index = Math.max(0, job.queue.findIndex((q) => q.path === p.path));
+    const title = job.queue[index].label || nowPlaying.title;
+    nowPlaying = { ...nowPlaying, title, current: p.path, time: p.time, length: p.length, paused: p.paused ?? nowPlaying.paused, index };
     send('now-playing', nowPlaying);
   });
   const finish = (errorKey, vars) => {
@@ -483,6 +496,37 @@ async function play(req) {
   }
   send('now-playing', nowPlaying);
   return { ok: true };
+}
+
+// Playback controls on the "Playing in VLC" screen, mapped to VLC's HTTP commands.
+const NP_COMMANDS = {
+  pause: ['pl_pause'],
+  back: ['seek', '-10'],
+  forward: ['seek', '+30'],
+  next: ['pl_next'],
+  audio: ['key', 'audio-track'],
+  subs: ['key', 'subtitle-track']
+};
+
+async function nowPlayingCommand(name) {
+  const cmd = NP_COMMANDS[name];
+  if (!session || !cmd) return;
+  const status = await session.command(...cmd).catch(() => null);
+  if (status && nowPlaying) {
+    nowPlaying = { ...nowPlaying, paused: status.state === 'paused', time: status.time ?? nowPlaying.time };
+    send('now-playing', nowPlaying);
+  }
+}
+
+function setLanguages(id, languages) {
+  const map = prefsStore.get('languages');
+  const clean = {};
+  if (languages && languages.audio) clean.audio = String(languages.audio);
+  if (languages && languages.subs) clean.subs = String(languages.subs);
+  if (Object.keys(clean).length) map[id] = clean;
+  else delete map[id];
+  prefsStore.save();
+  pushLibrary();
 }
 
 // ---------------------------------------------------------------------------
@@ -775,6 +819,8 @@ function registerIpc() {
   ipcMain.handle('stop', () => {
     if (session) session.kill();
   });
+  ipcMain.handle('np-command', (_e, name) => nowPlayingCommand(name));
+  ipcMain.handle('set-languages', (_e, { id, languages }) => setLanguages(id, languages));
   ipcMain.handle('set-watched', (_e, req) => setWatched(pathsFor(req), req.watched));
   ipcMain.handle('set-pref', (_e, { id, key, value }) => {
     if (key !== 'favorites' && key !== 'hidden') return;
@@ -936,7 +982,7 @@ app.whenReady().then(() => {
   metaStore = new JsonStore(userFile('metadata.json'), { entries: {} });
   gamesStore = new JsonStore(userFile('games.json'), { manual: [], overrides: {}, stats: {} });
   gameInfoStore = new JsonStore(userFile('gameinfo.json'), { games: {} });
-  prefsStore = new JsonStore(userFile('prefs.json'), { favorites: {}, hidden: {} });
+  prefsStore = new JsonStore(userFile('prefs.json'), { favorites: {}, hidden: {}, languages: {} });
   library = { games: [], ...libraryStore.data };
   metadata = new Metadata({ store: metaStore, imageDir: userFile('artwork'), apiKey: settings.get('tmdbKey') });
   makeGameInfo();

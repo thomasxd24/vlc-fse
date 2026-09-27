@@ -235,7 +235,12 @@ const ICON = {
   sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
   gamepad: svg('<path d="M6.5 7h11a4.5 4.5 0 0 1 4.4 5.5l-1.1 4.6a2.5 2.5 0 0 1-4.3 1.1L14.4 16H9.6l-2.1 2.2a2.5 2.5 0 0 1-4.3-1.1l-1.1-4.6A4.5 4.5 0 0 1 6.5 7z"/><path d="M8 10v3M6.5 11.5h3"/><circle cx="15.5" cy="11" r=".6" fill="currentColor"/><circle cx="17" cy="12.8" r=".6" fill="currentColor"/>'),
   steam: svg('<circle cx="15.5" cy="8.5" r="3.5"/><circle cx="8" cy="16" r="2.5"/><path d="M10.3 15l2.8-3.8M2 11.5l4.1 1.8"/>'),
-  search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/>')
+  search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/>'),
+  pause: svg('<rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/>', true),
+  rewind: svg('<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8.5v4l2.5 1.5"/>'),
+  forward: svg('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><path d="M12 8.5v4l2.5 1.5"/>'),
+  next: svg('<path d="M5 5.5v13a1 1 0 0 0 1.5.86L16 13.5v5h2.5v-13H16v5L6.5 4.64A1 1 0 0 0 5 5.5z"/>', true),
+  subs: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M13 15h4M7 11.5h2M11 11.5h6"/>')
 };
 
 // ============================================================================ Sound
@@ -963,18 +968,41 @@ function renderNowPlaying() {
         <div class="np-file" id="np-file"></div>
         <div class="bar"><i id="np-bar"></i></div>
         <div class="time" id="np-time"></div>
-        <div class="actions">
-          <button class="btn danger focusable" data-np="stop" data-autofocus>${ICON.stop}${h(t('np.stop'))}</button>
+        <div class="np-controls" data-nav-group>
+          <button class="btn icon-only focusable" data-np="back" aria-label="${h(t('np.back'))}" title="${h(t('np.back'))}">${ICON.rewind}</button>
+          <button class="btn primary icon-only np-play focusable" data-np="pause" data-autofocus></button>
+          <button class="btn icon-only focusable" data-np="forward" aria-label="${h(t('np.forward'))}" title="${h(t('np.forward'))}">${ICON.forward}</button>
+          <button class="btn icon-only focusable" data-np="next" aria-label="${h(t('np.next'))}" title="${h(t('np.next'))}">${ICON.next}</button>
+        </div>
+        <div class="actions" data-nav-group>
+          <button class="btn focusable" data-np="audio">${ICON.volume}${h(t('np.audio'))}</button>
+          <button class="btn focusable" data-np="subs">${ICON.subs}${h(t('np.subs'))}</button>
+          <button class="btn danger focusable" data-np="stop">${ICON.stop}${h(t('np.stop'))}</button>
         </div>
       </div>`;
-    box.querySelector('[data-np="stop"]').addEventListener('click', () => api.stop());
+    box.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-np]');
+      if (!b) return;
+      if (b.dataset.np === 'stop') api.stop();
+      else api.npCommand(b.dataset.np);
+    });
     Nav.focusFirst();
     Hints.update();
   }
+  const playBtn = box.querySelector('[data-np="pause"]');
+  const label = np.paused ? t('np.resume') : t('np.pause');
+  if (playBtn.dataset.state !== String(Boolean(np.paused))) {
+    playBtn.dataset.state = String(Boolean(np.paused));
+    playBtn.innerHTML = np.paused ? ICON.play : ICON.pause;
+    playBtn.setAttribute('aria-label', label);
+    playBtn.title = label;
+  }
+  // "Next episode" only when there's something after this one.
+  box.querySelector('[data-np="next"]').hidden = !(np.queueSize > 1 && np.index < np.queueSize - 1);
   $('#np-title').textContent = np.title;
-  $('#np-file').textContent = file;
+  $('#np-file').textContent = np.queueSize > 1 ? `${file} · ${t('np.queue', { n: np.index + 1, total: np.queueSize })}` : file;
   $('#np-bar').style.width = `${p}%`;
-  $('#np-time').textContent = np.length ? `${fmtTime(np.time)} / ${fmtTime(np.length)}` : t('np.starting');
+  $('#np-time').textContent = np.length ? `${fmtTime(np.time)} / ${fmtTime(np.length)}${np.paused ? ' · ' + t('np.paused') : ''}` : t('np.starting');
 }
 
 function renderGameLayer() {

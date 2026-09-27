@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('foyer', {
   // Media
   play: call('play'),
   stop: call('stop'),
+  npCommand: call('np-command'),
+  setLanguages: call('set-languages'),
   setWatched: call('set-watched'),
   setPref: call('set-pref'),
   showInFolder: call('show-in-folder'),

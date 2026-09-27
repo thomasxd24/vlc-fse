@@ -14,7 +14,11 @@ test('real VLC accepts our command line and serves playback status', async (t) =
   if (process.platform !== 'win32' && process.getuid && process.getuid() === 0) return t.skip('VLC refuses to run as root');
 
   // "vlc://pause:N" is a built-in item that just waits, so no media file or display is needed.
-  const session = new VlcSession(vlc, [{ path: 'vlc://pause:20' }], { fullscreen: false, extraArgs: ['-I', 'dummy'] });
+  const session = new VlcSession(vlc, [{ path: 'vlc://pause:20', languages: { audio: 'fr', subs: 'off' } }], {
+    fullscreen: false,
+    languages: { audio: 'en', subs: 'en' },
+    extraArgs: ['-I', 'dummy']
+  });
   let exited = null;
   session.on('exit', (e) => (exited = e));
   await session.start();
@@ -27,4 +31,9 @@ test('real VLC accepts our command line and serves playback status', async (t) =
   }
   assert.equal(exited, null, `VLC exited early (code ${exited && exited.code}): it rejected an option`);
   assert.ok(status && typeof status.state === 'string', 'VLC HTTP interface answered with a status');
+  // The commands behind the Playing screen's controls.
+  for (const [cmd, val] of [['pl_pause'], ['key', 'audio-track'], ['key', 'subtitle-track'], ['seek', '+30']]) {
+    const st = await session.command(cmd, val);
+    assert.ok(st && typeof st.state === 'string', `VLC answered ${cmd}`);
+  }
 });

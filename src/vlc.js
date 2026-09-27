@@ -9,6 +9,29 @@ const crypto = require('crypto');
 
 const POLL_MS = 1500;
 
+// VLC matches track languages against ISO 639 codes; listing both forms catches files tagged either way.
+const LANG_CODES = {
+  en: 'eng,en',
+  fr: 'fre,fra,fr',
+  de: 'ger,deu,de',
+  es: 'spa,es',
+  it: 'ita,it',
+  ja: 'jpn,ja'
+};
+
+/**
+ * VLC options for the preferred audio and subtitle languages. `audio` is a language or 'original' (the file's
+ * default track); `subs` is a language, or 'off' to start without subtitles.
+ */
+function languageArgs({ audio, subs } = {}, prefix = '--') {
+  const args = [];
+  if (LANG_CODES[audio]) args.push(`${prefix}audio-language=${LANG_CODES[audio]},any`);
+  else if (audio === 'original') args.push(`${prefix}audio-language=any`); // lets one show opt out of a global preference
+  if (subs === 'off') args.push(`${prefix}sub-language=none`);
+  else if (LANG_CODES[subs]) args.push(`${prefix}sub-language=${LANG_CODES[subs]}`);
+  return args;
+}
+
 function exists(p) {
   try {
     return fs.statSync(p).isFile();
@@ -78,10 +101,11 @@ function freePort() {
 }
 
 /**
- * Build VLC's command line. Each queue item may carry a start offset, applied as a per-item ":start-time" option.
- * @param {{path: string, startTime?: number}[]} queue
+ * Build VLC's command line. Each queue item may carry a start offset, applied as a per-item ":start-time" option,
+ * and its own languages (e.g. a show whose tracks were picked by hand), applied as per-item language options.
+ * @param {{path: string, startTime?: number, languages?: {audio?: string, subs?: string}}[]} queue
  */
-function buildArgs(queue, { port, password, fullscreen = true, extraArgs = [] }) {
+function buildArgs(queue, { port, password, fullscreen = true, languages = {}, extraArgs = [] }) {
   const args = [
     '--extraintf=http',
     '--http-host=127.0.0.1',
@@ -97,10 +121,12 @@ function buildArgs(queue, { port, password, fullscreen = true, extraArgs = [] })
     '--no-one-instance'
   ];
   if (fullscreen) args.push('--fullscreen');
+  args.push(...languageArgs(languages)); // before extraArgs, so the user's own options still win
   args.push(...extraArgs);
   for (const item of queue) {
     args.push(item.path);
     if (item.startTime && item.startTime > 5) args.push(`:start-time=${Math.floor(item.startTime)}`);
+    if (item.languages) args.push(...languageArgs(item.languages, ':'));
   }
   return args;
 }
@@ -147,9 +173,10 @@ class VlcSession extends EventEmitter {
     if (this.child && this.child.exitCode === null) this.child.kill();
   }
 
-  async request(file) {
+  async request(file, params) {
     const auth = Buffer.from(`:${this.password}`).toString('base64');
-    const res = await fetch(`http://127.0.0.1:${this.port}/requests/${file}`, {
+    const query = params ? `?${new URLSearchParams(params)}` : '';
+    const res = await fetch(`http://127.0.0.1:${this.port}/requests/${file}${query}`, {
       headers: { Authorization: `Basic ${auth}` },
       signal: AbortSignal.timeout(1200)
     });
@@ -169,9 +196,21 @@ class VlcSession extends EventEmitter {
     return null;
   }
 
+  /**
+   * Send a playback command and return VLC's updated status. Track switching goes through VLC's own hotkeys
+   * ("key" + "audio-track" / "subtitle-track"): the "Stream N" numbers in the status don't reliably match the
+   * ids audio_track expects, and cycling also shows VLC's on-screen label for the new track.
+   */
+  async command(command, val) {
+    const status = await this.request('status.json', val === undefined ? { command } : { command, val });
+    if (status) this.state = status.state;
+    return status;
+  }
+
   async poll() {
     const status = await this.request('status.json');
     if (!status || status.state === 'stopped') return;
+    this.state = status.state;
     let item = this.resolveCurrent(status);
     if (!item && status.currentplid >= 0) {
       // Fall back to the playlist: items appear in queue order.
@@ -188,8 +227,8 @@ class VlcSession extends EventEmitter {
       this.emit('progress', { path: this.last.path, time: this.last.length, length: this.last.length });
     }
     this.last = { path: item.path, time: status.time, length: status.length };
-    this.emit('progress', this.last);
+    this.emit('progress', { ...this.last, paused: status.state === 'paused' });
   }
 }
 
-module.exports = { findVlc, buildArgs, VlcSession };
+module.exports = { findVlc, buildArgs, languageArgs, VlcSession, LANG_CODES };

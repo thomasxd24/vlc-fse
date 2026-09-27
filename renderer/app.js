@@ -86,11 +86,13 @@ async function openOptions(spec) {
       { label: m.progress.resumable ? t('media.resumeFrom', { time: fmtTime(m.progress.time) }) : t('media.play'), value: 'play', icon: ICON.play, primary: true },
       { label: m.progress.watched ? t('opt.markUnwatched') : t('opt.markWatched'), value: 'watched', icon: ICON.check },
       fav(m),
+      { label: t('opt.languages'), value: 'lang', icon: ICON.subs },
       hide(m),
       { label: t('opt.showFile'), value: 'file', icon: ICON.folder }
     );
     const v = await choose({ title: m.title, choices });
     if (v === 'play') playMovie(m.id, m.progress.resumable ? 'resume' : 'start');
+    else if (v === 'lang') chooseItemLanguages(m);
     else if (v === 'watched') api.setWatched({ kind: 'movie', id: m.id, watched: !m.progress.watched });
     else if (v === 'fav') setPref(m.id, 'favorites', !m.favorite);
     else if (v === 'hide') setPref(m.id, 'hidden', !m.hidden);
@@ -99,10 +101,16 @@ async function openOptions(spec) {
     const s = idx.shows.get(a);
     if (!s) return;
     const all = s.watchedCount === s.episodes.length;
-    choices.push({ label: all ? t('opt.showUnwatched') : t('opt.showWatched'), value: 'watched', icon: ICON.check }, fav(s), hide(s));
+    choices.push(
+      { label: all ? t('opt.showUnwatched') : t('opt.showWatched'), value: 'watched', icon: ICON.check },
+      fav(s),
+      { label: t('opt.languages'), value: 'lang', icon: ICON.subs },
+      hide(s)
+    );
     if (route().name !== 'show') choices.unshift({ label: t('opt.details'), value: 'open', icon: ICON.more, primary: true });
     const v = await choose({ title: s.title, choices });
     if (v === 'open') go({ name: 'show', id: s.id });
+    else if (v === 'lang') chooseItemLanguages(s);
     else if (v === 'watched') api.setWatched({ kind: 'show', id: s.id, watched: !all });
     else if (v === 'fav') setPref(s.id, 'favorites', !s.favorite);
     else if (v === 'hide') setPref(s.id, 'hidden', !s.hidden);
@@ -132,6 +140,54 @@ function setPref(id, key, value) {
   api.setPref({ id, key, value });
   const msg = key === 'favorites' ? (value ? 'toast.favAdded' : 'toast.favRemoved') : value ? 'toast.hidden' : 'toast.unhidden';
   toast(t(msg));
+}
+
+// ============================================================================ Audio & subtitle languages
+
+const LANGS = ['en', 'fr', 'de', 'es', 'it', 'ja'];
+
+function langLabel(code) {
+  return t(`lang.${code}`);
+}
+
+/** Pick an audio ('audio') or subtitle ('subs') language; `extra` adds choices such as "Default" on top. */
+function chooseLanguage(kind, current, extra = []) {
+  const codes = kind === 'audio' ? [...LANGS, 'original'] : [...LANGS, 'off'];
+  return choose({
+    title: t(kind === 'audio' ? 'set.audioLang' : 'set.subLang'),
+    choices: [...extra, ...codes.map((c) => ({ label: langLabel(c), value: c, icon: c === current ? ICON.check : '' }))]
+  });
+}
+
+/** Per film/show languages, overriding the defaults from Settings. */
+async function chooseItemLanguages(item) {
+  for (;;) {
+    const cur = item.languages || {};
+    const shown = (kind) => (cur[kind] ? langLabel(cur[kind]) : t('lang.default', { value: langLabel(kind === 'audio' ? S.settings.audioLanguage : S.settings.subLanguage) }));
+    const v = await choose({
+      title: `${t('opt.languages')} · ${item.title}`,
+      text: t('lang.forThis', { name: item.title }),
+      choices: [
+        { label: t('lang.audio', { value: shown('audio') }), value: 'audio', icon: ICON.volume },
+        { label: t('lang.subs', { value: shown('subs') }), value: 'subs', icon: ICON.subs },
+        ...(item.languages ? [{ label: t('lang.reset'), value: 'reset', icon: ICON.restart }] : []),
+        { label: t('common.done'), value: null, primary: true }
+      ]
+    });
+    if (!v) return;
+    let next;
+    if (v === 'reset') next = null;
+    else {
+      const picked = await chooseLanguage(v, cur[v] || null, [{ label: t('lang.default', { value: langLabel(v === 'audio' ? S.settings.audioLanguage : S.settings.subLanguage) }), value: 'default', icon: cur[v] ? '' : ICON.check }]);
+      if (!picked) continue;
+      next = { ...cur, [v]: picked === 'default' ? undefined : picked };
+    }
+    await api.setLanguages({ id: item.id, languages: next });
+    toast(t('lang.saved'));
+    await refreshState();
+    item = idx.movies.get(item.id) || idx.shows.get(item.id);
+    if (!item) return;
+  }
 }
 
 // ============================================================================ Game editing
@@ -432,6 +488,12 @@ const ACTIONS = {
     const v = await promptText({ title: t('set.vlcArgs'), value: S.settings[d.setting] || '', placeholder: '--sub-language=fre' });
     if (v === null) return;
     await save({ [d.setting]: v.trim() });
+    render({ keepFocus: true });
+  },
+  'choose-media-language': async (d) => {
+    const v = await chooseLanguage(d.kind, S.settings[d.setting]);
+    if (!v) return;
+    await save({ [d.setting]: v });
     render({ keepFocus: true });
   },
   'choose-language': async () => {

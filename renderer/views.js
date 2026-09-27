@@ -815,6 +815,8 @@ VIEWS.settings = {
           ${valueRow(t('set.vlc'), t('set.vlcDesc'), st.vlcPath || (S.vlcFound ? t('set.autoPath', { path: S.vlcFound }) : t('set.notFound')), 'vlc-menu', 'vlc')}
           ${toggleRow(t('set.vlcFullscreen'), t('set.vlcFullscreenDesc'), st.vlcFullscreen, 'vlcFullscreen', 't-vlcfs')}
           ${toggleRow(t('set.autoplay'), t('set.autoplayDesc'), st.autoplayNext, 'autoplayNext', 't-autoplay')}
+          ${valueRow(t('set.audioLang'), t('set.audioLangDesc'), t(`lang.${st.audioLanguage || 'original'}`), 'choose-media-language', 'audio-lang', 'data-kind="audio" data-setting="audioLanguage"')}
+          ${valueRow(t('set.subLang'), t('set.subLangDesc'), t(`lang.${st.subLanguage || 'off'}`), 'choose-media-language', 'sub-lang', 'data-kind="subs" data-setting="subLanguage"')}
           ${valueRow(t('set.vlcArgs'), t('set.vlcArgsDesc'), st.vlcExtraArgs || t('set.none'), 'edit-text', 'vlc-args', 'data-setting="vlcExtraArgs"')}
           ${valueRow(t('set.tmdb'), t('set.tmdbDesc'), mask(st.tmdbKey), 'edit-key', 'tmdb', 'data-setting="tmdbKey"')}
           ${valueRow(t('set.refreshMedia'), t('set.refreshMediaDesc'), status(Boolean(st.tmdbKey), ms), 'clear-metadata', 'meta-refresh')}
