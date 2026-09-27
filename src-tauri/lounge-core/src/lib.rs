@@ -5,5 +5,7 @@
 //! Nothing in this crate depends on Tauri or a specific windowing/webview layer; the future `tauri`
 //! binary crate (Windows-only, not yet scaffolded — see `../MIGRATION.md`) will call into this one.
 
+pub mod migrate;
 pub mod parse;
+pub mod store;
 pub mod vdf;

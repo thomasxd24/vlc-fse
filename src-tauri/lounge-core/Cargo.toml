@@ -7,8 +7,12 @@ publish = false
 
 [dependencies]
 fancy-regex = "0.19.2"
+serde_json = "1.0.151"
 unicode-normalization = "0.1.25"
 
 [lib]
 name = "lounge_core"
 path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3.27.0"
