@@ -232,6 +232,10 @@
     'kind.show': 'TV show',
     'kind.game': 'Game',
 
+    'home.continue': 'Continue',
+    'home.glance': 'At a glance',
+    'home.recentlyAdded': 'Recently added',
+    'home.apps': 'Your apps',
     'home.jumpBackIn': 'Jump back in',
     'home.continueWatching': 'Continue watching',
     'home.favorites': 'Favorites',
@@ -796,6 +800,10 @@
     'kind.show': 'Série',
     'kind.game': 'Jeu',
 
+    'home.continue': 'Reprendre',
+    'home.glance': 'En un coup d’œil',
+    'home.recentlyAdded': 'Ajouts récents',
+    'home.apps': 'Vos applis',
     'home.jumpBackIn': 'Reprendre une partie',
     'home.continueWatching': 'Reprendre la lecture',
     'home.favorites': 'Favoris',

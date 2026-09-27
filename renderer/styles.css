@@ -2347,9 +2347,12 @@ body.reduce-motion *:not(#splash *)::after {
 
 /* ------------------------------------------------------------------ Playtime stats */
 
-.stats {
+.stats,
+.home {
   --series-game: #d95926; /* validated pair for the dark surface: CVD ΔE 26.8, normal 31.8, both ≥ 3:1 */
   --series-watch: #3987e5;
+}
+.stats {
   padding-bottom: 3rem;
 }
 .stats-pad {
@@ -3404,4 +3407,121 @@ body.pad-testing #hints {
 }
 body.detail #tools {
   display: none;
+}
+
+/* ---------- Home: "At a glance" tiles and the apps row ---------- */
+
+.row.small .card.app-tile {
+  width: 8.5rem;
+}
+.row.small .see-all .art {
+  aspect-ratio: 1;
+}
+.card.tile {
+  width: 19rem;
+}
+.card.tile .art {
+  aspect-ratio: 16 / 8;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.15rem;
+  text-align: left;
+  background: linear-gradient(160deg, var(--surface-2), var(--bg-2));
+}
+.gl-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.gl-head .ico {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+.gl-body {
+  margin-top: auto;
+  min-width: 0;
+}
+.gl-big {
+  font-size: 1.9rem;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gl-big.ok {
+  color: var(--good, #5fd38d);
+}
+.gl-sub {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gl-sub .dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.gl-sub .dot + * {
+  margin-right: 0.4rem;
+}
+.dot.g,
+.gl-bars b.g {
+  background: var(--series-game);
+}
+.dot.w,
+.gl-bars b.w {
+  background: var(--series-watch);
+}
+/* Seven days as tiny stacked bars, in the tile's bottom-right corner. */
+.gl-bars {
+  position: absolute;
+  right: 1.15rem;
+  bottom: 1rem;
+  height: 45%;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.28rem;
+}
+.gl-bars i {
+  width: 0.55rem;
+  height: 100%;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+}
+.gl-bars b {
+  display: block;
+  width: 100%;
+  border-radius: 2px;
+  min-height: 0;
+}
+.gl-bars b[style*='height:0%'] {
+  display: none;
+}
+.card.tile .progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+/* A shorter banner, so Continue and At a glance sit in view on a handheld's screen. */
+.home .hero {
+  height: 40vh;
+  padding-top: 5rem;
+  padding-bottom: 1rem;
+}
+.home .row[data-row='cn'] .card.wide {
+  width: 19rem;
 }

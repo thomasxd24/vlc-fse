@@ -113,7 +113,7 @@ function row(title, cards, key, opts = {}) {
        </button>`
     : '';
   return `
-    <section class="row" data-nav-group data-row="${key}">
+    <section class="row ${opts.tiles ? 'tiles' : ''} ${opts.small ? 'small' : ''}" data-nav-group data-row="${key}">
       <h2>${kicker}${h(title)}${count}</h2>
       <div class="track" data-scroll="${key}">${cards.join('')}${seeAll}</div>
     </section>`;
@@ -182,34 +182,33 @@ VIEWS.home = {
       return VIEWS.welcome.render();
     }
     r.welcome = false;
-    const played = games.filter((g) => g.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed);
-    const recentGames = [...games].sort((a, b) => b.addedAt - a.addedAt);
+    const played = games.filter((g) => g.lastPlayed).map((g) => ({ at: g.lastPlayed, html: () => gameWideCard(g, 'cn') }));
+    const watching = L.continueWatching.map((c) => ({ at: c.at || 0, html: () => continueCard(c) }));
+    // One "Continue" row: the games you played and what you were watching, most recent first.
+    const cont = [...played, ...watching]
+      .sort((a, b) => b.at - a.at)
+      .slice(0, 16)
+      .map((x) => x.html())
+      .filter(Boolean);
+    const added = [...games, ...movies, ...shows].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)).slice(0, 20);
     const favorites = [...games, ...movies, ...shows].filter((x) => x.favorite).sort((a, b) => a.title.localeCompare(b.title));
-    const recentMovies = [...movies].sort((a, b) => b.addedAt - a.addedAt);
-    const recentShows = [...shows].sort((a, b) => b.addedAt - a.addedAt);
+    const apps = (S.apps || [])
+      .filter((a) => !a.hidden && a.lastLaunched)
+      .sort((a, b) => b.lastLaunched - a.lastLaunched)
+      .slice(0, 10);
     const unwatched = movies.filter((m) => !m.progress.watched && !m.progress.resumable);
-    const cw = L.continueWatching.map(continueCard).filter(Boolean);
-
-    // Whatever you did most recently leads: games or films/TV.
-    const lastGame = played.length ? played[0].lastPlayed : 0;
-    const lastWatch = L.continueWatching.length ? L.continueWatching[0].at : 0;
-    const gameRow = { key: 'jb', html: (kicker) => row(t('home.jumpBackIn'), played.slice(0, 12).map((g) => gameWideCard(g, 'jb')), 'jb', { kicker, wide: true, seeAll: played.length > 12 ? { tab: 'games', pref: 'gameSort', value: 'recent' } : null }) };
-    const watchRow = { key: 'cw', html: (kicker) => row(t('home.continueWatching'), cw, 'cw', { kicker, wide: true }) };
-    const lead = lastWatch > lastGame ? [watchRow, gameRow] : [gameRow, watchRow];
-    const leadHtml = [];
-    for (const r0 of lead) {
-      const html = r0.html(leadHtml.length ? '' : greeting());
-      if (html) leadHtml.push(html);
-    }
-    const g1 = leadHtml.length ? '' : greeting();
-    const rows = [
-      ...leadHtml,
-      row(t('home.favorites'), favorites.map((x) => posterCard(x, 'fv')), 'fv', { kicker: g1, total: favorites.length }),
-      row(t('home.recentGames'), recentGames.slice(0, 16).map((g) => posterCard(g, 'rg')), 'rg', { kicker: leadHtml.length || favorites.length ? '' : g1, total: games.length, seeAll: games.length > 16 ? { tab: 'games', pref: 'gameSort', value: 'added' } : null }),
-      row(t('home.recentMovies'), recentMovies.slice(0, 16).map((m) => posterCard(m, 'rm')), 'rm', { total: movies.length, seeAll: movies.length > 16 ? { tab: 'movies', pref: 'movieSort', value: 'added' } : null }),
-      row(t('home.recentShows'), recentShows.slice(0, 16).map((x) => posterCard(x, 'rs')), 'rs', { total: shows.length, seeAll: shows.length > 16 ? { tab: 'shows', pref: 'showSort', value: 'added' } : null }),
+    const sections = [
+      row(t('home.continue'), cont, 'cn', { wide: true }),
+      row(t('home.glance'), glanceCards(), 'gl', { tiles: true }),
+      row(t('home.recentlyAdded'), added.map((x) => posterCard(x, 'ra')), 'ra'),
+      row(t('home.favorites'), favorites.map((x) => posterCard(x, 'fv')), 'fv', { total: favorites.length }),
+      row(t('home.apps'), apps.map((a) => appTile(a, 'ha')), 'ha', { seeAll: { tab: 'apps' }, small: true }),
       row(t('home.unwatchedMovies'), unwatched.slice(0, 16).map((m) => posterCard(m, 'um')), 'um', { total: unwatched.length, seeAll: unwatched.length > 16 ? { tab: 'movies', pref: 'movieFilter', value: 'unwatched' } : null })
-    ].join('');
+    ];
+    // The greeting heads whichever row comes first.
+    const first = sections.findIndex(Boolean);
+    if (first >= 0) sections[first] = sections[first].replace('<h2>', `<h2><span class="row-kicker">${h(greeting())}</span>`);
+    const rows = sections.join('');
     const empty = !rows.trim() ? `<div class="page-head"><div class="empty-hint">${h(t('status.scanning'))}</div></div>` : '';
     return `
       <div class="page home">
@@ -224,6 +223,7 @@ VIEWS.home = {
     alignedRow = null;
     if ($('#hero')) heroFromFocus();
     Spotlight.arm();
+    if (!statsData) loadStats().then(fillGlance, () => null);
   },
   onFocus(r, target) {
     heroFromFocus();
@@ -260,6 +260,62 @@ function heroFromFocus() {
   }
   Spotlight.stop();
   paintHero(key);
+}
+
+// ---- At a glance: small dashboard tiles (the week's playtime, Tailscale, transfers) ----
+
+/** The last 7 days as tiny stacked bars (games and watching, the Playtime page's colours) plus totals. */
+function weekTileBody() {
+  if (!statsData) return `<div class="gl-body"><div class="gl-big">…</div></div>`;
+  const agg = Stats.aggregate(statsData, 'week', Date.now());
+  const max = Math.max(60, agg.max);
+  const bars = agg.buckets
+    .map((b) => `<i title="${h(bucketLabel(b))}"><b class="g" style="height:${(b.game / max) * 100}%"></b><b class="w" style="height:${(b.watch / max) * 100}%"></b></i>`)
+    .join('');
+  const total = agg.totals.game + agg.totals.watch;
+  return `
+    <div class="gl-body">
+      <div class="gl-big">${h(fmtMinutes(total))}</div>
+      <div class="gl-sub"><span class="dot g"></span>${h(fmtMinutes(agg.totals.game))} <span class="dot w"></span>${h(fmtMinutes(agg.totals.watch))}</div>
+    </div>
+    <div class="gl-bars" aria-hidden="true">${bars}</div>`;
+}
+
+function glanceCards() {
+  const tile = (key, act, icon, title, body, extra = '') =>
+    `<button class="card tile focusable" data-key="gl-${key}" data-act="${act}" ${extra}><div class="art"><div class="gl-head">${icon}<span>${h(title)}</span></div>${body}</div></button>`;
+  const out = [tile('week', 'open-stats', ICON.chart, t('stats.week'), weekTileBody(), 'data-glance="week"')];
+  if (S.tailscaleInstalled) {
+    const st = S.tailscale;
+    const on = st && st.state === 'connected';
+    const detail = on ? t('ts.devices', { n: st.peersOnline || 0 }) + (st.exitNode ? ` · ${t('ts.viaExit', { name: st.exitNode.name })}` : '') : '';
+    out.push(tile('ts', 'ts-panel', ICON.vpn, t('ts.title'), `<div class="gl-body"><div class="gl-big ${on ? 'ok' : ''}">${h(st ? tsStateLabel(st) : '…')}</div><div class="gl-sub">${h(detail)}</div></div>`));
+  }
+  const jobs = (S.transfers || []).filter((j) => j.status === 'running' || j.status === 'queued');
+  if (jobs.length) {
+    const done = jobs.reduce((n, j) => n + (j.bytesDone || 0), 0);
+    const all = jobs.reduce((n, j) => n + (j.bytesTotal || 0), 0);
+    const p = all ? Math.round((done / all) * 100) : 0;
+    out.push(
+      tile(
+        'xfer',
+        'see-all',
+        ICON.download,
+        t('tab.transfers'),
+        `<div class="gl-body"><div class="gl-big">${p}%</div><div class="gl-sub">${h(jobs[0].title)}</div></div><div class="progress"><i style="width:${p}%"></i></div>`,
+        'data-tab="transfers"'
+      )
+    );
+  }
+  return out;
+}
+
+/** Stats arrive after Home is drawn: fill the week tile in place, without moving focus. */
+function fillGlance() {
+  const el = page.querySelector('[data-glance="week"] .art');
+  if (!el) return;
+  el.querySelectorAll('.gl-body, .gl-bars').forEach((x) => x.remove());
+  el.insertAdjacentHTML('beforeend', weekTileBody());
 }
 
 /** The banner's buttons for an item: the main action (play/resume) and its details page. */
@@ -370,7 +426,7 @@ const Spotlight = (() => {
   let running = false;
 
   function items() {
-    return [...page.querySelectorAll('.rows [data-row="jb"] [data-hero], .rows [data-row="cw"] [data-hero], .rows [data-row="fv"] [data-hero]')]
+    return [...page.querySelectorAll('.rows [data-row="cn"] [data-hero], .rows [data-row="fv"] [data-hero], .rows [data-row="ra"] [data-hero]')]
       .map((el) => el.dataset.hero)
       .filter((k, i, all) => all.indexOf(k) === i)
       .slice(0, 10);
