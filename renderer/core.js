@@ -809,6 +809,59 @@ const Status = (() => {
       <g mask="url(#wifi-cut)">${bandsSvg}</g><path d="${line}" fill="none" stroke-width="2.2" stroke-linecap="round"/></svg>`;
   }
 
+  // ---- Controller status: shown once a pad has been seen (browsers only reveal pads after their first button
+  // press), slashed if every pad then disconnects, e.g. the Legion Go's controllers detached and switched off.
+  const padEl = $('#pad');
+  let padSeen = false;
+  let padLost = false;
+
+  function connectedPads() {
+    return navigator.getGamepads ? [...navigator.getGamepads()].filter((p) => p && p.connected) : [];
+  }
+
+  function renderPad() {
+    const pads = connectedPads();
+    if (pads.length) {
+      padSeen = true;
+      padLost = false;
+    }
+    if (!pads.length && !padLost) {
+      padEl.hidden = true;
+      return;
+    }
+    const infos = pads.map((p) => Pads.describePad(p.id));
+    const legion = infos.some((i) => i.legion);
+    padEl.hidden = false;
+    padEl.className = `pad-status ${pads.length ? '' : 'off'} ${legion ? 'legion' : ''}`;
+    padEl.innerHTML = `${padSvg(!pads.length)}${pads.length > 1 ? `<small>${pads.length}</small>` : ''}`;
+    const label = pads.length ? infos.map((i) => (i.legion ? t('pad.legion') : i.name)).join(' · ') : t('pad.disconnected');
+    padEl.title = label;
+    padEl.setAttribute('aria-label', label);
+  }
+
+  function padSvg(off) {
+    const body = '<path d="M6.5 7h11a4.5 4.5 0 0 1 4.4 5.5l-1.1 4.6a2.5 2.5 0 0 1-4.3 1.1L14.4 16H9.6l-2.1 2.2a2.5 2.5 0 0 1-4.3-1.1l-1.1-4.6A4.5 4.5 0 0 1 6.5 7z"/><path d="M8 10v3M6.5 11.5h3"/><circle cx="15.5" cy="11" r=".6" fill="currentColor"/><circle cx="17" cy="12.8" r=".6" fill="currentColor"/>';
+    const slash = off ? '<path d="M3 4l18 16" stroke-width="2.3"/>' : '';
+    return `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${off ? `<g opacity=".55">${body}</g>` : body}${slash}</svg>`;
+  }
+
+  window.addEventListener('gamepadconnected', (e) => {
+    const wasLost = padLost;
+    renderPad();
+    if (wasLost) toast(t('pad.reconnected', { name: Pads.describePad(e.gamepad.id).legion ? t('pad.legion') : Pads.describePad(e.gamepad.id).name }));
+  });
+  window.addEventListener('gamepaddisconnected', () => {
+    // The disconnected pad can linger in getGamepads() for a moment.
+    setTimeout(() => {
+      if (padSeen && !connectedPads().length) {
+        padLost = true;
+        toast(t('pad.lostToast'));
+      }
+      renderPad();
+    }, 150);
+  });
+  padEl.addEventListener('click', () => openPadTester());
+
   async function pollWifi() {
     if (document.hidden) return;
     renderWifi(S.platform === 'win32' ? await api.wifi().catch(() => null) : null);
@@ -826,6 +879,8 @@ const Status = (() => {
     }
     pollWifi();
     setInterval(pollWifi, 30000);
+    renderPad();
+    setInterval(renderPad, 3000);
     window.addEventListener('online', pollWifi);
     window.addEventListener('offline', pollWifi);
   }

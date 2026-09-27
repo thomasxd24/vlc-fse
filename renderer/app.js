@@ -764,6 +764,7 @@ const ACTIONS = {
     render({ keepFocus: true });
   },
   'open-stats': () => openStats(),
+  'open-padtest': () => openPadTester(),
   screenshot: (d) => showScreenshot(d.id, Number(d.index)),
   'see-all': (d) => {
     if (d.pref) {

@@ -382,6 +382,8 @@ const Nav = (() => {
   const REPEAT_RATE = 95;
   let lastPad = null;
   let rafId = null;
+  let capture = null; // a page that reads the pads itself (the controller tester): no navigation meanwhile
+  let swallow = false; // after a capture ends, ignore buttons still held until they're released
 
   function padButton(name, pressed, fire, repeat) {
     const now = performance.now();
@@ -403,6 +405,19 @@ const Nav = (() => {
     rafId = null;
     if (!active || document.hidden) return; // resumes on visibilitychange / setActive
     const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
+    if (capture) {
+      if (pads.some((p) => p.buttons.some((x) => x.pressed))) setMode('pad');
+      capture(pads);
+      rafId = requestAnimationFrame(pollGamepads);
+      return;
+    }
+    if (swallow) {
+      if (pads.some((p) => p.buttons.some((x) => x.pressed || x.value > 0.5) || p.axes.some((a) => Math.abs(a) > 0.55))) {
+        rafId = requestAnimationFrame(pollGamepads);
+        return;
+      }
+      swallow = false;
+    }
     // Use the pad with something pressed (handhelds can expose both built-in and Bluetooth pads).
     const gp = pads.find((p) => p.buttons.some((x) => x.pressed) || p.axes.some((a) => Math.abs(a) > 0.55)) || lastPad && pads.find((p) => p.index === lastPad.index);
     if (gp) {
@@ -462,6 +477,15 @@ const Nav = (() => {
     remember,
     haptic,
     setRumble: (on) => (rumble = on),
+    /** Hand every frame's pads to `fn` instead of navigating (null gives the controller back to navigation). */
+    capture(fn) {
+      if (!fn && capture) {
+        swallow = true;
+        for (const k of Object.keys(held)) held[k] = true;
+      }
+      capture = fn || null;
+      if (fn) startPolling();
+    },
     setActive(on) {
       active = on;
       if (on) startPolling();

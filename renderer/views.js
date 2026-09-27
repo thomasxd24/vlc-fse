@@ -1,6 +1,6 @@
 'use strict';
 
-/* global S, idx, prefs, api, Stats, modals, fmtSize, renderStatus, tsStateLabel, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
+/* global S, idx, prefs, api, Stats, Pads, QuickMenu, go, back, modals, fmtSize, renderStatus, tsStateLabel, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
    ICON, Backdrop, VIEWS, page, route, render, Nav, $, keyboardHtml */
 
 // ============================================================================ Cards
@@ -830,6 +830,7 @@ VIEWS.settings = {
           ${toggleRow(t('set.sounds'), t('set.soundsDesc'), st.sounds, 'sounds', 't-sounds')}
           ${valueRow(t('set.textSize'), t('set.textSizeDesc'), `${Math.round((st.uiScale || 1) * 100)}%`, 'cycle-scale', 'scale')}
           ${valueRow(t('set.animations'), t('set.animationsDesc'), st.animations === 'reduced' ? t('set.animReduced') : t('set.animFull'), 'cycle-animations', 'anim')}
+          ${valueRow(t('pad.title'), t('pad.settingDesc'), '', 'open-padtest', 'padtest')}
           <div class="controls-help">${controlsHelp()}</div>
 
           <div class="section-title">${h(t('set.fse'))}</div>
@@ -1291,3 +1292,237 @@ VIEWS.apps = {
     }
   }
 };
+
+// ============================================================================ Controller tester
+
+/** Standard-mapping button indices, and where each one sits on the drawing. */
+const PAD_FACE = [
+  [0, 'A', 484, 190],
+  [1, 'B', 516, 160],
+  [2, 'X', 452, 160],
+  [3, 'Y', 484, 130]
+];
+const PAD_DPAD_CENTRE = [232, 226];
+const PAD_DPAD = [
+  [12, 'M222 216h20v-18a6 6 0 0 0-6-6h-8a6 6 0 0 0-6 6z'],
+  [13, 'M222 236h20v18a6 6 0 0 1-6 6h-8a6 6 0 0 1-6-6z'],
+  [14, 'M222 216v20h-18a6 6 0 0 1-6-6v-8a6 6 0 0 1 6-6z'],
+  [15, 'M242 216v20h18a6 6 0 0 0 6-6v-8a6 6 0 0 0-6-6z']
+];
+const STICK_R = 38;
+const PAD_STICKS = [
+  { axes: [0, 1], click: 10, cx: 160, cy: 150, key: 'l' },
+  { axes: [2, 3], click: 11, cx: 408, cy: 222, key: 'r' }
+];
+
+function padDiagram() {
+  const face = PAD_FACE.map(([i, label, x, y]) => `<g class="pb face" data-b="${i}"><circle cx="${x}" cy="${y}" r="16"/><text x="${x}" y="${y + 5}">${label}</text></g>`).join('');
+  const [dx, dy] = PAD_DPAD_CENTRE;
+  const dpad = `<rect class="dpad-centre" x="${dx - 10}" y="${dy - 10}" width="20" height="20"/>` + PAD_DPAD.map(([i, d]) => `<path class="pb" data-b="${i}" d="${d}"/>`).join('');
+  const sticks = PAD_STICKS.map(
+    (s) => `
+      <g class="pt-stick" data-stick="${s.key}">
+        <circle class="st-ring pb" data-b="${s.click}" cx="${s.cx}" cy="${s.cy}" r="${STICK_R + 6}"/>
+        <circle class="st-gate" cx="${s.cx}" cy="${s.cy}" r="${STICK_R}"/>
+        <path class="st-cross" d="M${s.cx - STICK_R} ${s.cy}h${STICK_R * 2}M${s.cx} ${s.cy - STICK_R}v${STICK_R * 2}"/>
+        <polyline class="st-trail" points=""/>
+        <circle class="st-dot" cx="${s.cx}" cy="${s.cy}" r="9"/>
+      </g>`
+  ).join('');
+  const shoulder = (i, x, label) => `<g class="pb shoulder" data-b="${i}"><rect x="${x}" y="54" width="118" height="24" rx="12"/><text x="${x + 59}" y="71">${label}</text></g>`;
+  const trigger = (i, x, label) => `
+    <g class="pt-trigger" data-t="${i}">
+      <rect class="tr-bg" x="${x}" y="8" width="118" height="36" rx="10"/>
+      <rect class="tr-fill" x="${x}" y="8" width="0" height="36" rx="10"/>
+      <text x="${x + 59}" y="31">${label}</text>
+    </g>`;
+  return `
+    <svg class="pt-svg" viewBox="0 0 640 330" role="img" aria-label="${h(t('pad.diagram'))}">
+      ${trigger(6, 70, 'LT')}${trigger(7, 452, 'RT')}
+      ${shoulder(4, 70, 'LB')}${shoulder(5, 452, 'RB')}
+      <path class="pt-body" d="M150 86h340c62 0 104 40 116 104l14 80c7 38-20 56-46 44l-56-26c-14-7-26-10-44-10H172c-18 0-30 3-44 10l-56 26c-26 12-53-6-46-44l14-80C46 126 88 86 150 86z"/>
+      <g class="pb small" data-b="8"><rect x="268" y="140" width="34" height="22" rx="11"/><text x="285" y="155">⧉</text></g>
+      <g class="pb small" data-b="9"><rect x="338" y="140" width="34" height="22" rx="11"/><text x="355" y="155">☰</text></g>
+      <g class="pb small" data-b="16"><circle cx="320" cy="190" r="14"/><text x="320" y="195">⌂</text></g>
+      ${sticks}${dpad}${face}
+    </svg>`;
+}
+
+function padStat(label, id, extra = '') {
+  return `<div class="pt-stat"><span>${h(label)}</span><b id="${id}" ${extra}>–</b></div>`;
+}
+
+VIEWS.padtest = {
+  render() {
+    return `
+      <div class="page padtest" data-scroll="padtest">
+        <div class="page-head"><h1 class="page-title">${h(t('pad.title'))}</h1><div class="page-count" id="pt-name"></div></div>
+        <div class="pt-waiting" id="pt-waiting">${ICON.gamepad}<p>${h(t('pad.pressAny'))}</p></div>
+        <div class="pt-body" id="pt-body" hidden>
+          <div class="pt-pad">${padDiagram()}</div>
+          <div class="pt-side">
+            <div class="pt-device"><span class="pt-badge" id="pt-badge" hidden>Legion Go</span><span id="pt-ids"></span></div>
+            <div class="pt-stats">
+              ${padStat(t('pad.rate'), 'pt-rate')}
+              ${padStat(t('pad.leftStick'), 'pt-l')}
+              ${padStat(t('pad.rightStick'), 'pt-r')}
+              ${padStat(t('pad.leftRest'), 'pt-ldrift')}
+              ${padStat(t('pad.rightRest'), 'pt-rdrift')}
+              ${padStat(t('pad.leftRound'), 'pt-lround')}
+              ${padStat(t('pad.rightRound'), 'pt-rround')}
+              ${padStat(t('pad.triggers'), 'pt-trig')}
+              ${padStat(t('pad.pressed'), 'pt-pressed')}
+            </div>
+            <div class="actions pt-actions" data-nav-group>
+              <button class="btn small focusable" data-pt="weak" data-key="pt-weak">${h(t('pad.rumbleWeak'))}</button>
+              <button class="btn small focusable" data-pt="strong" data-key="pt-strong">${h(t('pad.rumbleStrong'))}</button>
+              <button class="btn small focusable" data-pt="triggers" data-key="pt-triggers" hidden>${h(t('pad.rumbleTriggers'))}</button>
+              <button class="btn small focusable" data-pt="reset" data-key="pt-reset">${ICON.restart}${h(t('pad.reset'))}</button>
+            </div>
+          </div>
+        </div>
+        <div class="pt-help">
+          <span class="pt-hold"><span class="glyph g-b">B</span><i class="pt-ring" id="pt-ring"></i>${h(t('pad.holdB'))}</span>
+          <span><span class="glyph">L3</span>+<span class="glyph">R3</span> ${h(t('pad.l3r3'))}</span>
+        </div>
+      </div>`;
+  },
+  mount(r) {
+    Backdrop.set(null);
+    startPadTester(r);
+  }
+};
+
+function openPadTester() {
+  if (route().name === 'padtest') return;
+  if (QuickMenu.isOpen()) QuickMenu.close();
+  go({ name: 'padtest' });
+}
+
+/**
+ * The tester reads the pads itself every frame (Nav is told to stand aside), so every button can be tried,
+ * B included: holding B for a second goes back.
+ */
+function startPadTester(r) {
+  const $id = (id) => document.getElementById(id);
+  const trails = { l: [], r: [] };
+  const rest = { l: 0, r: 0 };
+  const times = [];
+  let lastTs = null;
+  let holdStart = 0;
+  let comboDown = false;
+  let pad = null;
+  let shownId = null;
+  document.body.classList.add('pad-testing');
+
+  const rumble = (kind) => {
+    const act = pad && pad.vibrationActuator;
+    if (!act) return;
+    try {
+      if (kind === 'triggers') act.playEffect('trigger-rumble', { duration: 500, leftTrigger: 1, rightTrigger: 1 });
+      else act.playEffect('dual-rumble', { duration: 500, strongMagnitude: kind === 'strong' ? 1 : 0, weakMagnitude: kind === 'weak' ? 1 : 0.3 });
+    } catch {}
+  };
+  const reset = () => {
+    trails.l = [];
+    trails.r = [];
+    rest.l = 0;
+    rest.r = 0;
+    page.querySelectorAll('.st-trail').forEach((el) => el.setAttribute('points', ''));
+  };
+  page.querySelector('.pt-actions').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pt]');
+    if (!b) return;
+    if (b.dataset.pt === 'reset') reset();
+    else rumble(b.dataset.pt);
+  });
+
+  const stop = () => {
+    Nav.capture(null);
+    document.body.classList.remove('pad-testing');
+  };
+
+  Nav.capture((pads) => {
+    if (route() !== r || !document.getElementById('pt-body')) return stop();
+    // Follow the pad used most recently.
+    pad = pads.reduce((best, p) => (!best || p.timestamp > best.timestamp ? p : best), null);
+    const waiting = !pad;
+    $id('pt-waiting').hidden = !waiting;
+    $id('pt-body').hidden = waiting;
+    if (waiting) return;
+
+    if (shownId !== pad.id) {
+      shownId = pad.id;
+      const info = Pads.describePad(pad.id);
+      $id('pt-name').textContent = pads.length > 1 ? `${info.name} · ${t('pad.more', { n: pads.length })}` : info.name;
+      $id('pt-badge').hidden = !info.legion;
+      $id('pt-ids').textContent = [info.vendor ? `${info.vendor}:${info.product}` : '', pad.mapping === 'standard' ? t('pad.standard') : t('pad.raw')].filter(Boolean).join(' · ');
+      const effects = pad.vibrationActuator && pad.vibrationActuator.effects;
+      page.querySelector('[data-pt="triggers"]').hidden = !(effects && effects.includes('trigger-rumble'));
+      reset();
+    }
+
+    if (pad.timestamp !== lastTs) {
+      lastTs = pad.timestamp;
+      times.push(performance.now());
+      if (times.length > 120) times.shift();
+    }
+    $id('pt-rate').textContent = t('pad.hz', { n: Pads.pollRate(times) });
+
+    const pressed = (i) => Boolean(pad.buttons[i] && (pad.buttons[i].pressed || pad.buttons[i].value > 0.5));
+    page.querySelectorAll('.pt-svg [data-b]').forEach((el) => el.classList.toggle('on', pressed(Number(el.dataset.b))));
+
+    for (const s of PAD_STICKS) {
+      const x = pad.axes[s.axes[0]] || 0;
+      const y = pad.axes[s.axes[1]] || 0;
+      const g = page.querySelector(`[data-stick="${s.key}"]`);
+      const dot = g.querySelector('.st-dot');
+      dot.setAttribute('cx', (s.cx + x * STICK_R).toFixed(1));
+      dot.setAttribute('cy', (s.cy + y * STICK_R).toFixed(1));
+      const st = Pads.stick(x, y);
+      if (st.mag > 0.05) {
+        const tr = trails[s.key];
+        tr.push([x, y]);
+        if (tr.length > 1500) tr.shift();
+        g.querySelector('.st-trail').setAttribute('points', tr.map(([a, b]) => `${(s.cx + a * STICK_R).toFixed(1)},${(s.cy + b * STICK_R).toFixed(1)}`).join(' '));
+      } else {
+        // Resting: the largest offset seen at rest is the drift.
+        rest[s.key] = Math.max(rest[s.key] * 0.995, st.mag);
+      }
+      $id(`pt-${s.key}`).textContent = `${x.toFixed(2)}, ${y.toFixed(2)}`;
+      $id(`pt-${s.key}drift`).textContent = `${(rest[s.key] * 100).toFixed(1)} %`;
+      const round = Pads.circularity(trails[s.key]);
+      $id(`pt-${s.key}round`).textContent = round.error === null ? t('pad.rollStick') : t('pad.roundError', { n: round.error });
+    }
+
+    const trig = [6, 7].map((i) => (pad.buttons[i] ? pad.buttons[i].value : 0));
+    page.querySelectorAll('.pt-trigger').forEach((el) => {
+      const v = pad.buttons[Number(el.dataset.t)] ? pad.buttons[Number(el.dataset.t)].value : 0;
+      el.querySelector('.tr-fill').setAttribute('width', (118 * v).toFixed(1));
+    });
+    $id('pt-trig').textContent = `${Math.round(trig[0] * 100)} % · ${Math.round(trig[1] * 100)} %`;
+    const names = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', '⧉', '☰', 'L3', 'R3', '↑', '↓', '←', '→', '⌂'];
+    const down = pad.buttons.map((_, i) => i).filter(pressed).map((i) => names[i] || `#${i + 1}`);
+    $id('pt-pressed').textContent = down.join(' ') || '–';
+
+    // L3 + R3 together: vibration test.
+    const combo = pressed(10) && pressed(11);
+    if (combo && !comboDown) rumble('strong');
+    comboDown = combo;
+
+    // Hold B to leave.
+    const ring = $id('pt-ring');
+    if (pressed(1)) {
+      holdStart = holdStart || performance.now();
+      const p = Math.min(1, (performance.now() - holdStart) / 1000);
+      ring.style.setProperty('--p', p);
+      if (p >= 1) {
+        stop();
+        back();
+      }
+    } else {
+      holdStart = 0;
+      ring.style.setProperty('--p', 0);
+    }
+  });
+}
