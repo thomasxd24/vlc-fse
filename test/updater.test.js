@@ -76,7 +76,14 @@ test('finds the right asset for each install type, downloads and verifies it', a
     assert.ok(calls.some((c) => c.endsWith(name)));
     const cmd = await u.installCommand({ pid: 123, exePath: path.join(dir, 'Lounge.exe') });
     if (type === 'nsis') assert.deepEqual(cmd.args, ['/S', '--updated', '--force-run']);
-    else {
+    else if (type === 'fse') {
+      // Started through WMI, outside the package, with a status file to follow.
+      assert.equal(u.state.status, 'elevating');
+      const launcher = cmd.args[cmd.args.indexOf('-Command') + 1];
+      assert.match(launcher, /Invoke-CimMethod -ClassName Win32_Process -MethodName Create/);
+      assert.ok(launcher.includes(`-Zip "${file}"`) && launcher.includes(`-Status "${cmd.status}"`));
+      assert.ok(fs.readFileSync(path.join(dir, 'apply-fse.ps1'), 'utf8').startsWith('﻿param('));
+    } else {
       assert.equal(cmd.command, 'powershell.exe');
       const script = cmd.args[cmd.args.indexOf('-File') + 1];
       assert.ok(fs.readFileSync(script, 'utf8').startsWith('﻿param('), 'script written with a BOM for Windows PowerShell');
@@ -184,3 +191,24 @@ test('rate-limited API: falls back to github.com and verifies against SHA256SUMS
   assert.match(err.error, /rate limited/);
 });
 
+test('FSE install: follows the script until the installer has admin rights', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-upd-'));
+  const status = path.join(dir, 'fse-status.txt');
+  const u = new Updater({ repo: 'o/r', version: '2.1.2', installType: 'fse', dir });
+  const fast = { unpackMs: 200, promptMs: 150, everyMs: 10 };
+  const after = (ms, text) => setTimeout(() => fs.writeFileSync(status, text + '\r\n'), ms);
+  after(20, 'unpacking');
+  after(60, 'asking');
+  after(100, 'elevated');
+  assert.equal(await u.waitForFse(status, fast), 'elevated');
+  fs.writeFileSync(status, 'declined');
+  assert.equal(await u.waitForFse(status, fast), 'declined');
+  fs.writeFileSync(status, 'asking'); // the prompt never answered (the full screen experience hides it)
+  assert.equal(await u.waitForFse(status, fast), 'noprompt');
+  fs.writeFileSync(status, "failed: installer not found in the update");
+  assert.equal(await u.waitForFse(status, fast), 'failed: installer not found in the update');
+  fs.rmSync(status);
+  assert.match(await u.waitForFse(status, fast), /^failed: .*didn't start/);
+  assert.equal(require('../src/updater.js').wmiLaunch("a 'b'"), "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'a ''b''' }; exit [int]$r.ReturnValue");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

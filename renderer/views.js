@@ -880,10 +880,11 @@ function updateRows(st) {
     available: t('upd.availableShort', { version: up.version }),
     downloading: t('upd.downloading', { n: up.progress || 0 }),
     ready: t('upd.installing'),
+    elevating: t('upd.elevating'),
     installing: t('upd.installing'),
     error: updateErrorText(up.error)
   }[up.status];
-  const busy = ['checking', 'downloading', 'installing', 'ready'].includes(up.status);
+  const busy = ['checking', 'downloading', 'elevating', 'installing', 'ready'].includes(up.status);
   return `
     ${valueRow(t('upd.version'), statusText, `Lounge ${S.version}`, busy ? 'noop' : up.status === 'available' ? 'install-update' : 'check-update', 'upd-row')}
     <div class="settings-actions" data-nav-group>

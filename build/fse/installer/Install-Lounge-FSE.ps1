@@ -9,11 +9,20 @@
     3. Installs (or updates) Lounge-FSE.msix.
     4. Optionally sets Lounge as the full screen experience home app.
 #>
-param([switch]$SetHomeApp, [switch]$Quiet, [switch]$Update, [switch]$Launch)
+param([switch]$SetHomeApp, [switch]$Quiet, [switch]$Update, [switch]$Launch, [string]$Log)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-function Say($en, $fr) { Write-Host "$en" -ForegroundColor Cyan; Write-Host "  $fr" -ForegroundColor DarkGray }
+function Say($en, $fr) {
+  Write-Host "$en" -ForegroundColor Cyan; Write-Host "  $fr" -ForegroundColor DarkGray
+  if ($Log) { Add-Content -Path $Log -Value ("{0:u} {1}" -f (Get-Date), $en) -ErrorAction SilentlyContinue }
+}
+# Lounge's updater runs this hidden: any failure goes to its update log.
+trap {
+  if ($Log) { Add-Content -Path $Log -Value ("{0:u} installer failed: {1}" -f (Get-Date), $_) -ErrorAction SilentlyContinue }
+  if (-not $Quiet) { Write-Host "$_" -ForegroundColor Red; Read-Host 'Press Enter to close / Entrée pour fermer' | Out-Null }
+  exit 1
+}
 
 # Re-launch elevated if needed (certificate store and Developer Mode are machine-wide).
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -23,6 +32,7 @@ if (-not $admin) {
   if ($Quiet) { $argList += '-Quiet' }
   if ($Update) { $argList += '-Update' }
   if ($Launch) { $argList += '-Launch' }
+  if ($Log) { $argList += @('-Log', "`"$Log`"") }
   Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList
   exit
 }

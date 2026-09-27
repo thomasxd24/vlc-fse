@@ -1140,8 +1140,9 @@ async function installUpdate() {
   try {
     if (updater.state.status !== 'ready') await updater.download();
     if (gameSession) return { ok: false, errorKey: 'err.updateWhilePlaying' };
-    const { command, args } = await updater.installCommand({ pid: process.pid, exePath: process.execPath });
+    const { command, args, status } = await updater.installCommand({ pid: process.pid, exePath: process.execPath });
     for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore, appsStore]) if (s.timer) s.flush();
+    if (status) return await installFse(command, args, status);
     if (session) session.kill();
     const child = require('child_process').spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
     await new Promise((resolve, reject) => {
@@ -1156,6 +1157,28 @@ async function installUpdate() {
     updater.set({ status: 'error', error: err.message });
     return { ok: false, errorKey: 'err.update', vars: { message: err.message } };
   }
+}
+
+// FSE package: start the install script outside the package, then stay open until the installer has its admin
+// rights; the installer closes Lounge itself when it replaces the package, and starts the new version.
+async function installFse(command, args, status) {
+  const fail = (errorKey, vars) => {
+    updater.set({ status: 'error', error: vars ? vars.message : errorKey });
+    return { ok: false, errorKey, vars };
+  };
+  await new Promise((resolve, reject) => {
+    require('child_process').execFile(command, args, { windowsHide: true, timeout: 30000 }, (err, _out, errOut) => {
+      if (err) reject(new Error(`couldn't start the update (${String(errOut || err.message).trim().slice(0, 200)})`));
+      else resolve();
+    });
+  });
+  const result = await updater.waitForFse(status);
+  if (result === 'declined') return fail('upd.declined');
+  if (result === 'noprompt') return fail('upd.noPrompt');
+  if (result !== 'elevated') return fail('err.update', { message: result.replace(/^failed:\s*/, '') });
+  updater.set({ status: 'installing' });
+  if (session) session.kill();
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

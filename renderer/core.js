@@ -216,6 +216,7 @@ function fmtSize(bytes) {
 
 /** "Update failed: …", in words for GitHub's hourly limit (shared by every device on the network). */
 function updateErrorText(message) {
+  if (/^upd\.\w+$/.test(String(message || ''))) return t(message); // a reason the main process named by key
   if (/\b(403|429)\b|rate limit/i.test(String(message || ''))) return t('upd.rateLimited');
   return t('err.update', { message: message || '' });
 }

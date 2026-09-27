@@ -1087,7 +1087,7 @@ async function startUpdate() {
 function renderUpdateLayer() {
   const box = $('#update-layer');
   const up = S.update || {};
-  const show = updateLayerOpen && ['downloading', 'ready', 'installing', 'checking', 'available'].includes(up.status);
+  const show = updateLayerOpen && ['downloading', 'ready', 'elevating', 'installing', 'checking', 'available'].includes(up.status);
   if (!show) {
     if (!box.hidden) {
       box.hidden = true;
@@ -1098,7 +1098,7 @@ function renderUpdateLayer() {
     renderStatus();
     return;
   }
-  const installing = up.status === 'installing' || up.status === 'ready';
+  const installing = up.status === 'installing' || up.status === 'ready' || up.status === 'elevating';
   const pctDone = installing ? 100 : up.progress || 0;
   if (box.hidden) {
     box.hidden = false;
@@ -1119,7 +1119,7 @@ function renderUpdateLayer() {
   }
   $('#upd-title').textContent = t('upd.updatingTo', { version: up.version || '' });
   $('#upd-bar').style.width = `${pctDone}%`;
-  $('#upd-status').textContent = installing ? t('upd.installing') : t('upd.downloading', { n: pctDone });
+  $('#upd-status').textContent = up.status === 'elevating' ? t('upd.elevating') : installing ? t('upd.installing') : t('upd.downloading', { n: pctDone });
   box.querySelector('[data-upd="hide"]').hidden = installing;
   Hints.update();
 }
@@ -1131,7 +1131,7 @@ function onUpdateState(st) {
   if (st.status === 'installing') updateLayerOpen = true;
   renderUpdateLayer();
   if (st.status === 'available' && prev !== 'available') maybePromptUpdate();
-  if (st.status === 'error' && prev === 'downloading') toast(updateErrorText(st.error), 'error');
+  if (st.status === 'error' && (prev === 'downloading' || prev === 'elevating')) toast(updateErrorText(st.error), 'error');
   if (route().name === 'settings' && !modals.length && prev !== st.status) render({ keepFocus: true });
 }
 

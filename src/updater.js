@@ -12,7 +12,8 @@ const { pipeline } = require('stream/promises');
  * Self-updater driven by GitHub Releases. Works for all three ways Lounge can be installed:
  *   nsis  Lounge-Setup-<v>.exe      run silently over the existing install, which relaunches Lounge
  *   zip   Lounge-<v>-win-x64.zip    unpacked over the current folder by a small PowerShell script
- *   fse   Lounge-FSE-<v>.zip        the package's own installer updates the MSIX (one UAC prompt)
+ *   fse   Lounge-FSE-<v>.zip        the package's own installer updates the MSIX (one UAC prompt, which
+ *                                   Windows only shows on the desktop, not in the full screen experience)
  * Nothing is installed without the user saying so; downloads are verified against the SHA-256 digest
  * GitHub publishes for each release asset.
  */
@@ -106,23 +107,44 @@ try {
 Start-Process -FilePath (Join-Path $Target $Exe)
 `;
 
-// Runs the FSE package's installer from the downloaded zip in update mode.
-const FSE_APPLY = String.raw`param([int]$ParentPid, [string]$Zip, [string]$Log)
+// FSE: unpacks the update and starts the package's installer with admin rights, reporting each step in a
+// status file that Lounge watches (see waitForFse). Lounge starts it through WMI so that it runs outside the
+// MSIX package: a process started directly from Lounge belongs to the package, and Windows tears it down
+// with Lounge before it gets anywhere (no log line, no admin prompt, the old version back).
+const FSE_APPLY = String.raw`param([string]$Zip, [string]$Status, [string]$Log)
 $ErrorActionPreference = 'Stop'
 function Log($m) { Add-Content -Path $Log -Value ("{0:u} {1}" -f (Get-Date), $m) }
+function Report($s) { Set-Content -Path $Status -Value $s }
 try {
-  try { Wait-Process -Id $ParentPid -Timeout 90 -ErrorAction SilentlyContinue } catch {}
-  $tmp = Join-Path ([IO.Path]::GetTempPath()) ('lounge-fse-update-' + [guid]::NewGuid())
+  Report 'unpacking'
+  Log "unpacking $Zip"
+  $tmp = Join-Path (Split-Path -Parent $Zip) 'fse'
+  Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
   Expand-Archive -Path $Zip -DestinationPath $tmp -Force
-  $installer = Get-ChildItem -Path $tmp -Include 'Install-Lounge-FSE.ps1', 'Install-Foyer-FSE.ps1' -Recurse | Select-Object -First 1
+  $installer = Get-ChildItem -Path $tmp -Filter 'Install-Lounge-FSE.ps1' -Recurse | Select-Object -First 1
   if (-not $installer) { throw 'installer not found in the update' }
-  Log "running $($installer.FullName)"
-  & $installer.FullName -Quiet -Update -Launch
+  Report 'asking'
+  Log "asking for admin rights to run $($installer.FullName)"
+  $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $installer.FullName + '"'), '-Quiet', '-Update', '-Launch', '-Log', ('"' + $Log + '"'))
+  try { Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $a }
+  catch {
+    Log "admin rights not given: $_"
+    Report 'declined'
+    exit
+  }
   Log 'installer started'
+  Report 'elevated'
 } catch {
   Log "failed: $_"
+  Report "failed: $_"
 }
 `;
+
+// The one-liner that starts a command through WMI (Win32_Process.Create), outside Lounge's package.
+function wmiLaunch(commandLine) {
+  const quoted = commandLine.replace(/'/g, "''");
+  return `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${quoted}' }; exit [int]$r.ReturnValue`;
+}
 
 class Updater extends EventEmitter {
   /**
@@ -153,7 +175,7 @@ class Updater extends EventEmitter {
 
   /** Look for a newer release. Resolves with the state. */
   async check() {
-    if (!this.supported || ['downloading', 'installing'].includes(this.state.status)) return this.state;
+    if (!this.supported || ['downloading', 'elevating', 'installing'].includes(this.state.status)) return this.state;
     this.set({ status: 'checking', error: null });
     try {
       const res = await fetch(`${this.api}/repos/${this.repo}/releases/latest`, {
@@ -263,9 +285,9 @@ class Updater extends EventEmitter {
     const ps = (script, name, args) => {
       const p = path.join(this.dir, name);
       fs.writeFileSync(p, '﻿' + script.replace(/\r?\n/g, '\r\n'));
-      return { command: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', p, ...args] };
+      return { command: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', p, ...args], script: p };
     };
-    this.set({ status: 'installing' });
+    if (this.installType !== 'fse') this.set({ status: 'installing' });
     if (this.installType === 'nsis') {
       // electron-builder's NSIS installer: /S = silent, --force-run = start Lounge when done.
       return { command: this.file, args: ['/S', '--updated', '--force-run'] };
@@ -273,8 +295,43 @@ class Updater extends EventEmitter {
     if (this.installType === 'zip') {
       return ps(ZIP_APPLY, 'apply-zip.ps1', ['-ParentPid', String(pid), '-Zip', this.file, '-Target', path.dirname(exePath), '-Exe', path.basename(exePath), '-Log', log]);
     }
-    return ps(FSE_APPLY, 'apply-fse.ps1', ['-ParentPid', String(pid), '-Zip', this.file, '-Log', log]);
+    // FSE: run the script outside the package, then waitForFse() follows it. Lounge stays open until the
+    // installer has its admin rights, so a declined (or invisible) prompt leaves it running with an error.
+    const status = path.join(this.dir, 'fse-status.txt');
+    fs.rmSync(status, { force: true });
+    const script = ps(FSE_APPLY, 'apply-fse.ps1', []).script;
+    const line = `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${script}" -Zip "${this.file}" -Status "${status}" -Log "${log}"`;
+    this.set({ status: 'elevating' });
+    return { command: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', wmiLaunch(line)], status };
+  }
+
+  /**
+   * Follow the FSE install script through its status file until the installer has admin rights.
+   * Resolves 'elevated', 'declined', 'noprompt' (nobody answered the prompt: in the full screen experience
+   * Windows doesn't show it) or 'failed: <reason>'.
+   */
+  async waitForFse(statusFile, { unpackMs = 5 * 60000, promptMs = 90000, everyMs = 500 } = {}) {
+    const read = () => {
+      try {
+        return fs.readFileSync(statusFile, 'utf8').trim();
+      } catch {
+        return '';
+      }
+    };
+    let since = Date.now();
+    let last = '';
+    for (;;) {
+      const now = read();
+      if (now !== last) {
+        last = now;
+        since = Date.now();
+      }
+      if (now === 'elevated' || now === 'declined' || now.startsWith('failed')) return now;
+      if (now === 'asking' && Date.now() - since > promptMs) return 'noprompt';
+      if (now !== 'asking' && Date.now() - since > unpackMs) return 'failed: the update script didn\'t start';
+      await new Promise((r) => setTimeout(r, everyMs));
+    }
   }
 }
 
-module.exports = { parseChecksums, ASSET_NAMES, Updater, compareVersions, detectInstallType, ASSET_PATTERNS, ZIP_APPLY, FSE_APPLY };
+module.exports = { parseChecksums, ASSET_NAMES, Updater, compareVersions, detectInstallType, ASSET_PATTERNS, ZIP_APPLY, FSE_APPLY, wmiLaunch };
