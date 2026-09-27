@@ -8,7 +8,7 @@ const { JsonStore } = require('./src/store');
 const { scanLibraries } = require('./src/library');
 const { Metadata } = require('./src/metadata');
 const { findVlc, VlcSession } = require('./src/vlc');
-const { scanSteam } = require('./src/steam');
+const { scanSteam, launchQuietly } = require('./src/steam');
 const { GameInfo } = require('./src/gameinfo');
 const { GameSession, titleFromExe, manualId } = require('./src/games');
 const { SystemHelper, wifi, power, setPriority, hasBattery } = require('./src/system');
@@ -43,6 +43,7 @@ const DEFAULT_SETTINGS = {
   sgdbKey: '',
   steamEnabled: true,
   steamPath: '',
+  quietSteam: true, // launch Steam games without Steam's own window coming up
   uiLanguage: 'auto', // 'auto' | 'en' | 'fr'
   startFullscreen: true,
   launchAtLogin: false,
@@ -625,7 +626,11 @@ async function playGame(id) {
   if (!game) return { ok: false, errorKey: 'err.notFound' };
   if (game.source === 'manual' && !fs.existsSync(game.exe)) return { ok: false, errorKey: 'err.exeMissing' };
 
-  const s = new GameSession(game, { openExternal: (url) => shell.openExternal(url), openPath: (p) => shell.openPath(p) });
+  const s = new GameSession(game, {
+    openExternal: (url) => shell.openExternal(url),
+    openPath: (p) => shell.openPath(p),
+    launchSteam: settings.get('quietSteam') ? (appid) => launchQuietly(appid, library.steamPath) : null
+  });
   gameSession = s;
   gameState = { id, title: game.title, phase: 'launching', startedAt: Date.now() };
   send('game', gameState);

@@ -788,6 +788,7 @@ VIEWS.settings = {
           <div class="section-title">${h(t('tab.games'))}</div>
           ${toggleRow(t('set.steam'), S.library.steamFound ? t('set.steamFound', { n: games.filter((g) => g.source === 'steam').length }) : t('set.steamMissing'), st.steamEnabled, 'steamEnabled', 't-steam')}
           ${valueRow(t('set.steamPath'), t('set.steamPathDesc'), st.steamPath || t('set.auto'), 'pick-steam', 'steam-path')}
+          ${toggleRow(t('set.quietSteam'), t('set.quietSteamDesc'), st.quietSteam !== false, 'quietSteam', 't-quiet-steam')}
           ${valueRow(t('set.sgdb'), t('set.sgdbDesc'), mask(st.sgdbKey), 'edit-key', 'sgdb', 'data-setting="sgdbKey"')}
           ${toggleRow(t('set.freeWhilePlaying'), t('set.freeWhilePlayingDesc'), st.freeWhilePlaying, 'freeWhilePlaying', 't-free')}
           <div class="settings-actions" data-nav-group>

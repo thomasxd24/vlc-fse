@@ -155,3 +155,30 @@ test('a refetch that finds nothing keeps the info we already had', async (t) => 
   assert.equal(gi.lookup('steam-1').overview, 'Kept');
   assert.equal(gi.needs('steam-1'), false);
 });
+
+test('Steam games launch through the quiet launcher, falling back to the steam:// link', async () => {
+  const { GameSession } = require('../src/games');
+  const { QUIET_SCRIPT } = require('../src/steam');
+  const game = { id: 'steam-620', source: 'steam', appid: '620', title: 'Portal 2' };
+  const opened = [];
+  const run = async (launchSteam) => {
+    const s = new GameSession(game, { openExternal: async (u) => opened.push(u), openPath: async () => '', launchSteam });
+    await s.start();
+    s.stopTracking();
+  };
+  const quiet = [];
+  await run(async (appid) => quiet.push(appid) && true);
+  assert.deepEqual(quiet, ['620']);
+  assert.deepEqual(opened, []);
+  await run(async () => false); // steam.exe not found
+  await run(async () => {
+    throw new Error('spawn failed');
+  });
+  await run(null); // setting off
+  assert.deepEqual(opened, ['steam://rungameid/620', 'steam://rungameid/620', 'steam://rungameid/620']);
+  // The window watcher only ever closes Steam's own main window, and stops on its own.
+  const script = QUIET_SCRIPT(40);
+  assert.match(script, /title\.ToString\(\) == "Steam"/);
+  assert.match(script, /Get-Process -Name steam, steamwebhelper/);
+  assert.match(script, /AddSeconds\(40\)/);
+});

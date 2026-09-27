@@ -37,11 +37,18 @@ function splitArgs(s) {
  * launched (DRM wrappers, launchers, restarts). Manual games are tracked by their process.
  */
 class GameSession extends EventEmitter {
-  constructor(game, { openExternal, openPath }) {
+  /**
+   * @param {object} game
+   * @param {{openExternal: Function, openPath: Function, launchSteam?: (appid: string) => Promise<boolean>}} opts
+   *   launchSteam starts a Steam game its own way (e.g. keeping Steam's window hidden); returning false falls
+   *   back to the steam:// link.
+   */
+  constructor(game, { openExternal, openPath, launchSteam }) {
     super();
     this.game = game;
     this.openExternal = openExternal;
     this.openPath = openPath;
+    this.launchSteam = launchSteam;
     this.startedAt = 0;
     this.runningSince = 0;
     this.timer = null;
@@ -56,7 +63,8 @@ class GameSession extends EventEmitter {
   }
 
   async startSteam() {
-    await this.openExternal(`steam://rungameid/${this.game.appid}`);
+    const quiet = this.launchSteam ? await this.launchSteam(this.game.appid).catch(() => false) : false;
+    if (!quiet) await this.openExternal(`steam://rungameid/${this.game.appid}`);
     const want = Number(this.game.appid);
     const tick = async () => {
       if (this.done) return;

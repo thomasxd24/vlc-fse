@@ -216,4 +216,71 @@ async function runningAppId() {
   return typeof v === 'number' ? v : null;
 }
 
-module.exports = { findSteam, scanSteam, runningAppId, libraryFolders, playStats, currentUser };
+// ---------------------------------------------------------------------------- Launching quietly
+
+const QUIET_WINDOW_MS = 40000;
+
+// For a while after a launch, close Steam's main window whenever it shows up (to the tray, exactly like its X
+// button). Only a visible top-level window titled exactly "Steam" that belongs to Steam's own processes is
+// touched: the sign-in window, update and "preparing to launch" dialogs, and the game itself have other titles.
+const QUIET_SCRIPT = (seconds) => String.raw`
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class LoungeSteamWindow {
+  delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lParam);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int max);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
+  public static int CloseMain(uint[] pids) {
+    int closed = 0;
+    EnumWindows((hwnd, l) => {
+      if (!IsWindowVisible(hwnd)) return true;
+      uint pid;
+      GetWindowThreadProcessId(hwnd, out pid);
+      if (Array.IndexOf(pids, pid) < 0) return true;
+      var title = new StringBuilder(64);
+      GetWindowText(hwnd, title, 64);
+      if (title.ToString() == "Steam") { PostMessage(hwnd, 0x0010, IntPtr.Zero, IntPtr.Zero); closed++; }
+      return true;
+    }, IntPtr.Zero);
+    return closed;
+  }
+}
+'@
+$end = (Get-Date).AddSeconds(${seconds})
+while ((Get-Date) -lt $end) {
+  $pids = @(Get-Process -Name steam, steamwebhelper | ForEach-Object { [uint32]$_.Id })
+  if ($pids.Count) { [void][LoungeSteamWindow]::CloseMain($pids) }
+  Start-Sleep -Milliseconds 400
+}
+`;
+
+/**
+ * Launch a Steam game without Steam's window coming up. `steam.exe -silent` starts Steam straight into the
+ * tray when it isn't running (and hands the game over to it when it is); a short watcher then closes the main
+ * window if Steam still shows it. Falls back to the plain steam:// link when steam.exe can't be found.
+ * @returns {Promise<boolean>} whether the quiet path was used
+ */
+async function launchQuietly(appid, steamPath) {
+  const exe = steamPath && path.join(steamPath, 'steam.exe');
+  if (process.platform !== 'win32' || !exe || !fss.existsSync(exe)) return false;
+  const { spawn } = require('child_process');
+  const child = spawn(exe, ['-silent', `steam://rungameid/${appid}`], { detached: true, stdio: 'ignore', windowsHide: true });
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  child.unref();
+  const encoded = Buffer.from(QUIET_SCRIPT(Math.round(QUIET_WINDOW_MS / 1000)), 'utf16le').toString('base64');
+  const watcher = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], { detached: true, stdio: 'ignore', windowsHide: true });
+  watcher.on('error', () => {});
+  watcher.unref();
+  return true;
+}
+
+module.exports = { findSteam, scanSteam, runningAppId, launchQuietly, QUIET_SCRIPT, libraryFolders, playStats, currentUser };
