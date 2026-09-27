@@ -120,6 +120,23 @@ Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each 
   characters, no way to escape the library root). All 6 `test/transfer-plan.test.js` tests ported 1:1,
   including the adversarial one that feeds a `rel` containing literal `..\` sequences and checks every
   planned destination still resolves under the library root.
+- **`transfers.js` → `transfers.rs` (fully ported).** The download queue itself, unlike most of the
+  stateful classes deferred elsewhere in this migration — its own JS test already drives it through a
+  fully fake, injected `client` (just `download`/`close`), proving the design doesn't actually need a
+  real network connection to test. Runs on one dedicated worker thread for the queue's lifetime rather
+  than the JS version's async/event-loop concurrency. The JS "cancelling stops the download..." test is
+  ported 1:1 against an equivalent fake client; a second new test (successful download +
+  skip-already-downloaded-with-the-right-size, using an in-memory fake client) covers what that one JS
+  test doesn't reach. The third JS test in that file needs a real SFTP round trip through `remote.js` and
+  isn't ported — see below.
+- **`remote.js` (pure/generic parts) → `remote.rs`.** `sort_entries` and `walk` (generic over an injected
+  directory-listing closure, so no real client needed). New tests (JS only exercises this indirectly
+  through a real embedded SFTP server) cover natural/case-insensitive sorting, depth-first collection
+  with hidden-entry skipping, and error propagation. `connect`/`connect_sftp`/`connect_ftp` — actually
+  opening a connection — are deliberately not ported: picking an SSH/FTP crate (a pure-Rust one like
+  `russh` is tokio-based) is better decided alongside the Tauri `app` crate's async runtime, and
+  `test/remote.test.js` only verifies this module against a real embedded SFTP server, which would mean
+  either embedding an SSH server in Rust too just to test against, or shipping an unverified client.
 
 ## What isn't done, and can't be verified from this machine
 
@@ -135,11 +152,12 @@ can be trusted:
 - `GameSession`, `VlcSession`, `SystemHelper` and the `Tailscale` class (see above) — once the `app`
   crate's event/command shape exists to design against, and (for `VlcSession`) a real VLC install to
   verify against.
-- Porting the rest of `src/*.js`, roughly in this order (least to most risky):
-  1. `transfers.js`, `remote.js` — network-facing, spawn/drive FTP transfers.
-  2. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
+- `remote.js`'s actual `connect`/`connect_sftp`/`connect_ftp` (see above) — once an SSH/FTP crate and the
+  `app` crate's async runtime are decided.
+- Porting the rest of `src/*.js`:
+  1. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
      through, so it's ported last and tested hardest.
-  3. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).
+  2. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).
 - `scripts/build-fse.ps1` and `.github/workflows/build.yml` reworked for `cargo`/Tauri's bundler instead
   of `electron-builder`.
 - Retiring/porting `test/*.test.js` (currently `node --test` against the JS modules directly).
