@@ -763,14 +763,34 @@ const Status = (() => {
     wifiEl.hidden = false;
     wifiEl.className = `wifi ${w.connected ? '' : 'off'}`;
     const bars = w.connected ? Math.max(1, Math.ceil(w.signal / 25)) : 0;
-    wifiEl.innerHTML = wifiSvg(bars);
+    wifiEl.innerHTML = wifiSvg(bars, !w.connected);
     wifiEl.title = w.connected ? `${w.ssid} · ${w.signal}%` : t('status.offline');
     Status.wifi = w;
   }
 
-  function wifiSvg(bars) {
-    const arc = (r, on) => `<path d="M${12 - r} ${18 - r * 0.55}a${r} ${r} 0 0 1 ${r * 2} 0" opacity="${on ? 1 : 0.28}"/>`;
-    return `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round">${arc(3, bars >= 2)}${arc(6.5, bars >= 3)}${arc(10, bars >= 4)}<circle cx="12" cy="18.5" r="1.3" fill="currentColor" stroke="none" opacity="${bars >= 1 ? 1 : 0.28}"/></svg>`;
+  /**
+   * The Wi-Fi fan: a wedge split into a base and three bands, one lit per signal step (1–4). Offline shows the
+   * empty fan with a slash through it.
+   */
+  function wifiSvg(bars, offline = false) {
+    const cx = 12;
+    const cy = 20.2;
+    const half = (40 * Math.PI) / 180; // half-angle of the fan
+    const pt = (r, side) => `${(cx + side * r * Math.sin(half)).toFixed(2)} ${(cy - r * Math.cos(half)).toFixed(2)}`;
+    // An annular sector between radii r0 and r1; r0 = 0 is the base wedge.
+    const band = (r0, r1) =>
+      r0
+        ? `M${pt(r0, -1)}L${pt(r1, -1)}A${r1} ${r1} 0 0 1 ${pt(r1, 1)}L${pt(r0, 1)}A${r0} ${r0} 0 0 0 ${pt(r0, -1)}Z`
+        : `M${cx} ${cy}L${pt(r1, -1)}A${r1} ${r1} 0 0 1 ${pt(r1, 1)}Z`;
+    const steps = [[0, 4], [5.9, 9.3], [11.2, 14.6], [16.5, 19.9]];
+    const bandsSvg = steps.map(([r0, r1], i) => `<path d="${band(r0, r1)}" opacity="${offline ? 0.55 : bars > i ? 1 : 0.28}"/>`).join('');
+    // A thin stroke in the fill colour rounds the sectors' corners slightly.
+    const open = '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0.8" stroke-linejoin="round">';
+    if (!offline) return `${open}${bandsSvg}</svg>`;
+    // Offline: the slash gets a gap cut around it so it reads against the bands.
+    const line = 'M3.5 4.5L20.5 19.5';
+    return `${open}<mask id="wifi-cut"><rect width="24" height="24" fill="#fff" stroke="none"/><path d="${line}" stroke="#000" stroke-width="5" stroke-linecap="round"/></mask>
+      <g mask="url(#wifi-cut)">${bandsSvg}</g><path d="${line}" fill="none" stroke-width="2.2" stroke-linecap="round"/></svg>`;
   }
 
   async function pollWifi() {
