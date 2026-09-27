@@ -121,3 +121,17 @@ test('releases published under the old name (Foyer) are still found', async (t) 
   assert.equal(st.status, 'available');
   assert.equal(u.asset.name, 'Foyer-FSE-2.1.0.zip');
 });
+
+test('with both names in a release, the Lounge files are preferred', async (t) => {
+  const payload = Buffer.alloc(1000, 5);
+  const both = release(payload, payload, 'Foyer');
+  both.assets.push(...release(payload).assets);
+  for (const [type, name] of [['nsis', 'Lounge-Setup-2.1.0.exe'], ['zip', 'Lounge-2.1.0-win-x64.zip'], ['fse', 'Lounge-FSE-2.1.0.zip']]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-upd-'));
+    mockFetch(t, both, payload);
+    const u = new Updater({ repo: 'o/r', version: '2.0.0', installType: type, dir });
+    await u.check();
+    assert.equal(u.asset.name, name);
+    t.mock.restoreAll();
+  }
+});

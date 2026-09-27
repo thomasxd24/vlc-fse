@@ -79,7 +79,9 @@ jobs:
       # their first lines in its "update available" prompt. GitHub's generated notes are appended.
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: .github/release-notes
+          sparse-checkout: |
+            .github/release-notes
+            .github/foyer-bridge
 
       - id: notes
         run: |
@@ -90,6 +92,30 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      # Bridge for copies still running Foyer 2.0.0: its updater only looks for Foyer-named files, then needs
+      # Foyer.exe inside the zip and Install-Foyer-FSE.ps1 inside the FSE package. Foyer-named copies of each
+      # download make its "Update now" work; Lounge's own updater prefers the Lounge files. Drop once no
+      # 2.0.0 installs are left.
+      - name: Foyer-named copies for updating from Foyer 2.0.0
+        run: |
+          set -euo pipefail
+          bridge="$PWD/.github/foyer-bridge"
+          cd dist
+          for f in Lounge-Setup-*.exe; do cp "$f" "Foyer-${f#Lounge-}"; done
+          for f in Lounge-*-win-x64.zip; do
+            d=$(mktemp -d); unzip -q "$f" -d "$d"
+            exe=$(find "$d" -name Lounge.exe | head -1)
+            cp "$exe" "$(dirname "$exe")/Foyer.exe"
+            (cd "$d" && zip -q -r -X "$OLDPWD/Foyer-${f#Lounge-}" .)
+          done
+          for f in Lounge-FSE-*.zip; do
+            d=$(mktemp -d); unzip -q "$f" -d "$d"
+            inst=$(find "$d" -name Install-Lounge-FSE.ps1 | head -1)
+            cp "$bridge/Install-Foyer-FSE.ps1" "$(dirname "$inst")/"
+            (cd "$d" && zip -q -r -X "$OLDPWD/Foyer-${f#Lounge-}" .)
+          done
+          ls -la
 
       - uses: softprops/action-gh-release@v2
         with:

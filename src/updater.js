@@ -148,7 +148,9 @@ class Updater extends EventEmitter {
       if (!res.ok) throw new Error(`GitHub ${res.status}`);
       const rel = await res.json();
       const latest = String(rel.tag_name || '').replace(/^v/, '');
-      const asset = (rel.assets || []).find((a) => ASSET_PATTERNS[this.installType].test(a.name));
+      // Releases may also carry Foyer-named copies (for updating Foyer 2.0.0): prefer the Lounge files.
+      const matches = (rel.assets || []).filter((a) => ASSET_PATTERNS[this.installType].test(a.name));
+      const asset = matches.find((a) => /^Lounge-/i.test(a.name)) || matches[0];
       if (compareVersions(latest, this.version) > 0 && asset) {
         this.release = rel;
         this.asset = asset;

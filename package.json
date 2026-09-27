@@ -1,7 +1,7 @@
 {
   "name": "lounge",
   "productName": "Lounge",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Fullscreen game and media launcher for Windows handhelds and living-room PCs: Steam and your own games, films and TV in VLC.",
   "main": "main.js",
   "author": "Thomas Tse",
