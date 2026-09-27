@@ -10,18 +10,80 @@ const { execFile, spawn } = require('child_process');
 
 const AUTH_URL = /https:\/\/login\.tailscale\.com\/a\/[\w-]+|https:\/\/[\w.-]+\/a\/[\w-]{6,}/;
 
+const fileExists = (p) => {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+
+function regQuery(key, value) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(null);
+    execFile('reg', ['query', key, '/v', value], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
+      if (err) return resolve(null);
+      const m = new RegExp(`${value}\\s+REG_\\w+\\s+(.*)`, 'i').exec(stdout);
+      resolve(m ? m[1].trim() : null);
+    });
+  });
+}
+
+/** The executable in a service ImagePath or command line: '"C:\\x y\\a.exe" -arg' or 'C:\\x\\a.exe -arg'. */
+function exeOfCommand(cmd) {
+  const m = /^\s*"([^"]+)"|^\s*(\S+)/.exec(String(cmd || ''));
+  return m ? (m[1] || m[2]).replace(/^\\\?\?\\/, '') : null;
+}
+
+/**
+ * Find Tailscale's CLI (tailscale.exe, installed next to the tray app and the service). Tries, in order: the
+ * standard install folders, the folder of the Tailscale Windows service (its registered ImagePath, readable
+ * without admin rights), folders given as hints (e.g. where the Start menu's Tailscale app lives), and PATH.
+ * Returns { cli, tried: [{path, source, found}] } so Settings can show where it looked.
+ */
+async function locateCli({ env = process.env, hints = [], exists = fileExists, query = regQuery, platform = process.platform } = {}) {
+  const tried = [];
+  const check = (p, source) => {
+    if (!p || tried.some((t) => t.path.toLowerCase() === p.toLowerCase())) return null;
+    const found = exists(p);
+    tried.push({ path: p, source, found });
+    return found ? p : null;
+  };
+  if (platform !== 'win32') {
+    for (const p of ['/usr/bin/tailscale', '/usr/local/bin/tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']) {
+      const hit = check(p, 'default');
+      if (hit) return { cli: hit, tried };
+    }
+    return { cli: null, tried };
+  }
+  const win = path.win32;
+  for (const base of [env.ProgramW6432, env.ProgramFiles, env['ProgramFiles(x86)']].filter(Boolean)) {
+    const hit = check(win.join(base, 'Tailscale', 'tailscale.exe'), 'default');
+    if (hit) return { cli: hit, tried };
+  }
+  const image = exeOfCommand(await query('HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tailscale', 'ImagePath'));
+  if (image) {
+    const hit = check(win.join(win.dirname(image), 'tailscale.exe'), 'service');
+    if (hit) return { cli: hit, tried };
+  }
+  for (const dir of hints.filter(Boolean)) {
+    const hit = check(win.join(dir, 'tailscale.exe'), 'startMenu');
+    if (hit) return { cli: hit, tried };
+  }
+  for (const dir of String(env.PATH || env.Path || '').split(';').filter(Boolean)) {
+    if (!exists(win.join(dir, 'tailscale.exe'))) continue;
+    return { cli: check(win.join(dir, 'tailscale.exe'), 'path'), tried };
+  }
+  return { cli: null, tried };
+}
+
+/** Quick synchronous guess at startup (the standard folders); locateCli() does the full search. */
 function findCli(env = process.env) {
   const candidates =
     process.platform === 'win32'
       ? [env.ProgramW6432, env.ProgramFiles, env['ProgramFiles(x86)']].filter(Boolean).map((p) => path.join(p, 'Tailscale', 'tailscale.exe'))
       : ['/usr/bin/tailscale', '/usr/local/bin/tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'];
-  return candidates.find((p) => {
-    try {
-      return fs.statSync(p).isFile();
-    } catch {
-      return false;
-    }
-  }) || null;
+  return candidates.find(fileExists) || null;
 }
 
 function run(cli, args, timeout = 15000) {
@@ -70,12 +132,20 @@ class Tailscale {
   constructor(env = process.env) {
     this.env = env;
     this.cli = findCli(env);
+    this.tried = [];
     this.login = null; // the running `tailscale up` waiting for sign-in
   }
 
   get installed() {
-    if (!this.cli) this.cli = findCli(this.env);
     return Boolean(this.cli);
+  }
+
+  /** Search everywhere Tailscale might be (see locateCli); `hints` are extra folders to try. */
+  async locate(hints = []) {
+    const r = await locateCli({ env: this.env, hints });
+    this.cli = r.cli;
+    this.tried = r.tried;
+    return r;
   }
 
   async status() {
@@ -148,4 +218,4 @@ class Tailscale {
   }
 }
 
-module.exports = { Tailscale, parseStatus, findCli, AUTH_URL };
+module.exports = { Tailscale, parseStatus, findCli, locateCli, exeOfCommand, AUTH_URL };

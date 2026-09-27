@@ -739,6 +739,25 @@ const ACTIONS = {
   'ts-exit': () => chooseExitNode(),
   'ts-login': () => tailscaleLogin(),
   'ts-panel': () => tailscalePanel(),
+  'tailscale-find': async () => {
+    for (;;) {
+      const r = await api.tailscaleLocate();
+      await refreshState();
+      const where = { default: t('ts.srcDefault'), service: t('ts.srcService'), startMenu: t('ts.srcStartMenu'), path: t('ts.srcPath') };
+      const lines = (r.tried || []).map((x) => `${x.found ? '✓' : '✗'} ${x.path}  (${where[x.source] || x.source})`);
+      const v = await choose({
+        title: r.cli ? t('ts.foundAt', { path: r.cli }) : t('ts.notFound'),
+        text: [r.cli ? '' : t('ts.notFoundHelp'), t('ts.looked'), ...lines].filter(Boolean).join('\n'),
+        choices: [
+          ...(r.cli ? [{ label: t('ts.title'), value: 'panel', icon: ICON.vpn, primary: true }] : []),
+          { label: t('ts.lookAgain'), value: 'again', icon: ICON.refresh, primary: !r.cli },
+          { label: t('common.done'), value: null }
+        ]
+      });
+      if (v === 'panel') return tailscalePanel();
+      if (v !== 'again') return;
+    }
+  },
   'add-server': async () => {
     const id = await editServer(null);
     if (id) go({ name: 'remote', serverId: id, path: null });

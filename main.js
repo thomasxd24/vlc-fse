@@ -301,6 +301,8 @@ function state() {
     appsScanning,
     appsScannedAt: appsStore.get('scannedAt'),
     tailscaleInstalled: tailscale.installed,
+    tailscaleCli: tailscale.cli,
+    tailscaleTried: tailscale.tried,
     transfers: transfers ? transfers.state : [],
     version: app.getVersion()
   };
@@ -1045,6 +1047,8 @@ async function scanApps() {
     appsScanning = false;
     pushLibrary();
   }
+  // The app list may point at a Tailscale installed somewhere unusual.
+  if (!tailscale.installed) locateTailscale();
 }
 
 async function launchInstalledApp(id) {
@@ -1064,6 +1068,23 @@ async function launchInstalledApp(id) {
 }
 
 // Tailscale (see src/tailscale.js)
+
+/** Full search for tailscale.exe, with the Start menu's Tailscale app folder as a hint. */
+async function locateTailscale() {
+  const hints = [];
+  for (const a of appsStore.get('apps').filter(isTailscaleApp)) {
+    if (a.exe) hints.push(path.dirname(a.exe));
+    if (a.shortcut) {
+      try {
+        const link = shell.readShortcutLink(a.shortcut);
+        if (link.target) hints.push(path.dirname(link.target));
+      } catch {}
+    }
+  }
+  const r = await tailscale.locate(hints).catch(() => ({ cli: tailscale.cli, tried: tailscale.tried }));
+  pushLibrary();
+  return r;
+}
 
 async function tailscaleAction({ action, node }) {
   if (!tailscale.installed) return { ok: false, errorKey: 'err.tsMissing' };
@@ -1409,6 +1430,7 @@ function registerIpc() {
     pushLibrary();
   });
   ipcMain.handle('tailscale-status', () => tailscale.status());
+  ipcMain.handle('tailscale-locate', () => locateTailscale());
   ipcMain.handle('tailscale-action', (_e, req) => tailscaleAction(req || {}));
   ipcMain.handle('tailscale-login', () => tailscaleLogin());
   ipcMain.handle('tailscale-cancel-login', () => tailscale.cancelLogin());
@@ -1461,6 +1483,7 @@ app.whenReady().then(() => {
   // Show the cached library immediately, then refresh it in the background.
   win.webContents.once('did-finish-load', () => {
     rescan();
+    locateTailscale();
     // The installed-apps list refreshes a little later, so it doesn't compete with the library scan.
     setTimeout(scanApps, 8000);
   });

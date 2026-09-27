@@ -42,3 +42,31 @@ test('finds the sign-in URL in `tailscale up` output', () => {
   const text = '\nTo authenticate, visit:\n\n\thttps://login.tailscale.com/a/1a2b3c4d5e6f\n\n';
   assert.equal(AUTH_URL.exec(text)[0], 'https://login.tailscale.com/a/1a2b3c4d5e6f');
 });
+
+test('finding tailscale.exe: standard folders, the service, the Start menu app, PATH', async () => {
+  const { locateCli } = require('../src/tailscale');
+  const env = { ProgramW6432: 'C:\\Program Files', ProgramFiles: 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)', PATH: 'C:\\Windows;D:\\Tools\\TS' };
+  const at = (...files) => (p) => files.map((f) => f.toLowerCase()).includes(p.toLowerCase());
+  const noService = async () => null;
+
+  let r = await locateCli({ env, platform: 'win32', exists: at('C:\\Program Files\\Tailscale\\tailscale.exe'), query: noService });
+  assert.equal(r.cli, 'C:\\Program Files\\Tailscale\\tailscale.exe');
+
+  // Installed elsewhere: the service's registered program path leads to it.
+  const service = async (key, value) => (key.endsWith('Services\\Tailscale') && value === 'ImagePath' ? '"E:\\Apps\\Tailscale\\tailscaled.exe"' : null);
+  r = await locateCli({ env, platform: 'win32', exists: at('E:\\Apps\\Tailscale\\tailscale.exe'), query: service });
+  assert.equal(r.cli, 'E:\\Apps\\Tailscale\\tailscale.exe');
+  assert.deepEqual(r.tried.map((t) => t.source), ['default', 'default', 'service']);
+
+  // No service entry: the Start menu app's folder, then PATH.
+  r = await locateCli({ env, platform: 'win32', hints: ['F:\\TS'], exists: at('F:\\TS\\tailscale.exe'), query: noService });
+  assert.equal(r.cli, 'F:\\TS\\tailscale.exe');
+  r = await locateCli({ env, platform: 'win32', exists: at('D:\\Tools\\TS\\tailscale.exe'), query: noService });
+  assert.equal(r.cli, 'D:\\Tools\\TS\\tailscale.exe');
+  assert.equal(r.tried.at(-1).source, 'path');
+
+  // Not installed: nothing found, and the places tried are reported.
+  r = await locateCli({ env, platform: 'win32', exists: () => false, query: noService });
+  assert.equal(r.cli, null);
+  assert.deepEqual(r.tried.map((t) => t.path), ['C:\\Program Files\\Tailscale\\tailscale.exe', 'C:\\Program Files (x86)\\Tailscale\\tailscale.exe']);
+});

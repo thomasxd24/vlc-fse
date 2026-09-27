@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('lounge', {
   launchApp: call('app-launch'),
   hideApp: call('app-hide'),
   tailscaleStatus: call('tailscale-status'),
+  tailscaleLocate: call('tailscale-locate'),
   tailscaleAction: call('tailscale-action'),
   tailscaleLogin: call('tailscale-login'),
   tailscaleCancelLogin: call('tailscale-cancel-login'),

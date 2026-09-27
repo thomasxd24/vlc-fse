@@ -849,6 +849,7 @@ VIEWS.settings = {
           ${updateRows(st)}
 
           <div class="section-title">${h(t('set.system'))}</div>
+          ${valueRow(t('ts.title'), S.tailscaleCli ? t('ts.foundAt', { path: S.tailscaleCli }) : t('ts.notFoundDesc'), S.tailscaleCli ? t('ts.found') : t('ts.notFound'), 'tailscale-find', 'ts-find')}
           <div class="settings-actions" data-nav-group>
             <button class="btn small focusable" data-act="minimize" data-key="min">${ICON.desktop}${h(t('qm.desktop'))}</button>
             <button class="btn small focusable" data-act="fullscreen" data-key="fs">${h(t('set.toggleFullscreen'))}</button>
