@@ -83,6 +83,9 @@ test('finds the right asset for each install type, downloads and verifies it', a
       assert.match(launcher, /Invoke-CimMethod -ClassName Win32_Process -MethodName Create/);
       assert.ok(launcher.includes(`-Zip "${file}"`) && launcher.includes(`-Status "${cmd.status}"`));
       assert.ok(fs.readFileSync(path.join(dir, 'apply-fse.ps1'), 'utf8').startsWith('﻿param('));
+      // Windows only shows the permission prompt on the desktop: the script leaves the full screen experience.
+      const applied = fs.readFileSync(path.join(dir, 'apply-fse.ps1'), 'utf8');
+      assert.ok(applied.indexOf('    ToggleFse\r\n') < applied.indexOf("Report 'asking'") && applied.includes("$a += '-ReturnToFse'"));
     } else {
       assert.equal(cmd.command, 'powershell.exe');
       const script = cmd.args[cmd.args.indexOf('-File') + 1];

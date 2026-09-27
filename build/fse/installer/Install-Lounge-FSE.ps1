@@ -9,7 +9,7 @@
     3. Installs (or updates) Lounge-FSE.msix.
     4. Optionally sets Lounge as the full screen experience home app.
 #>
-param([switch]$SetHomeApp, [switch]$Quiet, [switch]$Update, [switch]$Launch, [string]$Log)
+param([switch]$SetHomeApp, [switch]$Quiet, [switch]$Update, [switch]$Launch, [string]$Log, [switch]$ReturnToFse)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
@@ -32,6 +32,7 @@ if (-not $admin) {
   if ($Quiet) { $argList += '-Quiet' }
   if ($Update) { $argList += '-Update' }
   if ($Launch) { $argList += '-Launch' }
+  if ($ReturnToFse) { $argList += '-ReturnToFse' }
   if ($Log) { $argList += @('-Log', "`"$Log`"") }
   Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList
   exit
@@ -88,5 +89,21 @@ if ($oem -ne 46) {
 if ($Launch) {
   # Start Lounge through Explorer so it runs as the signed-in user, not with this script's admin rights.
   Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$aumid"
+}
+if ($ReturnToFse) {
+  # Lounge's updater left the full screen experience for the permission prompt: go back to it (Win+F11).
+  Add-Type -Namespace LoungeUpd -Name Win -MemberDefinition @'
+  [DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string t);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+'@
+  # The full screen experience hides the taskbar; Win+F11 switches between it and the desktop.
+  function DesktopShown { $t = [LoungeUpd.Win]::FindWindow('Shell_TrayWnd', $null); ($t -ne [IntPtr]::Zero) -and [LoungeUpd.Win]::IsWindowVisible($t) }
+  function ToggleFse {
+    [LoungeUpd.Win]::keybd_event(0x5B, 0, 0, [UIntPtr]::Zero); [LoungeUpd.Win]::keybd_event(0x7A, 0, 0, [UIntPtr]::Zero)
+    [LoungeUpd.Win]::keybd_event(0x7A, 0, 2, [UIntPtr]::Zero); [LoungeUpd.Win]::keybd_event(0x5B, 0, 2, [UIntPtr]::Zero)
+  }
+  Start-Sleep -Seconds 2
+  if (DesktopShown) { ToggleFse }
 }
 if (-not $Quiet) { Read-Host 'Press Enter to close / Entrée pour fermer' | Out-Null }

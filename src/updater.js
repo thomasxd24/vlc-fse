@@ -108,13 +108,25 @@ Start-Process -FilePath (Join-Path $Target $Exe)
 `;
 
 // FSE: unpacks the update and starts the package's installer with admin rights, reporting each step in a
-// status file that Lounge watches (see waitForFse). Lounge starts it through WMI so that it runs outside the
+// status file that Lounge watches (see waitForFse). Windows doesn't show its permission prompt in the full
+// screen experience, so the script switches to the desktop first, and the installer switches back after. Lounge starts it through WMI so that it runs outside the
 // MSIX package: a process started directly from Lounge belongs to the package, and Windows tears it down
 // with Lounge before it gets anywhere (no log line, no admin prompt, the old version back).
 const FSE_APPLY = String.raw`param([string]$Zip, [string]$Status, [string]$Log)
 $ErrorActionPreference = 'Stop'
 function Log($m) { Add-Content -Path $Log -Value ("{0:u} {1}" -f (Get-Date), $m) }
 function Report($s) { Set-Content -Path $Status -Value $s }
+Add-Type -Namespace LoungeUpd -Name Win -MemberDefinition @'
+[DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string t);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+'@
+# The full screen experience hides the taskbar; Win+F11 switches between it and the desktop.
+function DesktopShown { $t = [LoungeUpd.Win]::FindWindow('Shell_TrayWnd', $null); ($t -ne [IntPtr]::Zero) -and [LoungeUpd.Win]::IsWindowVisible($t) }
+function ToggleFse {
+  [LoungeUpd.Win]::keybd_event(0x5B, 0, 0, [UIntPtr]::Zero); [LoungeUpd.Win]::keybd_event(0x7A, 0, 0, [UIntPtr]::Zero)
+  [LoungeUpd.Win]::keybd_event(0x7A, 0, 2, [UIntPtr]::Zero); [LoungeUpd.Win]::keybd_event(0x5B, 0, 2, [UIntPtr]::Zero)
+}
 try {
   Report 'unpacking'
   Log "unpacking $Zip"
@@ -123,9 +135,16 @@ try {
   Expand-Archive -Path $Zip -DestinationPath $tmp -Force
   $installer = Get-ChildItem -Path $tmp -Filter 'Install-Lounge-FSE.ps1' -Recurse | Select-Object -First 1
   if (-not $installer) { throw 'installer not found in the update' }
+  $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $installer.FullName + '"'), '-Quiet', '-Update', '-Launch', '-Log', ('"' + $Log + '"'))
+  if (-not (DesktopShown)) {
+    Report 'desktop'
+    Log 'switching to the desktop for the permission prompt'
+    ToggleFse
+    for ($i = 0; $i -lt 20 -and -not (DesktopShown); $i++) { Start-Sleep -Milliseconds 250 }
+    if (DesktopShown) { $a += '-ReturnToFse' } else { Log 'the desktop did not appear' }
+  }
   Report 'asking'
   Log "asking for admin rights to run $($installer.FullName)"
-  $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $installer.FullName + '"'), '-Quiet', '-Update', '-Launch', '-Log', ('"' + $Log + '"'))
   try { Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $a }
   catch {
     Log "admin rights not given: $_"
