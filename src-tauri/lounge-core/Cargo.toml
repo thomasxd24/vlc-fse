@@ -16,3 +16,6 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[target."cfg(windows)".dependencies]
+base64 = "0.23.1"

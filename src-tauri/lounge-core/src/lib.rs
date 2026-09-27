@@ -7,5 +7,6 @@
 
 pub mod migrate;
 pub mod parse;
+pub mod steam;
 pub mod store;
 pub mod vdf;
