@@ -16,5 +16,6 @@ pub mod steam;
 pub mod store;
 pub mod system;
 pub mod tailscale;
+pub mod transfer_plan;
 pub mod vdf;
 pub mod vlc;

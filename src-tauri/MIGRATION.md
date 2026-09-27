@@ -113,6 +113,13 @@ Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each 
   subprocess-with-timeout or streaming-with-callback) is deliberately not ported: none of it has a test,
   and it's better designed against the Tauri `app` crate's real async runtime than blocking-and-polled
   here — same reasoning as `GameSession`/`VlcSession`/`SystemHelper`.
+- **`transfer-plan.js` → `transfer_plan.rs`.** Fully ported: entirely pure (no filesystem/network access
+  at all — the JS file's own top comment says as much), so nothing was deferred. Decides film vs. show,
+  the destination folder layout, subtitle-to-video ownership matching, season-pack merging into an
+  existing show folder, and `safeName`'s path-injection defense (Windows-reserved names, illegal
+  characters, no way to escape the library root). All 6 `test/transfer-plan.test.js` tests ported 1:1,
+  including the adversarial one that feeds a `rel` containing literal `..\` sequences and checks every
+  planned destination still resolves under the library root.
 
 ## What isn't done, and can't be verified from this machine
 
@@ -129,7 +136,7 @@ can be trusted:
   crate's event/command shape exists to design against, and (for `VlcSession`) a real VLC install to
   verify against.
 - Porting the rest of `src/*.js`, roughly in this order (least to most risky):
-  1. `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, do FTP transfers.
+  1. `transfers.js`, `remote.js` — network-facing, spawn/drive FTP transfers.
   2. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
      through, so it's ported last and tested hardest.
   3. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).
