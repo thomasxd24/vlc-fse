@@ -91,6 +91,16 @@ Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each 
 **Windows cross-check confirmed working again** as of this module — `mingw-w64-gcc` is now installed, so
 `cargo check/clippy --target x86_64-pc-windows-gnu` covers every module from here on, cfg(windows) or not.
 
+- **`system.js` (self-contained parts) → `system.rs`.** Wi-Fi status (`wifi`), sleep/restart/shutdown
+  (`power`), process priority (`set_priority`, via `SetPriorityClass` FFI through `windows-sys` rather
+  than shelling out per-pid, closer to what Node's `os.setPriority` actually does), and battery detection
+  (`has_battery`). No JS test existed for any of this (nothing in `test/*.test.js` references
+  `system.js`) and it's all Windows-only, so it's verified only by `cargo check/clippy --target
+  x86_64-pc-windows-gnu` — except the `netsh` output parsing, which was pulled out into its own pure
+  function (`parse_netsh_output`) specifically so it *is* testable here, independent of actually running
+  `netsh`. `SystemHelper` (spawns a long-lived PowerShell process, talks JSON-lines over stdin/stdout for
+  volume/brightness/sleep) is deliberately not ported — same reasoning as `GameSession`/`VlcSession`.
+
 ## What isn't done, and can't be verified from this machine
 
 This development sandbox is Linux with no Rust toolchain pre-installed (added via `mise`, scoped to
@@ -102,13 +112,12 @@ can be trusted:
   `main.js` currently registers via `ipcMain.handle`.
 - A drop-in replacement for `preload.js`'s `contextBridge`-exposed `api` object, so `renderer/**` needs
   little to no change (it already calls everything through that one `api.*` surface).
-- `GameSession` and `VlcSession` (see above) — once the `app` crate's event/command shape exists to
-  design against, and (for `VlcSession`) a real VLC install to verify against.
+- `GameSession`, `VlcSession` and `SystemHelper` (see above) — once the `app` crate's event/command shape
+  exists to design against, and (for `VlcSession`) a real VLC install to verify against.
 - Porting the rest of `src/*.js`, roughly in this order (least to most risky):
-  1. `system.js` — process spawning and system control.
-  2. `tailscale.js`, `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, spawn `tailscale`,
+  1. `tailscale.js`, `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, spawn `tailscale`,
      do FTP transfers.
-  3. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
+  2. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
      through, so it's ported last and tested hardest.
   8. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).
 - `scripts/build-fse.ps1` and `.github/workflows/build.yml` reworked for `cargo`/Tauri's bundler instead
