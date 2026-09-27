@@ -59,6 +59,19 @@ impl JsonStore {
         self.save();
     }
 
+    /// Read-modify-write a single top-level key atomically: `f` runs while the lock is held, so
+    /// concurrent callers (e.g. metadata.rs's worker pool, several threads updating the same "entries"
+    /// key) can't race a plain `get` + `set` into losing one another's update. `default` is inserted
+    /// first if the key is absent, same as `entries()`'s "if (!e) { e = {}; ... }" in the JS version.
+    pub fn update<F: FnOnce(&mut Value)>(&self, key: impl Into<String>, default: Value, f: F) {
+        {
+            let mut st = self.state.lock().unwrap();
+            let entry = st.data.entry(key.into()).or_insert(default);
+            f(entry);
+        }
+        self.save();
+    }
+
     /// Schedule a write 400ms from now; a `set`/`save` in the meantime pushes it back further, same as
     /// the JS version's debounce.
     pub fn save(&self) {
@@ -189,5 +202,23 @@ mod tests {
         assert!(file.exists(), "debounced flush should have run by now");
         let on_disk: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(on_disk["uiLanguage"], "it");
+    }
+
+    /// A plain get-then-set from several threads would race and lose updates; `update` must not.
+    #[test]
+    fn update_is_atomic_across_concurrent_callers() {
+        let dir = tempdir().unwrap();
+        let store = JsonStore::new(dir.path().join("settings.json"), Map::new());
+        const THREADS: i64 = 16;
+        thread::scope(|scope| {
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    store.update("counter", json!(0), |v| {
+                        *v = json!(v.as_i64().unwrap() + 1);
+                    });
+                });
+            }
+        });
+        assert_eq!(store.get("counter"), Some(json!(THREADS)));
     }
 }

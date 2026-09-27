@@ -59,6 +59,26 @@ Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each 
   report state back to the UI is a real design decision (events? a channel?) that depends on the Tauri
   `app` crate's shape, which doesn't exist yet. Porting it blind now would likely mean redoing it once
   that shape is known.
+- **`library.js` → `library.rs`.** Recursive media walk, movie/show/episode parsing, local art matching,
+  episode sort + auto-numbering. Added a `locale` module as a from-scratch stand-in for
+  `localeCompare`'s `numeric`/`sensitivity: 'base'` options (no ICU here). The dirCache the JS version
+  keeps as module-level state is threaded through explicitly (`DirCache`, scoped to one
+  `scan_libraries` call) instead of living in a global. `test/library.test.js`'s one test ported 1:1.
+- **`vlc.js` (locate/build-args parts) → `vlc.rs`.** `language_args`, `build_args`, `find_vlc`/`which`
+  ported and tested against both `buildArgs` tests in `test/library.test.js`. `VlcSession` (spawns VLC,
+  polls its HTTP interface) deliberately not ported — same reasoning as `GameSession`, and its only test
+  (`test/vlc-real.test.js`) needs a real installed VLC, unavailable here.
+- **`metadata.js` → `metadata.rs`.** TMDB lookups and image caching. Uses `ureq` (blocking) instead of
+  `fetch`, and **real OS threads instead of async workers for `enrich`'s 3-way concurrency — this one
+  actually required a design change, not just a mechanical port**: the JS version mutates its cache
+  object directly and calls `store.save()` after, which is safe only because JS's "concurrent" workers
+  interleave at `await` points and never truly run in parallel. Real threads doing the same plain
+  get-then-mutate-then-set would race and silently lose an update. Fixed by adding
+  `JsonStore::update()` (read-modify-write while holding the store's lock) and routing `enrich`'s
+  writes through it instead — with its own test (`update_is_atomic_across_concurrent_callers`) that
+  would fail intermittently without the fix. Both `test/metadata.test.js` tests ported 1:1 against a
+  local `httpmock` server (a new dev-dependency; adding `ureq` also pulled in `ring` for TLS, which
+  needs a C cross-compiler to build for the Windows target — see the Windows cross-check note below).
 
 ## What isn't done, and can't be verified from this machine
 
@@ -73,10 +93,17 @@ can be trusted:
   little to no change (it already calls everything through that one `api.*` surface).
 - `GameSession` (see above) — once the `app` crate's event/command shape exists to design it against.
 - Porting the rest of `src/*.js`, roughly in this order (least to most risky):
-  1. `library.js`, `metadata.js`, `gameinfo.js` — the bulk of the scanning/enrichment logic.
-  2. `vlc.js`, `system.js` — process spawning and playback control; needs a real VLC install to verify.
+  1. `gameinfo.js` — the remaining bulk of the scanning/enrichment logic.
+  2. `system.js` — process spawning and system control; `vlc.js`'s `VlcSession` needs a real VLC install
+     to verify, so it stays deferred alongside it.
   3. `tailscale.js`, `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, spawn `tailscale`,
      do FTP transfers.
+
+**Windows cross-check note:** `cargo check/clippy --target x86_64-pc-windows-gnu` needs
+`mingw-w64-gcc` now that `ureq`'s TLS backend (`ring`) is a dependency — it wasn't needed before
+`metadata.rs`. Install once with `sudo pacman -S mingw-w64-gcc` (this session couldn't run `sudo`
+itself, no terminal for the fingerprint/password prompt) to keep this check working for every module
+from here on, not just the ones with `cfg(windows)` blocks.
   4. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
      through, so it's ported last and tested hardest.
   8. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).

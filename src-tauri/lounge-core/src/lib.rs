@@ -8,6 +8,7 @@
 pub mod games;
 pub mod library;
 pub mod locale;
+pub mod metadata;
 pub mod migrate;
 pub mod parse;
 pub mod steam;
