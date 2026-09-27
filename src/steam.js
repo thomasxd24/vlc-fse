@@ -34,7 +34,7 @@ function isDir(p) {
 
 /** Locate the Steam install folder, or null. */
 async function findSteam(preferred) {
-  const candidates = [preferred, process.env.FOYER_STEAM_PATH];
+  const candidates = [preferred, process.env.LOUNGE_STEAM_PATH];
   if (process.platform === 'win32') {
     const reg = await regQueryValue('HKCU\\Software\\Valve\\Steam', 'SteamPath');
     if (reg) candidates.push(path.normalize(reg));

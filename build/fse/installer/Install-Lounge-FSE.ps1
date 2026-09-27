@@ -1,13 +1,13 @@
 ﻿<#
-  Installs Foyer as a Windows "Full screen experience" home app.
-  Installe Foyer comme application d'accueil de l'« Expérience plein écran » de Windows.
+  Installs Lounge as a Windows "Full screen experience" home app.
+  Installe Lounge comme application d'accueil de l'« Expérience plein écran » de Windows.
 
   What it does / Ce que fait ce script :
-    1. Trusts the package certificate (Foyer-FSE.cer) for app installs only (LocalMachine\TrustedPeople).
+    1. Trusts the package certificate (Lounge-FSE.cer) for app installs only (LocalMachine\TrustedPeople).
     2. Turns on Developer Mode just long enough to install (the home-app capability needs it), then
        puts it back the way it was.
-    3. Installs (or updates) Foyer-FSE.msix.
-    4. Optionally sets Foyer as the full screen experience home app.
+    3. Installs (or updates) Lounge-FSE.msix.
+    4. Optionally sets Lounge as the full screen experience home app.
 #>
 param([switch]$SetHomeApp, [switch]$Quiet, [switch]$Update, [switch]$Launch)
 $ErrorActionPreference = 'Stop'
@@ -27,11 +27,11 @@ if (-not $admin) {
   exit
 }
 
-$msix = Join-Path $here 'Foyer-FSE.msix'
-$cer = Join-Path $here 'Foyer-FSE.cer'
-if (-not (Test-Path $msix) -or -not (Test-Path $cer)) { throw 'Foyer-FSE.msix / Foyer-FSE.cer not found next to this script.' }
+$msix = Join-Path $here 'Lounge-FSE.msix'
+$cer = Join-Path $here 'Lounge-FSE.cer'
+if (-not (Test-Path $msix) -or -not (Test-Path $cer)) { throw 'Lounge-FSE.msix / Lounge-FSE.cer not found next to this script.' }
 
-Say 'Installing Foyer for the full screen experience…' 'Installation de Foyer pour l''expérience plein écran…'
+Say 'Installing Lounge for the full screen experience…' 'Installation de Lounge pour l''expérience plein écran…'
 
 # 1. Certificate
 Import-Certificate -FilePath $cer -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' | Out-Null
@@ -53,20 +53,20 @@ try {
 $pkg = Get-AppxPackage -Name 'Foyer.Launcher' | Select-Object -First 1
 if (-not $pkg) { throw 'Installation failed: package not found after install.' }
 $aumid = "$($pkg.PackageFamilyName)!App"
-Say "Installed Foyer $($pkg.Version)." "Foyer $($pkg.Version) installé."
+Say "Installed Lounge $($pkg.Version)." "Lounge $($pkg.Version) installé."
 
 # 4. Home app (left as it is when updating)
 if (-not $SetHomeApp -and -not $Quiet -and -not $Update) {
-  $answer = Read-Host 'Make Foyer the full screen experience home app? / Faire de Foyer l''application d''accueil ? [Y/n / O/n]'
+  $answer = Read-Host 'Make Lounge the full screen experience home app? / Faire de Lounge l''application d''accueil ? [Y/n / O/n]'
   $SetHomeApp = ($answer -eq '' -or $answer -match '^[yYoO]')
 }
 if ($SetHomeApp) {
   $gc = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GamingConfiguration'
   if (-not (Test-Path $gc)) { New-Item -Path $gc -Force | Out-Null }
   Set-ItemProperty -Path $gc -Name GamingHomeApp -Value $aumid -Type String
-  Say 'Foyer is now the home app. You can change it in Settings > Gaming > Full screen experience.' 'Foyer est maintenant l''application d''accueil. Modifiable dans Paramètres > Jeux > Expérience plein écran.'
+  Say 'Lounge is now the home app. You can change it in Settings > Gaming > Full screen experience.' 'Lounge est maintenant l''application d''accueil. Modifiable dans Paramètres > Jeux > Expérience plein écran.'
 } elseif (-not $Update) {
-  Say 'Choose Foyer in Settings > Gaming > Full screen experience > Home app.' 'Choisissez Foyer dans Paramètres > Jeux > Expérience plein écran > Application d''accueil.'
+  Say 'Choose Lounge in Settings > Gaming > Full screen experience > Home app.' 'Choisissez Lounge dans Paramètres > Jeux > Expérience plein écran > Application d''accueil.'
 }
 
 if (-not $Update) {
@@ -76,7 +76,7 @@ if ($oem -ne 46) {
 }
 }
 if ($Launch) {
-  # Start Foyer through Explorer so it runs as the signed-in user, not with this script's admin rights.
+  # Start Lounge through Explorer so it runs as the signed-in user, not with this script's admin rights.
   Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$aumid"
 }
 if (-not $Quiet) { Read-Host 'Press Enter to close / Entrée pour fermer' | Out-Null }

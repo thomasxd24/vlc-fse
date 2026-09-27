@@ -1,5 +1,5 @@
 ﻿<#
-  Builds dist\Foyer-FSE-<version>.zip: Foyer packaged as an MSIX that Windows offers as a
+  Builds dist\Lounge-FSE-<version>.zip: Lounge packaged as an MSIX that Windows offers as a
   Full screen experience home app, plus a certificate and an installer.
 
   Run after `electron-builder --win --dir` (needs dist\win-unpacked). Requires the Windows SDK
@@ -14,12 +14,13 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# Part of the package identity: kept from the app's earlier name (Foyer) so new builds upgrade old installs.
 $Publisher = 'CN=Foyer Launcher'
 $dist = Join-Path $Root 'dist'
 $unpacked = Join-Path $dist 'win-unpacked'
 $stage = Join-Path $dist 'fse-stage'
 $out = Join-Path $dist 'fse'
-if (-not (Test-Path (Join-Path $unpacked 'Foyer.exe'))) { throw "Build the app first: $unpacked\Foyer.exe not found" }
+if (-not (Test-Path (Join-Path $unpacked 'Lounge.exe'))) { throw "Build the app first: $unpacked\Lounge.exe not found" }
 
 # MSIX versions are four numbers; drop any pre-release suffix.
 $v = ($Version -replace '^v', '') -replace '[-+].*$', ''
@@ -52,30 +53,30 @@ Copy-Item -Path (Join-Path $Root 'build\fse\CustomCapability.SCCD') -Destination
   Replace('{PUBLISHER}', $Publisher) |
   Set-Content -Encoding UTF8 (Join-Path $stage 'AppxManifest.xml')
 
-$msix = Join-Path $out 'Foyer-FSE.msix'
+$msix = Join-Path $out 'Lounge-FSE.msix'
 & $makeappx pack /d $stage /p $msix /o
 if ($LASTEXITCODE -ne 0) { throw "makeappx failed ($LASTEXITCODE)" }
 
 # One-off code-signing certificate whose subject matches the manifest's Publisher.
 $cert = New-SelfSignedCertificate -Type Custom -Subject $Publisher -KeyUsage DigitalSignature `
-  -FriendlyName 'Foyer FSE package' -CertStoreLocation 'Cert:\CurrentUser\My' `
+  -FriendlyName 'Lounge FSE package' -CertStoreLocation 'Cert:\CurrentUser\My' `
   -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}') -NotAfter (Get-Date).AddYears(5)
 try {
   $plain = [guid]::NewGuid().ToString()
   $pfxPassword = ConvertTo-SecureString -String $plain -Force -AsPlainText
   $tmp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
-  $pfx = Join-Path $tmp ('foyer-' + [guid]::NewGuid() + '.pfx')
+  $pfx = Join-Path $tmp ('lounge-' + [guid]::NewGuid() + '.pfx')
   Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $pfxPassword | Out-Null
   & $signtool sign /fd SHA256 /f $pfx /p $plain $msix
   if ($LASTEXITCODE -ne 0) { throw "signtool failed ($LASTEXITCODE)" }
-  Export-Certificate -Cert $cert -FilePath (Join-Path $out 'Foyer-FSE.cer') | Out-Null
+  Export-Certificate -Cert $cert -FilePath (Join-Path $out 'Lounge-FSE.cer') | Out-Null
 } finally {
   if ($pfx -and (Test-Path $pfx)) { Remove-Item -Force $pfx }
   Remove-Item -Force "Cert:\CurrentUser\My\$($cert.Thumbprint)" -ErrorAction SilentlyContinue
 }
 
 Copy-Item -Path (Join-Path $Root 'build\fse\installer\*') -Destination $out
-$zip = Join-Path $dist "Foyer-FSE-$v.zip"
+$zip = Join-Path $dist "Lounge-FSE-$v.zip"
 Remove-Item -Force $zip -ErrorAction SilentlyContinue
 Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip
 Write-Host "Built $zip"

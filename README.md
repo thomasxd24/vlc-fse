@@ -1,11 +1,11 @@
-# Foyer
+# Lounge
 
 A fullscreen launcher for Windows handhelds and living-room PCs, built for the Lenovo Legion Go. It puts
 your **Steam games**, **games you add yourself**, **films** and **TV shows** in one place. You can drive it
-with the built-in controller, touch or a keyboard. Films and shows play in **VLC**. Foyer can also be the
+with the built-in controller, touch or a keyboard. Films and shows play in **VLC**. Lounge can also be the
 **home app of Windows' full screen experience**, so the handheld boots straight into it.
 
-*Foyer* means "home" in French, and the name reads the same in both of the app's languages.
+It used to be called Foyer (and before that, Marquee).
 
 ![Home](docs/home.jpg)
 
@@ -27,10 +27,10 @@ with the built-in controller, touch or a keyboard. Films and shows play in **VLC
   automatically. You can also pick the match yourself with *Edit info → Find info on Steam*.
 - **Your choice of artwork.** With a free [SteamGridDB](https://www.steamgriddb.com/profile/preferences/api)
   API key, you can choose covers, backgrounds and logos for any game, Steam or not.
-- **Jump back in.** Home puts your most recent games first. Foyer tracks playtime for games you add too.
-- **Out of the way while you play.** Once a game is running, Foyer unloads its interface and minimises
+- **Jump back in.** Home puts your most recent games first. Lounge tracks playtime for games you add too.
+- **Out of the way while you play.** Once a game is running, Lounge unloads its interface and minimises
   itself. It also drops to low CPU priority and pauses all background work (scans, downloads). When the game
-  quits, Foyer comes back to the page you left. The *Free up resources while playing* setting turns this on
+  quits, Lounge comes back to the page you left. The *Free up resources while playing* setting turns this on
   or off.
 
 **Films & TV** (in VLC)
@@ -66,27 +66,29 @@ Download from the [latest release](../../releases/latest), or from the artifacts
 
 | File | Use it when |
 | --- | --- |
-| `Foyer-FSE-x.y.z.zip` | **You want Foyer as the full screen experience home app (recommended on a Legion Go).** Extract it and double-click `Install-Foyer-FSE.cmd`. |
-| `Foyer-x.y.z-win-x64.zip` | You want no installer: extract it anywhere and run `Foyer.exe`. |
-| `Foyer-Setup-x.y.z.exe` | You want a normal install with Start menu shortcuts. |
+| `Lounge-FSE-x.y.z.zip` | **You want Lounge as the full screen experience home app (recommended on a Legion Go).** Extract it and double-click `Install-Lounge-FSE.cmd`. |
+| `Lounge-x.y.z-win-x64.zip` | You want no installer: extract it anywhere and run `Lounge.exe`. |
+| `Lounge-Setup-x.y.z.exe` | You want a normal install with Start menu shortcuts. |
 
-All three share the same settings and library, which are stored in `%APPDATA%\Foyer`. If you used
-Marquee (the previous name), your settings, library and progress are copied over on first launch.
+All three share the same settings and library, which are stored in `%APPDATA%\Lounge`. If you used
+Foyer or Marquee (the previous names), your settings, library, progress and stats are copied over on first
+launch. A copy installed as Foyer 2.0.0 looks for updates under the old name, so install this version once by
+hand; it updates itself from then on. Installers and the FSE package upgrade the Foyer install in place.
 
 Films and shows need [VLC](https://www.videolan.org/vlc/).
 
 ### Updates
 
-Foyer checks GitHub Releases when it starts and every few hours after that. It never installs anything
+Lounge checks GitHub Releases when it starts and every few hours after that. It never installs anything
 without asking. When a new version is out, you get **Update now / Later / Skip this version**. It doesn't
 ask, download or install while a game is running. The download is checked against the SHA-256 checksum
-GitHub publishes for each file. Foyer then updates itself using the method that matches how it was
+GitHub publishes for each file. Lounge then updates itself using the method that matches how it was
 installed, and restarts:
 
 | Installed with | Update method |
 | --- | --- |
-| Installer (`Foyer-Setup`) | Runs the new installer silently over the old one. |
-| Zip | Unpacks the new version over the folder once Foyer has closed (asks for admin only if the folder needs it). |
+| Installer (`Lounge-Setup`) | Runs the new installer silently over the old one. |
+| Zip | Unpacks the new version over the folder once Lounge has closed (asks for admin only if the folder needs it). |
 | FSE package | Runs the package's installer in update mode: one admin prompt; your home-app choice is kept. |
 
 *Settings › Updates* shows your version and has *Check for updates*. You can also turn automatic checking
@@ -95,17 +97,17 @@ off there.
 ### Full screen experience (home app)
 
 Windows only offers apps as a full screen experience **home app** if they're installed as a package that
-declares the `gamingHome` capability. The FSE zip contains Foyer packaged this way, plus an installer. The
+declares the `gamingHome` capability. The FSE zip contains Lounge packaged this way, plus an installer. The
 approach follows [AnyFSE](https://github.com/ashpynov/AnyFSE). The installer:
 
 1. trusts the package's certificate for app installs,
 2. turns on Developer Mode only for the install (Windows requires it for this capability outside the
    Store), then restores your previous setting,
 3. installs or updates the package, and
-4. offers to set Foyer as the home app.
+4. offers to set Lounge as the home app.
 
 You can also choose it yourself in **Settings › Gaming › Full screen experience › Home app**. To remove it,
-run `Uninstall-Foyer-FSE.ps1`.
+run `Uninstall-Lounge-FSE.ps1`.
 
 The package is signed with a certificate made fresh for each build. Only its public part is published.
 

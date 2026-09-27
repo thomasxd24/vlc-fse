@@ -1,6 +1,6 @@
 {
-  "name": "foyer",
-  "productName": "Foyer",
+  "name": "lounge",
+  "productName": "Lounge",
   "version": "2.0.0",
   "description": "Fullscreen game and media launcher for Windows handhelds and living-room PCs: Steam and your own games, films and TV in VLC.",
   "main": "main.js",
@@ -22,7 +22,7 @@
   },
   "build": {
     "appId": "com.foyer.launcher",
-    "productName": "Foyer",
+    "productName": "Lounge",
     "files": [
       "main.js",
       "preload.js",
@@ -56,7 +56,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Foyer",
+      "shortcutName": "Lounge",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "npmRebuild": false

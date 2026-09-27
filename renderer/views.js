@@ -853,7 +853,7 @@ VIEWS.settings = {
             <button class="btn small danger focusable" data-act="quit" data-key="quit">${ICON.exit}${h(t('qm.quit'))}</button>
           </div>
           <div class="about">
-            Foyer ${h(S.version)}
+            Lounge ${h(S.version)}
             ${st.tmdbKey ? `<br>${h(t('about.tmdb'))}` : ''}
             <br>${h(t('about.steam'))}${st.sgdbKey ? ' ' + h(t('about.sgdb')) : ''}
           </div>
@@ -882,7 +882,7 @@ function updateRows(st) {
   }[up.status];
   const busy = ['checking', 'downloading', 'installing', 'ready'].includes(up.status);
   return `
-    ${valueRow(t('upd.version'), statusText, `Foyer ${S.version}`, busy ? 'noop' : up.status === 'available' ? 'install-update' : 'check-update', 'upd-row')}
+    ${valueRow(t('upd.version'), statusText, `Lounge ${S.version}`, busy ? 'noop' : up.status === 'available' ? 'install-update' : 'check-update', 'upd-row')}
     <div class="settings-actions" data-nav-group>
       ${up.status === 'available' ? `<button class="btn small primary focusable" data-act="install-update" data-key="upd-install">${ICON.refresh}${h(t('upd.now'))}</button>` : ''}
       <button class="btn small focusable" data-act="check-update" data-key="upd-check" ${busy ? 'disabled' : ''}>${ICON.search}${h(t('upd.checkNow'))}</button>

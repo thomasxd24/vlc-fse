@@ -226,7 +226,7 @@ async function chooseItemLanguages(item) {
 
 // ============================================================================ Apps & Tailscale
 
-/** Open an installed app. Tailscale opens Foyer's own Tailscale controls instead (its window is a tray menu). */
+/** Open an installed app. Tailscale opens Lounge's own Tailscale controls instead (its window is a tray menu). */
 async function openApp(app, { direct = false } = {}) {
   if (app.tailscale && !direct) return tailscalePanel();
   toast(t('apps.opening', { name: app.name }));
@@ -1029,7 +1029,7 @@ function updateNotes(md) {
     .join('\n');
 }
 
-/** "Foyer x.y.z is available": asked once per version per session, only when nothing else is going on. */
+/** "Lounge x.y.z is available": asked once per version per session, only when nothing else is going on. */
 async function maybePromptUpdate(force = false) {
   const up = S.update;
   if (!up || up.status !== 'available') return;

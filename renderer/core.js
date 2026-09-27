@@ -2,7 +2,7 @@
 
 /* global Nav, I18N */
 
-const api = window.foyer;
+const api = window.lounge;
 const t = (key, vars) => I18N.t(key, vars);
 
 // ============================================================================ State

@@ -35,8 +35,8 @@ test('vdf parser handles nesting, escapes, comments and case', () => {
 });
 
 test('scans installed Steam games with playtime and local artwork', async () => {
-  const steam = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-steam-'));
-  const lib2 = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-lib-'));
+  const steam = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-steam-'));
+  const lib2 = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-lib-'));
   write(steam, 'steamapps/libraryfolders.vdf', `"libraryfolders" { "0" { "path" "${steam.replace(/\\/g, '\\\\')}" } "1" { "path" "${lib2.replace(/\\/g, '\\\\')}" } }`);
   write(steam, 'steamapps/appmanifest_620.acf', '"AppState" { "appid" "620" "name" "Portal 2" "installdir" "Portal 2" "StateFlags" "4" "SizeOnDisk" "123" }');
   write(steam, 'steamapps/appmanifest_228980.acf', '"AppState" { "appid" "228980" "name" "Steamworks Common Redistributables" "StateFlags" "4" }');
@@ -68,16 +68,16 @@ test('scans installed Steam games with playtime and local artwork', async () => 
 });
 
 test('scanSteam returns null without Steam', async () => {
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-nosteam-'));
-  const prev = process.env.FOYER_STEAM_PATH;
-  delete process.env.FOYER_STEAM_PATH;
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-nosteam-'));
+  const prev = process.env.LOUNGE_STEAM_PATH;
+  delete process.env.LOUNGE_STEAM_PATH;
   const home = process.env.HOME;
   process.env.HOME = empty;
   try {
     assert.equal(await scanSteam(path.join(empty, 'nope')), null);
   } finally {
     process.env.HOME = home;
-    if (prev) process.env.FOYER_STEAM_PATH = prev;
+    if (prev) process.env.LOUNGE_STEAM_PATH = prev;
   }
 });
 
@@ -91,7 +91,7 @@ test('manual game titles and launch options', () => {
 });
 
 test('game info: Steam store details, CDN art and manual-game matching', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-gi-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-gi-'));
   const seen = [];
   t.mock.method(globalThis, 'fetch', async (url) => {
     const u = new URL(url);

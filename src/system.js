@@ -33,7 +33,7 @@ interface IMMDeviceEnumerator {
   int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
 }
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorComObject { }
-public class FoyerAudio {
+public class LoungeAudio {
   static IAudioEndpointVolume Vol() {
     var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
     IMMDevice dev = null;
@@ -61,15 +61,15 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     $req = $line | ConvertFrom-Json
     $v = $null
     switch ($req.cmd) {
-      'getVolume' { $v = [int][math]::Round([FoyerAudio]::Volume * 100) }
+      'getVolume' { $v = [int][math]::Round([LoungeAudio]::Volume * 100) }
       'setVolume' {
         $n = [math]::Max(0, [math]::Min(100, [double]$req.arg))
-        [FoyerAudio]::Volume = [float]($n / 100)
-        if ($n -gt 0 -and [FoyerAudio]::Mute) { [FoyerAudio]::Mute = $false }
+        [LoungeAudio]::Volume = [float]($n / 100)
+        if ($n -gt 0 -and [LoungeAudio]::Mute) { [LoungeAudio]::Mute = $false }
         $v = [int]$n
       }
-      'getMute' { $v = [FoyerAudio]::Mute }
-      'setMute' { [FoyerAudio]::Mute = [bool]$req.arg; $v = [bool]$req.arg }
+      'getMute' { $v = [LoungeAudio]::Mute }
+      'setMute' { [LoungeAudio]::Mute = [bool]$req.arg; $v = [bool]$req.arg }
       'getBrightness' {
         $b = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1
         $v = [int]$b.CurrentBrightness
@@ -197,7 +197,7 @@ function power(action, helper) {
   return new Promise((resolve, reject) => execFile('shutdown', [flag, '/t', '0'], { windowsHide: true }, (err) => (err ? reject(err) : resolve())));
 }
 
-/** Set the CPU priority of every Foyer process (main, renderer, GPU…). */
+/** Set the CPU priority of every Lounge process (main, renderer, GPU…). */
 function setPriority(pids, low) {
   const prio = low ? os.constants.priority.PRIORITY_LOW : os.constants.priority.PRIORITY_NORMAL;
   for (const pid of pids) {

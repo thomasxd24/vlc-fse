@@ -11,7 +11,7 @@ const data = {
   items: {
     g1: { type: 'game', title: 'Hades', playtime: 90 },
     g2: { type: 'game', title: 'Celeste', playtime: 0 },
-    g3: { type: 'game', title: 'Portal 2', playtime: 1200 }, // Steam playtime only, never launched from Foyer
+    g3: { type: 'game', title: 'Portal 2', playtime: 1200 }, // Steam playtime only, never launched from Lounge
     s1: { type: 'show', title: 'Dark' },
     m1: { type: 'movie', title: 'Heat' }
   },
@@ -50,7 +50,7 @@ test('month and year periods', () => {
   assert.deepEqual(year.watched.map((w) => w.title), ['Heat', 'Dark']);
 });
 
-test('all time adds playtime Foyer never saw (Steam totals)', () => {
+test('all time adds playtime Lounge never saw (Steam totals)', () => {
   const r = Stats.aggregate(data, 'all', NOW);
   assert.deepEqual(r.games.map((g) => [g.title, g.minutes]), [['Portal 2', 1200], ['Hades', 90], ['Celeste', 45]]);
   assert.equal(r.totals.game, 1335);

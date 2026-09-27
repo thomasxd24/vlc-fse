@@ -96,7 +96,7 @@ function sftpServer(root, password) {
 }
 
 test('SFTP: browse, trust the host key on first use, refuse a wrong password or a changed key', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-sftp-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-sftp-'));
   tree(root, { 'Movies/Heat (1995)/Heat.1995.mkv': 'x', 'TV/readme.txt': 'y' });
   const { server, port } = await sftpServer(root, 'pw');
   t.after(() => server.close());
@@ -120,7 +120,7 @@ test('SFTP: browse, trust the host key on first use, refuse a wrong password or 
 });
 
 test('transfer queue: downloads a planned season pack into the library, then skips it next time', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-sftp-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-sftp-'));
   const big = crypto.randomBytes(3 * 1024 * 1024); // big enough for several parallel fastGet chunks
   tree(root, {
     'dl/Fallout S02 1080p WEB x265-GRP/Fallout.S02E01.1080p.mkv': big,
@@ -131,7 +131,7 @@ test('transfer queue: downloads a planned season pack into the library, then ski
   t.after(() => server.close());
   const srv = { protocol: 'sftp', host: '127.0.0.1', port, username: 'me', authType: 'password' };
 
-  const lib = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-lib-'));
+  const lib = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-lib-'));
   const tv = path.join(lib, 'TV');
   fs.mkdirSync(path.join(tv, 'Fallout (2024)'), { recursive: true });
 
@@ -162,7 +162,7 @@ test('transfer queue: downloads a planned season pack into the library, then ski
 });
 
 test('transfer queue: cancelling stops the download and leaves no finished file behind', async () => {
-  const lib = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-lib-'));
+  const lib = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-lib-'));
   const dest = path.join(lib, 'Movies', 'Heat (1995)', 'Heat.mkv');
   let closed = false;
   let release;

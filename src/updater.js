@@ -9,18 +9,19 @@ const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 
 /*
- * Self-updater driven by GitHub Releases. Works for all three ways Foyer can be installed:
- *   nsis  Foyer-Setup-<v>.exe      run silently over the existing install, which relaunches Foyer
- *   zip   Foyer-<v>-win-x64.zip    unpacked over the current folder by a small PowerShell script
- *   fse   Foyer-FSE-<v>.zip        the package's own installer updates the MSIX (one UAC prompt)
+ * Self-updater driven by GitHub Releases. Works for all three ways Lounge can be installed:
+ *   nsis  Lounge-Setup-<v>.exe      run silently over the existing install, which relaunches Lounge
+ *   zip   Lounge-<v>-win-x64.zip    unpacked over the current folder by a small PowerShell script
+ *   fse   Lounge-FSE-<v>.zip        the package's own installer updates the MSIX (one UAC prompt)
  * Nothing is installed without the user saying so; downloads are verified against the SHA-256 digest
  * GitHub publishes for each release asset.
  */
 
+// The app used to be called Foyer: releases published under that name still count.
 const ASSET_PATTERNS = {
-  nsis: /^Foyer-Setup-\d+\.\d+\.\d+\.exe$/i,
-  zip: /^Foyer-\d+\.\d+\.\d+-win-x64\.zip$/i,
-  fse: /^Foyer-FSE-\d+\.\d+\.\d+\.zip$/i
+  nsis: /^(?:Lounge|Foyer)-Setup-\d+\.\d+\.\d+\.exe$/i,
+  zip: /^(?:Lounge|Foyer)-\d+\.\d+\.\d+-win-x64\.zip$/i,
+  fse: /^(?:Lounge|Foyer)-FSE-\d+\.\d+\.\d+\.zip$/i
 };
 
 function parseVersion(v) {
@@ -40,15 +41,16 @@ function compareVersions(a, b) {
   return x.pre < y.pre ? -1 : 1;
 }
 
-/** How this copy of Foyer was installed, which decides the update file and method. */
+/** How this copy of Lounge was installed, which decides the update file and method. */
 function detectInstallType({ packaged, windowsStore, exePath, platform = process.platform }) {
   if (!packaged || platform !== 'win32') return null;
   if (windowsStore) return 'fse';
-  if (fs.existsSync(path.join(path.dirname(exePath), 'Uninstall Foyer.exe'))) return 'nsis';
+  const dir = path.dirname(exePath);
+  if (['Uninstall Lounge.exe', 'Uninstall Foyer.exe'].some((f) => fs.existsSync(path.join(dir, f)))) return 'nsis';
   return 'zip';
 }
 
-// Unpacks a zip update over the install folder once Foyer has quit, then starts it again.
+// Unpacks a zip update over the install folder once Lounge has quit, then starts it again.
 // Re-launches itself elevated if the folder isn't writable (e.g. it lives in Program Files).
 const ZIP_APPLY = String.raw`param([int]$ParentPid, [string]$Zip, [string]$Target, [string]$Exe, [string]$Log)
 $ErrorActionPreference = 'Stop'
@@ -57,7 +59,7 @@ try {
   Log "waiting for $ParentPid"
   try { Wait-Process -Id $ParentPid -Timeout 90 -ErrorAction SilentlyContinue } catch {}
   Start-Sleep -Milliseconds 700
-  $probe = Join-Path $Target ('.foyer-write-test-' + [guid]::NewGuid())
+  $probe = Join-Path $Target ('.lounge-write-test-' + [guid]::NewGuid())
   try { Set-Content -Path $probe -Value 'x'; Remove-Item -Force $probe }
   catch {
     Log 'folder not writable, asking for admin rights'
@@ -65,9 +67,14 @@ try {
     Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $a
     exit
   }
-  $tmp = Join-Path ([IO.Path]::GetTempPath()) ('foyer-update-' + [guid]::NewGuid())
+  $tmp = Join-Path ([IO.Path]::GetTempPath()) ('lounge-update-' + [guid]::NewGuid())
   Expand-Archive -Path $Zip -DestinationPath $tmp -Force
   $found = Get-ChildItem -Path $tmp -Filter $Exe -Recurse | Select-Object -First 1
+  if (-not $found) {
+    # Renamed since this copy was installed (Foyer.exe -> Lounge.exe): restart whichever the update contains.
+    $found = Get-ChildItem -Path $tmp -Include 'Lounge.exe', 'Foyer.exe' -Recurse | Select-Object -First 1
+    if ($found) { $Exe = $found.Name }
+  }
   if (-not $found) { throw "$Exe not found in the update" }
   Log "copying $($found.DirectoryName) -> $Target"
   Copy-Item -Path (Join-Path $found.DirectoryName '*') -Destination $Target -Recurse -Force
@@ -86,9 +93,9 @@ $ErrorActionPreference = 'Stop'
 function Log($m) { Add-Content -Path $Log -Value ("{0:u} {1}" -f (Get-Date), $m) }
 try {
   try { Wait-Process -Id $ParentPid -Timeout 90 -ErrorAction SilentlyContinue } catch {}
-  $tmp = Join-Path ([IO.Path]::GetTempPath()) ('foyer-fse-update-' + [guid]::NewGuid())
+  $tmp = Join-Path ([IO.Path]::GetTempPath()) ('lounge-fse-update-' + [guid]::NewGuid())
   Expand-Archive -Path $Zip -DestinationPath $tmp -Force
-  $installer = Get-ChildItem -Path $tmp -Filter 'Install-Foyer-FSE.ps1' -Recurse | Select-Object -First 1
+  $installer = Get-ChildItem -Path $tmp -Include 'Install-Lounge-FSE.ps1', 'Install-Foyer-FSE.ps1' -Recurse | Select-Object -First 1
   if (-not $installer) { throw 'installer not found in the update' }
   Log "running $($installer.FullName)"
   & $installer.FullName -Quiet -Update -Launch
@@ -108,7 +115,7 @@ class Updater extends EventEmitter {
     this.version = version;
     this.installType = installType;
     this.dir = dir;
-    this.api = process.env.FOYER_UPDATE_API || 'https://api.github.com'; // override only for testing
+    this.api = process.env.LOUNGE_UPDATE_API || 'https://api.github.com'; // override only for testing
     this.release = null;
     this.asset = null;
     this.file = null;
@@ -130,7 +137,7 @@ class Updater extends EventEmitter {
     this.set({ status: 'checking', error: null });
     try {
       const res = await fetch(`${this.api}/repos/${this.repo}/releases/latest`, {
-        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Foyer-updater' },
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Lounge-updater' },
         signal: AbortSignal.timeout(15000)
       });
       if (res.status === 404) {
@@ -164,7 +171,7 @@ class Updater extends EventEmitter {
       // Clear out older downloads.
       for (const f of await fsp.readdir(this.dir)) if (f !== path.basename(this.asset.name)) await fsp.rm(path.join(this.dir, f), { force: true, recursive: true });
       const dest = path.join(this.dir, path.basename(this.asset.name));
-      const res = await fetch(this.asset.browser_download_url, { headers: { 'User-Agent': 'Foyer-updater' } });
+      const res = await fetch(this.asset.browser_download_url, { headers: { 'User-Agent': 'Lounge-updater' } });
       if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`);
       const total = Number(res.headers.get('content-length')) || this.asset.size || 0;
       const hash = crypto.createHash('sha256');
@@ -197,7 +204,7 @@ class Updater extends EventEmitter {
   }
 
   /**
-   * The command that installs the downloaded update. The caller spawns it detached and quits Foyer.
+   * The command that installs the downloaded update. The caller spawns it detached and quits Lounge.
    * @returns {{command: string, args: string[]}}
    */
   async installCommand({ pid, exePath }) {
@@ -210,7 +217,7 @@ class Updater extends EventEmitter {
     };
     this.set({ status: 'installing' });
     if (this.installType === 'nsis') {
-      // electron-builder's NSIS installer: /S = silent, --force-run = start Foyer when done.
+      // electron-builder's NSIS installer: /S = silent, --force-run = start Lounge when done.
       return { command: this.file, args: ['/S', '--updated', '--force-run'] };
     }
     if (this.installType === 'zip') {

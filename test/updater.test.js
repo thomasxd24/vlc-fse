@@ -20,20 +20,25 @@ test('version comparison', () => {
 });
 
 test('install type detection', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-inst-'));
-  const exePath = path.join(dir, 'Foyer.exe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-inst-'));
+  const exePath = path.join(dir, 'Lounge.exe');
   assert.equal(detectInstallType({ packaged: false, exePath, platform: 'win32' }), null, 'dev builds never update');
   assert.equal(detectInstallType({ packaged: true, exePath, platform: 'linux' }), null);
   assert.equal(detectInstallType({ packaged: true, windowsStore: true, exePath, platform: 'win32' }), 'fse');
   assert.equal(detectInstallType({ packaged: true, exePath, platform: 'win32' }), 'zip');
-  fs.writeFileSync(path.join(dir, 'Uninstall Foyer.exe'), '');
+  fs.writeFileSync(path.join(dir, 'Uninstall Lounge.exe'), '');
   assert.equal(detectInstallType({ packaged: true, exePath, platform: 'win32' }), 'nsis');
   fs.rmSync(dir, { recursive: true, force: true });
+  // Installed back when the app was called Foyer.
+  const old = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-inst-'));
+  fs.writeFileSync(path.join(old, 'Uninstall Foyer.exe'), '');
+  assert.equal(detectInstallType({ packaged: true, exePath: path.join(old, 'Foyer.exe'), platform: 'win32' }), 'nsis');
+  fs.rmSync(old, { recursive: true, force: true });
 });
 
-function release(payload, digestOf = payload) {
+function release(payload, digestOf = payload, prefix = 'Lounge') {
   const sha = crypto.createHash('sha256').update(digestOf).digest('hex');
-  const assets = ['Foyer-Setup-2.1.0.exe', 'Foyer-2.1.0-win-x64.zip', 'Foyer-FSE-2.1.0.zip', 'Foyer-Setup-2.1.0.exe.blockmap'].map((name) => ({
+  const assets = [`${prefix}-Setup-2.1.0.exe`, `${prefix}-2.1.0-win-x64.zip`, `${prefix}-FSE-2.1.0.zip`, `${prefix}-Setup-2.1.0.exe.blockmap`].map((name) => ({
     name,
     size: payload.length,
     digest: `sha256:${sha}`,
@@ -54,8 +59,8 @@ function mockFetch(t, rel, payload) {
 
 test('finds the right asset for each install type, downloads and verifies it', async (t) => {
   const payload = Buffer.alloc(300000, 7);
-  for (const [type, name] of [['nsis', 'Foyer-Setup-2.1.0.exe'], ['zip', 'Foyer-2.1.0-win-x64.zip'], ['fse', 'Foyer-FSE-2.1.0.zip']]) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-upd-'));
+  for (const [type, name] of [['nsis', 'Lounge-Setup-2.1.0.exe'], ['zip', 'Lounge-2.1.0-win-x64.zip'], ['fse', 'Lounge-FSE-2.1.0.zip']]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-upd-'));
     const calls = mockFetch(t, release(payload), payload);
     const u = new Updater({ repo: 'o/r', version: '2.0.0', installType: type, dir });
     const progress = [];
@@ -69,7 +74,7 @@ test('finds the right asset for each install type, downloads and verifies it', a
     assert.equal(fs.statSync(file).size, payload.length);
     assert.equal(u.state.status, 'ready');
     assert.ok(calls.some((c) => c.endsWith(name)));
-    const cmd = await u.installCommand({ pid: 123, exePath: path.join(dir, 'Foyer.exe') });
+    const cmd = await u.installCommand({ pid: 123, exePath: path.join(dir, 'Lounge.exe') });
     if (type === 'nsis') assert.deepEqual(cmd.args, ['/S', '--updated', '--force-run']);
     else {
       assert.equal(cmd.command, 'powershell.exe');
@@ -83,7 +88,7 @@ test('finds the right asset for each install type, downloads and verifies it', a
 });
 
 test('rejects a corrupted download', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foyer-upd-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-upd-'));
   const payload = Buffer.alloc(1000, 1);
   mockFetch(t, release(payload, Buffer.from('something else')), payload);
   const u = new Updater({ repo: 'o/r', version: '2.0.0', installType: 'zip', dir });
@@ -105,4 +110,14 @@ test('up to date, no release yet, and unsupported installs', async (t) => {
   const none = new Updater({ repo: 'o/r', version: '2.0.0', installType: null, dir });
   assert.equal(none.state.status, 'unsupported');
   assert.equal((await none.check()).status, 'unsupported');
+});
+
+test('releases published under the old name (Foyer) are still found', async (t) => {
+  const payload = Buffer.alloc(1000, 3);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-upd-'));
+  mockFetch(t, release(payload, payload, 'Foyer'), payload);
+  const u = new Updater({ repo: 'o/r', version: '2.0.0', installType: 'fse', dir });
+  const st = await u.check();
+  assert.equal(st.status, 'available');
+  assert.equal(u.asset.name, 'Foyer-FSE-2.1.0.zip');
 });

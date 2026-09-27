@@ -9,7 +9,7 @@ const on = (channel) => (cb) => {
 };
 const call = (channel) => (arg) => ipcRenderer.invoke(channel, arg);
 
-contextBridge.exposeInMainWorld('foyer', {
+contextBridge.exposeInMainWorld('lounge', {
   getState: call('get-state'),
   saveUiState: call('save-ui-state'),
   rescan: call('rescan'),

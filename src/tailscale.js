@@ -1,6 +1,6 @@
 'use strict';
 
-// Tailscale without its tray icon: the full screen experience has no taskbar or notification area, so Foyer
+// Tailscale without its tray icon: the full screen experience has no taskbar or notification area, so Lounge
 // drives Tailscale's own CLI (tailscale.exe, installed next to the tray app) for status, connecting,
 // disconnecting, exit nodes and signing in.
 

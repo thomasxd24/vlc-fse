@@ -85,7 +85,7 @@
       count++;
     }
 
-    // All time also counts playtime Foyer didn't see (Steam's own total, time from before the log existed).
+    // All time also counts playtime Lounge didn't see (Steam's own total, time from before the log existed).
     if (period === 'all') {
       for (const [id, it] of Object.entries(items)) {
         if (it.type === 'game' && it.playtime > (perGame.get(id) || 0)) perGame.set(id, it.playtime);

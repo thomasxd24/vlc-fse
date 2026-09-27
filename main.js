@@ -13,6 +13,7 @@ const { GameInfo } = require('./src/gameinfo');
 const { GameSession, titleFromExe, manualId } = require('./src/games');
 const { SystemHelper, wifi, power, setPriority, hasBattery } = require('./src/system');
 const { Updater, detectInstallType } = require('./src/updater');
+const { migrateUserData } = require('./src/migrate');
 const remote = require('./src/remote');
 const { planTransfer, SUB_EXTENSIONS } = require('./src/transfer-plan');
 const { TransferQueue } = require('./src/transfers');
@@ -102,17 +103,10 @@ function uiLang() {
   return /^fr/i.test(app.getLocale()) ? 'fr' : 'en';
 }
 
-/** Foyer used to be called Marquee: carry settings, progress and caches over on first launch. */
-function migrateFromMarquee() {
-  const oldDir = path.join(app.getPath('appData'), 'Marquee');
-  const dir = app.getPath('userData');
-  if (!fs.existsSync(oldDir) || fs.existsSync(path.join(dir, 'settings.json'))) return;
+/** Earlier names (Lounge, Marquee) kept their data in their own folders: carry it over on first launch. */
+function migrateOldData() {
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    for (const f of ['settings.json', 'library.json', 'progress.json', 'metadata.json']) {
-      if (fs.existsSync(path.join(oldDir, f))) fs.copyFileSync(path.join(oldDir, f), path.join(dir, f));
-    }
-    if (fs.existsSync(path.join(oldDir, 'artwork'))) fs.cpSync(path.join(oldDir, 'artwork'), path.join(dir, 'artwork'), { recursive: true });
+    migrateUserData({ appData: app.getPath('appData'), userData: app.getPath('userData') });
   } catch (err) {
     console.error('migration failed', err);
   }
@@ -569,10 +563,10 @@ function setLanguages(id, languages) {
 let suspendTimer = null;
 
 /**
- * While a game runs, Foyer gets out of the way: the UI is unloaded (freeing the renderer's memory and GPU
- * work), the window is minimised, every Foyer process drops to low CPU priority, and background work
+ * While a game runs, Lounge gets out of the way: the UI is unloaded (freeing the renderer's memory and GPU
+ * work), the window is minimised, every Lounge process drops to low CPU priority, and background work
  * (scans, artwork downloads, the system helper) stops. It all comes back when the game exits or when you
- * switch back to Foyer.
+ * switch back to Lounge.
  */
 function suspendUi() {
   if (ui.suspended || !win || win.isDestroyed()) return;
@@ -646,7 +640,7 @@ async function playGame(id) {
     if (gameSession !== s) return;
     if (reason === 'stub') {
       // The exe was a launcher that handed off to the real game: we can't see when that one ends,
-      // so stay out of the way until the user comes back to Foyer and says they're done.
+      // so stay out of the way until the user comes back to Lounge and says they're done.
       gameState = { ...gameState, phase: 'untracked' };
       return;
     }
@@ -1058,7 +1052,7 @@ async function launchInstalledApp(id) {
   appsStore.get('recent')[id] = Date.now();
   appsStore.save();
   pushLibrary();
-  // Step aside so the app comes up in front; the home button (or Alt+Tab) brings Foyer back.
+  // Step aside so the app comes up in front; the home button (or Alt+Tab) brings Lounge back.
   setTimeout(() => win && !win.isDestroyed() && win.minimize(), APP_STEP_ASIDE_MS);
   return { ok: true };
 }
@@ -1101,7 +1095,7 @@ function setupUpdater() {
   updater = new Updater({
     repo: REPO,
     version: app.getVersion(),
-    installType: process.env.FOYER_UPDATE_TYPE || detectInstallType({ packaged: app.isPackaged, windowsStore: process.windowsStore, exePath: process.execPath }),
+    installType: process.env.LOUNGE_UPDATE_TYPE || detectInstallType({ packaged: app.isPackaged, windowsStore: process.windowsStore, exePath: process.execPath }),
     dir: userFile('updates')
   });
   updater.on('state', (st) => send('update', st));
@@ -1160,7 +1154,7 @@ function createWindow() {
     fullscreen: settings.get('startFullscreen'),
     autoHideMenuBar: true,
     backgroundColor: '#07080c',
-    title: 'Foyer',
+    title: 'Lounge',
     icon: path.join(__dirname, 'build', 'icon.png'),
     show: false,
     webPreferences: {
@@ -1175,7 +1169,7 @@ function createWindow() {
   win.once('ready-to-show', () => win.show());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
-  // Switching back to Foyer while a game runs brings the UI back.
+  // Switching back to Lounge while a game runs brings the UI back.
   win.on('focus', () => {
     if (ui.suspended) resumeUi();
   });
@@ -1414,7 +1408,7 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
-  migrateFromMarquee();
+  migrateOldData();
   settings = new JsonStore(userFile('settings.json'), DEFAULT_SETTINGS);
   libraryStore = new JsonStore(userFile('library.json'), library);
   progressStore = new JsonStore(userFile('progress.json'), { items: {} });

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  MSIX manifest for the "Foyer FSE" package: the same Foyer app, packaged so Windows offers it as a
+  MSIX manifest for the "Lounge FSE" package: the same Lounge app, packaged so Windows offers it as a
   home app for the Gaming full screen experience (Settings > Gaming > Full screen experience).
 
   Two things make it eligible, as in AnyFSE (https://github.com/ashpynov/AnyFSE, MIT):
@@ -8,7 +8,7 @@
     - the Microsoft.appCategory.gamingHome custom capability, authorised by CustomCapability.SCCD
       (installing a package with an unsigned SCCD needs Developer Mode, which the installer
       turns on only for the duration of the install).
-  File/registry virtualization is off so Foyer keeps its data in the normal %APPDATA%\Foyer.
+  File/registry virtualization is off so Lounge keeps its data in the normal %APPDATA%\Lounge.
   {VERSION} and {PUBLISHER} are filled in by scripts/build-fse.ps1.
 -->
 <Package
@@ -22,11 +22,13 @@
   xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
   IgnorableNamespaces="uap uap3 uap4 uap10 uap18 rescap desktop6">
 
+  <!-- The identity keeps the app's earlier name (Foyer) on purpose: changing it would make Windows install
+       Lounge as a separate package instead of upgrading, and forget the home-app choice. -->
   <Identity Name="Foyer.Launcher" Publisher="{PUBLISHER}" Version="{VERSION}" ProcessorArchitecture="x64" />
 
   <Properties>
-    <DisplayName>Foyer</DisplayName>
-    <PublisherDisplayName>Foyer</PublisherDisplayName>
+    <DisplayName>Lounge</DisplayName>
+    <PublisherDisplayName>Lounge</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
     <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
     <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
@@ -42,9 +44,9 @@
   </Resources>
 
   <Applications>
-    <Application Id="App" Executable="Foyer.exe" EntryPoint="Windows.FullTrustApplication" uap18:RuntimeBehavior="win32App">
+    <Application Id="App" Executable="Lounge.exe" EntryPoint="Windows.FullTrustApplication" uap18:RuntimeBehavior="win32App">
       <uap:VisualElements
-        DisplayName="Foyer"
+        DisplayName="Lounge"
         Description="Games, films and TV for your handheld and living room."
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
@@ -54,7 +56,7 @@
       </uap:VisualElements>
       <Extensions>
         <uap3:Extension Category="windows.appExtension">
-          <uap3:AppExtension Name="windows.gamingApp" Id="App" DisplayName="Foyer" Description="Games, films and TV for your handheld and living room." PublicFolder="Assets" />
+          <uap3:AppExtension Name="windows.gamingApp" Id="App" DisplayName="Lounge" Description="Games, films and TV for your handheld and living room." PublicFolder="Assets" />
         </uap3:Extension>
       </Extensions>
     </Application>
