@@ -6,6 +6,7 @@
 //! binary crate (Windows-only, not yet scaffolded — see `../MIGRATION.md`) will call into this one.
 
 pub mod games;
+pub mod gameinfo;
 pub mod library;
 pub mod locale;
 pub mod metadata;

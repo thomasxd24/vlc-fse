@@ -79,6 +79,17 @@ Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each 
   would fail intermittently without the fix. Both `test/metadata.test.js` tests ported 1:1 against a
   local `httpmock` server (a new dev-dependency; adding `ureq` also pulled in `ring` for TLS, which
   needs a C cross-compiler to build for the Windows target — see the Windows cross-check note below).
+- **`gameinfo.js` → `gameinfo.rs`.** Steam store details/search and SteamGridDB artwork lookups, plus
+  `stripHtml`. `enrich()` here processes games strictly one at a time like the JS version (no worker
+  pool), so none of `metadata.rs`'s concurrency concerns applied. Both `test/games.test.js` tests that
+  exercise it ("game info: Steam store details, CDN art and manual-game matching", "a refetch that finds
+  nothing keeps the info we already had") and the standalone "stripHtml" test are ported 1:1, plus 3 new
+  tests giving direct coverage to `store_search`/`sgdb_search`/`sgdb_images` (JS-truthy `type` filtering,
+  deriving a SteamGridDB hit's year from a Unix timestamp via `chrono`, a bad SteamGridDB key surfacing
+  as fatal) that the original test file only exercised indirectly through `fetchGame`.
+
+**Windows cross-check confirmed working again** as of this module — `mingw-w64-gcc` is now installed, so
+`cargo check/clippy --target x86_64-pc-windows-gnu` covers every module from here on, cfg(windows) or not.
 
 ## What isn't done, and can't be verified from this machine
 
@@ -91,20 +102,13 @@ can be trusted:
   `main.js` currently registers via `ipcMain.handle`.
 - A drop-in replacement for `preload.js`'s `contextBridge`-exposed `api` object, so `renderer/**` needs
   little to no change (it already calls everything through that one `api.*` surface).
-- `GameSession` (see above) — once the `app` crate's event/command shape exists to design it against.
+- `GameSession` and `VlcSession` (see above) — once the `app` crate's event/command shape exists to
+  design against, and (for `VlcSession`) a real VLC install to verify against.
 - Porting the rest of `src/*.js`, roughly in this order (least to most risky):
-  1. `gameinfo.js` — the remaining bulk of the scanning/enrichment logic.
-  2. `system.js` — process spawning and system control; `vlc.js`'s `VlcSession` needs a real VLC install
-     to verify, so it stays deferred alongside it.
-  3. `tailscale.js`, `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, spawn `tailscale`,
+  1. `system.js` — process spawning and system control.
+  2. `tailscale.js`, `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, spawn `tailscale`,
      do FTP transfers.
-
-**Windows cross-check note:** `cargo check/clippy --target x86_64-pc-windows-gnu` needs
-`mingw-w64-gcc` now that `ureq`'s TLS backend (`ring`) is a dependency — it wasn't needed before
-`metadata.rs`. Install once with `sudo pacman -S mingw-w64-gcc` (this session couldn't run `sudo`
-itself, no terminal for the fingerprint/password prompt) to keep this check working for every module
-from here on, not just the ones with `cfg(windows)` blocks.
-  4. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
+  3. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
      through, so it's ported last and tested hardest.
   8. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).
 - `scripts/build-fse.ps1` and `.github/workflows/build.yml` reworked for `cargo`/Tauri's bundler instead
