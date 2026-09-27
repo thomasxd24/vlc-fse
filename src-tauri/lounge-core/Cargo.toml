@@ -6,6 +6,8 @@ description = "Ported business logic from src/*.js (Electron -> Tauri migration)
 publish = false
 
 [dependencies]
+fancy-regex = "0.19.2"
+unicode-normalization = "0.1.25"
 
 [lib]
 name = "lounge_core"
