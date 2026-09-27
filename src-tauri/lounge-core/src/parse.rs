@@ -65,7 +65,7 @@ pub fn is_video_file(name: &str) -> bool {
     }
 }
 
-fn strip_extension(name: &str) -> &str {
+pub fn strip_extension(name: &str) -> &str {
     match name.rfind('.') {
         Some(dot) if dot > 0 => &name[..dot],
         _ => name,
