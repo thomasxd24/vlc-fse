@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["lounge-core"]
+
+# The Tauri application binary (wrapping WebView2, replacing main.js/preload.js) is a Windows-only crate
+# that will join this workspace once it exists — see src-tauri/MIGRATION.md. It can't be built or tested
+# on this machine, so it isn't scaffolded yet.

@@ -1,0 +1,12 @@
+[package]
+name = "lounge-core"
+version = "0.1.0"
+edition = "2021"
+description = "Ported business logic from src/*.js (Electron -> Tauri migration). Platform-agnostic; no Tauri or WebView dependency lives here."
+publish = false
+
+[dependencies]
+
+[lib]
+name = "lounge_core"
+path = "src/lib.rs"
