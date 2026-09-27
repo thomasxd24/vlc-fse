@@ -1089,10 +1089,12 @@ body.detail #topbar {
   gap: 0.6rem;
 }
 .tab-glyph {
-  display: none;
-}
-body.show-tab-glyphs .tab-glyph {
   display: inline-grid;
+  visibility: hidden;
+}
+/* Shown for controllers only, but always taking their space, so switching input never moves the tabs. */
+body.show-tab-glyphs .tab-glyph {
+  visibility: visible;
 }
 .icon-btn {
   width: 2.8rem;
@@ -1115,14 +1117,13 @@ body.show-tab-glyphs .tab-glyph {
 .icon-btn:active {
   transform: scale(0.94);
 }
-/* The ☰ button is for touch/mouse; controllers use the Menu button. */
+/* The ☰ and back buttons are for touch/mouse; controllers use Menu and B. Hidden, not removed, so the
+   top bar doesn't reflow whenever the input changes. */
 body.input-pad #menu-btn,
-body.input-keyboard #menu-btn {
-  display: none;
-}
+body.input-keyboard #menu-btn,
 body.input-pad #back-btn,
 body.input-keyboard #back-btn {
-  display: none;
+  visibility: hidden;
 }
 .wifi,
 .battery {
@@ -1704,11 +1705,16 @@ span.ph-icon .ico {
 
 /* ---------- Touch: bigger targets, swipeable rows, no hover scaling ---------- */
 
-body.input-touch .chip {
-  padding: 0.75rem 1.3rem;
-}
+/* Tabs and chips keep their size (a touch mustn't reflow the page); their touch area reaches past them. */
+body.input-touch .chip,
 body.input-touch .tab {
-  padding: 0.75rem 1.4rem;
+  position: relative;
+}
+body.input-touch .chip::before,
+body.input-touch .tab::before {
+  content: '';
+  position: absolute;
+  inset: -0.35rem -0.15rem;
 }
 body.input-touch .key {
   min-height: 3rem;
