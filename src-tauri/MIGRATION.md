@@ -30,12 +30,35 @@ once it exists.
 
 ## What's actually done
 
-- Workspace scaffold (`Cargo.toml`, `lounge-core` crate).
-- `src/vdf.js` → `lounge-core/src/vdf.rs`. Chosen first because it's pure (no filesystem/process I/O,
-  the safest kind of module to verify by pure translation) and already had a dedicated test
+Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each `cargo test`- and
+`cargo clippy --all-targets -- -D warnings`-clean on this (Linux) machine:
+
+- **`vdf.js` → `vdf.rs`.** Ported first: pure, no filesystem/process I/O, already had a test
   (`test/games.test.js`: "vdf parser handles nesting, escapes, comments and case"), ported verbatim as
-  `parity_nesting_escapes_comments_and_case` plus a few extra edge-case tests. `cargo test` and
-  `cargo clippy --all-targets -- -D warnings` both pass.
+  `parity_nesting_escapes_comments_and_case` plus extra edge cases.
+- **`parse.js` → `parse.rs`.** Filename/folder parsing for movies, episodes, show folders. Uses
+  `fancy-regex` (not `regex`) because several patterns need lookahead. All 4 `test/parse.test.js` tests
+  ported 1:1.
+- **`store.js` → `store.rs`.** Generic JSON-object store with debounced, atomic writes. Had no JS test
+  file; 7 new tests cover the same behaviour read from the source (defaults merge, corrupt-file
+  fallback, debounce timing, atomic flush).
+- **`migrate.js` → `migrate.rs`.** Carries the newest legacy (Foyer/Marquee) data folder over to
+  Lounge's own, rewriting embedded artwork paths. Both `test/migrate.test.js` tests ported 1:1.
+- **`steam.js` → `steam.rs`.** Library/manifest/artwork scanning. Blocking I/O rather than the JS
+  version's async (the future Tauri layer wraps calls in `spawn_blocking` instead). Both `scanSteam`
+  tests from `test/games.test.js` ported 1:1. `find_steam`'s registry lookup and
+  `launch_quietly`/`running_app_id` are `cfg(windows)`-gated, untestable here, but do at least
+  type-check and clippy-clean cross-compiled for `x86_64-pc-windows-gnu` (`rustup target add` +
+  `cargo check/clippy --target x86_64-pc-windows-gnu`) — worth doing for every module with a
+  `cfg(windows)` block, it already caught one real bug (a `Cow<str>` passed where `fancy-regex` needed
+  `&str`) that a Linux-only build would never have seen.
+- **`games.js` (partial) → `games.rs`.** `title_from_exe`, `split_args`, `manual_id` ported and tested
+  against `test/games.test.js`'s "manual game titles and launch options". `GameSession` — the
+  `EventEmitter`-based class that polls Steam's `RunningAppID` or watches a spawned child process — is
+  **deliberately not ported yet**: it has no existing JS test to verify against, and how it should
+  report state back to the UI is a real design decision (events? a channel?) that depends on the Tauri
+  `app` crate's shape, which doesn't exist yet. Porting it blind now would likely mean redoing it once
+  that shape is known.
 
 ## What isn't done, and can't be verified from this machine
 
@@ -48,15 +71,13 @@ can be trusted:
   `main.js` currently registers via `ipcMain.handle`.
 - A drop-in replacement for `preload.js`'s `contextBridge`-exposed `api` object, so `renderer/**` needs
   little to no change (it already calls everything through that one `api.*` surface).
+- `GameSession` (see above) — once the `app` crate's event/command shape exists to design it against.
 - Porting the rest of `src/*.js`, roughly in this order (least to most risky):
-  1. `parse.js` — filename/title parsing regexes, pure, has `test/parse.test.js`.
-  2. `store.js`, `migrate.js` — JSON settings/state persistence.
-  3. `steam.js` — Windows registry reads (`reg query`) and VDF-based library scanning; touches `vdf`.
-  4. `library.js`, `metadata.js`, `games.js`, `gameinfo.js` — the bulk of the scanning/enrichment logic.
-  5. `vlc.js`, `system.js` — process spawning and playback control; needs a real VLC install to verify.
-  6. `tailscale.js`, `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, spawn `tailscale`,
+  1. `library.js`, `metadata.js`, `gameinfo.js` — the bulk of the scanning/enrichment logic.
+  2. `vlc.js`, `system.js` — process spawning and playback control; needs a real VLC install to verify.
+  3. `tailscale.js`, `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, spawn `tailscale`,
      do FTP transfers.
-  7. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
+  4. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
      through, so it's ported last and tested hardest.
   8. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).
 - `scripts/build-fse.ps1` and `.github/workflows/build.yml` reworked for `cargo`/Tauri's bundler instead
