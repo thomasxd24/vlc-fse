@@ -745,6 +745,133 @@ function renderStatus() {
   el.innerHTML = text ? `<span class="spinner"></span><span class="status-text">${h(text)}</span>` : '';
 }
 
+// ============================================================================ Legion Go controllers (HID)
+
+/**
+ * Battery and attach state of the Legion Go's controller halves, read from their Lenovo HID interface
+ * (report 0x04 on usage page 0xFFA0; see Pads.parseLegionStatus). Main approves only that device, so no
+ * picker appears. Works before the first button press, unlike the Gamepad API. Stays silent (status null)
+ * on other PCs, or when the interface doesn't answer.
+ */
+const LegionHid = (() => {
+  const SILENCE_MS = 15000;
+  const listeners = [];
+  const warned = { left: false, right: false };
+  let status = null;
+  let lastAt = 0;
+  let raw = null; // latest report 0x04 as received, parsed or not: { reportId, bytes, at }
+  let reports = 0;
+  let opened = false;
+
+  const hex4 = (n) => Number(n).toString(16).padStart(4, '0');
+  const isCandidate = (d) => {
+    const ids = Pads.LEGION_IDS[hex4(d.vendorId)];
+    return Boolean(ids && ids.includes(hex4(d.productId)) && (d.collections || []).some((c) => c.usagePage === Pads.LEGION_USAGE_PAGE));
+  };
+
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function emit() {
+    for (const cb of listeners) cb(status);
+  }
+
+  function onReport(e) {
+    const bytes = new Uint8Array(e.data.buffer, e.data.byteOffset, e.data.byteLength);
+    reports++;
+    if (e.reportId === Pads.LEGION_STATUS_REPORT || !raw) raw = { reportId: e.reportId, bytes: bytes.slice(0, 20), at: performance.now() };
+    const next = Pads.parseLegionStatus(e.reportId, bytes);
+    if (!next) return;
+    lastAt = performance.now();
+    const changes = Pads.legionChanges(status, next, warned);
+    const changed = !same(next, status);
+    status = next;
+    for (const c of changes) notify(c);
+    if (changed) emit();
+  }
+
+  function notify({ side, event, battery }) {
+    const name = t(side === 'left' ? 'pad.left' : 'pad.right');
+    const key = { attached: 'pad.evAttached', detached: 'pad.evDetached', off: 'pad.evOff', low: 'pad.evLow' }[event];
+    if (key) toast(t(key, { side: name, n: battery }), event === 'low' ? 'error' : 'info');
+  }
+
+  async function scan() {
+    if (!navigator.hid || opened) return false;
+    let devices = [];
+    try {
+      devices = (await navigator.hid.getDevices()).filter(isCandidate);
+    } catch {
+      return false;
+    }
+    for (const d of devices) {
+      try {
+        if (!d.opened) await d.open();
+        d.addEventListener('inputreport', onReport);
+        opened = true;
+      } catch {}
+    }
+    return opened;
+  }
+
+  async function start() {
+    if (!navigator.hid) return;
+    navigator.hid.addEventListener('connect', () => scan());
+    navigator.hid.addEventListener('disconnect', (e) => {
+      if (isCandidate(e.device)) {
+        opened = false;
+        status = null;
+        emit();
+      }
+    });
+    if (await scan()) return;
+    // Some setups only list approved devices after a request, which needs a click or key press; main answers
+    // it without showing a picker.
+    const once = async () => {
+      document.removeEventListener('pointerdown', once, true);
+      document.removeEventListener('keydown', once, true);
+      try {
+        const filters = Object.entries(Pads.LEGION_IDS).flatMap(([v, ps]) => ps.map((p) => ({ vendorId: parseInt(v, 16), productId: parseInt(p, 16), usagePage: Pads.LEGION_USAGE_PAGE })));
+        await navigator.hid.requestDevice({ filters });
+      } catch {}
+      scan();
+    };
+    document.addEventListener('pointerdown', once, true);
+    document.addEventListener('keydown', once, true);
+  }
+
+  // No status reports for a while: the controllers dropped out, or the interface went quiet.
+  setInterval(() => {
+    if (status && performance.now() - lastAt > SILENCE_MS) {
+      status = null;
+      emit();
+    }
+  }, 5000);
+
+  return {
+    start,
+    onChange: (cb) => listeners.push(cb),
+    get status() {
+      return status;
+    },
+    get raw() {
+      return raw;
+    },
+    get reports() {
+      return reports;
+    },
+    get available() {
+      return opened;
+    }
+  };
+})();
+
+/** "Left controller: detached · 64 %" */
+function legionHalfText(side, h) {
+  const name = t(side === 'left' ? 'pad.left' : 'pad.right');
+  if (!h) return name;
+  if (h.state === 'off') return `${name}: ${t('pad.stOff')}`;
+  return `${name}: ${t(h.state === 'attached' ? 'pad.stAttached' : 'pad.stDetached')} · ${h.battery} %`;
+}
+
 const Status = (() => {
   const clock = $('#clock');
   const batteryEl = $('#battery');
@@ -821,23 +948,34 @@ const Status = (() => {
 
   function renderPad() {
     const pads = connectedPads();
-    if (pads.length) {
+    const ls = LegionHid.status;
+    if (pads.length || ls) {
       padSeen = true;
       padLost = false;
     }
-    if (!pads.length && !padLost) {
+    if (!pads.length && !ls && !padLost) {
       padEl.hidden = true;
       return;
     }
     const infos = pads.map((p) => Pads.describePad(p.id));
-    const legion = infos.some((i) => i.legion);
+    const legion = Boolean(ls) || infos.some((i) => i.legion);
+    // With the Legion Go's own status: the lower battery of the halves that are on; slashed when both are off.
+    const allOff = ls && ls.left.state === 'off' && ls.right.state === 'off';
+    const off = allOff || (!pads.length && !ls);
+    const pct = Pads.lowestBattery(ls);
+    const low = ls && ['left', 'right'].some((k) => ls[k].state === 'detached' && ls[k].battery <= 15);
     padEl.hidden = false;
-    padEl.className = `pad-status ${pads.length ? '' : 'off'} ${legion ? 'legion' : ''}`;
-    padEl.innerHTML = `${padSvg(!pads.length)}${pads.length > 1 ? `<small>${pads.length}</small>` : ''}`;
-    const label = pads.length ? infos.map((i) => (i.legion ? t('pad.legion') : i.name)).join(' · ') : t('pad.disconnected');
+    padEl.className = `pad-status ${off ? 'off' : ''} ${legion ? 'legion' : ''} ${low ? 'low' : ''} ${ls && (ls.left.state !== 'attached' || ls.right.state !== 'attached') ? 'split' : ''}`;
+    padEl.innerHTML = `${padSvg(off)}${pct !== null ? `<span class="pad-pct">${pct}%</span>` : ''}${pads.length > 1 ? `<small>${pads.length}</small>` : ''}`;
+    const label = ls
+      ? [legionHalfText('left', ls.left), legionHalfText('right', ls.right)].join('\n')
+      : pads.length
+        ? infos.map((i) => (i.legion ? t('pad.legion') : i.name)).join(' · ')
+        : t('pad.disconnected');
     padEl.title = label;
-    padEl.setAttribute('aria-label', label);
+    padEl.setAttribute('aria-label', label.replace(/\n/g, ', '));
   }
+  LegionHid.onChange(() => renderPad());
 
   function padSvg(off) {
     const body = '<path d="M6.5 7h11a4.5 4.5 0 0 1 4.4 5.5l-1.1 4.6a2.5 2.5 0 0 1-4.3 1.1L14.4 16H9.6l-2.1 2.2a2.5 2.5 0 0 1-4.3-1.1l-1.1-4.6A4.5 4.5 0 0 1 6.5 7z"/><path d="M8 10v3M6.5 11.5h3"/><circle cx="15.5" cy="11" r=".6" fill="currentColor"/><circle cx="17" cy="12.8" r=".6" fill="currentColor"/>';
@@ -881,6 +1019,7 @@ const Status = (() => {
     setInterval(pollWifi, 30000);
     renderPad();
     setInterval(renderPad, 3000);
+    if (S.platform === 'win32' || navigator.hid) LegionHid.start();
     window.addEventListener('online', pollWifi);
     window.addEventListener('offline', pollWifi);
   }
@@ -926,6 +1065,7 @@ const QuickMenu = (() => {
           <div class="qm-facts">
             ${b ? `<span>${Math.round(b.level * 100)}%${b.charging ? ' · ' + h(t('status.charging')) : ''}</span>` : ''}
             ${w && w.connected ? `<span>${h(w.ssid)}</span>` : ''}
+            ${LegionHid.status ? `<span>${h(['left', 'right'].map((k) => legionHalfText(k, LegionHid.status[k])).join(' · '))}</span>` : ''}
           </div>
         </div>
         ${

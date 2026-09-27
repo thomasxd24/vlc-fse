@@ -3194,3 +3194,102 @@ body.pad-testing #hints {
   mask: radial-gradient(circle, transparent 58%, #000 60%);
   pointer-events: none;
 }
+
+/* ---------- Legion Go halves: battery & attach state ---------- */
+
+.pad-status .pad-pct {
+  margin-left: 0.3rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.pad-status.low {
+  color: #ff8a80;
+}
+.pt-legion {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+.pt-half {
+  display: grid;
+  grid-template-columns: 9rem 6.5rem 1fr 3.5rem;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+.ph-name {
+  font-weight: 600;
+}
+.ph-state {
+  color: var(--muted);
+}
+.pt-half[data-state='attached'] .ph-state {
+  color: var(--good);
+}
+.pt-half[data-state='off'] .ph-state {
+  color: #f5a524;
+}
+.ph-bar {
+  height: 0.4rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.ph-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 1rem;
+  background: var(--good);
+}
+.pt-half[data-state='detached'] .ph-bar i {
+  background: var(--accent);
+}
+.ph-pct {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.pt-raw {
+  margin-top: 0.4rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 0.5rem;
+  background: rgba(0, 0, 0, 0.3);
+}
+.pt-raw-bytes {
+  display: grid;
+  grid-template-columns: repeat(16, minmax(0, 1fr));
+  gap: 0.2rem;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.95rem;
+  text-align: center;
+}
+.pt-raw-bytes span {
+  display: grid;
+  padding: 0.15rem 0;
+  border-radius: 0.25rem;
+}
+.pt-raw-bytes small {
+  font-size: 0.65rem;
+  color: var(--faint);
+}
+.pt-raw-bytes .hl {
+  background: rgba(255, 138, 30, 0.25);
+  color: var(--text);
+}
+.pt-raw-note,
+.pt-nohid {
+  margin: 0.5rem 0 0;
+  color: var(--faint);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+@media (max-width: 1400px) {
+  .topbar-right {
+    gap: 0.9rem;
+  }
+  .clock {
+    font-size: 1.3rem;
+  }
+}

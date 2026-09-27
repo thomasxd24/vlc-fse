@@ -14,6 +14,7 @@ const { GameSession, titleFromExe, manualId } = require('./src/games');
 const { SystemHelper, wifi, power, setPriority, hasBattery } = require('./src/system');
 const { Updater, detectInstallType } = require('./src/updater');
 const { migrateUserData } = require('./src/migrate');
+const { LEGION_IDS } = require('./renderer/gamepad');
 const remote = require('./src/remote');
 const { planTransfer, SUB_EXTENSIONS } = require('./src/transfer-plan');
 const { TransferQueue } = require('./src/transfers');
@@ -1150,6 +1151,26 @@ function bringToFront() {
   if (settings.get('startFullscreen')) win.setFullScreen(true);
 }
 
+/**
+ * Let the page read the Legion Go controllers' own HID interface (battery and attach state; see
+ * renderer/gamepad.js) without a device picker: only the Legion Go family's controller ids are approved.
+ */
+function allowLegionControllerHid(ses) {
+  const isLegion = (d) => {
+    const vid = Number(d && d.vendorId).toString(16).padStart(4, '0');
+    const pid = Number(d && d.productId).toString(16).padStart(4, '0');
+    return Boolean(LEGION_IDS[vid] && LEGION_IDS[vid].includes(pid));
+  };
+  // Everything else keeps Electron's default answer (granted).
+  ses.setPermissionCheckHandler(() => true);
+  ses.setDevicePermissionHandler((details) => details.deviceType === 'hid' && isLegion(details.device));
+  ses.on('select-hid-device', (event, details, callback) => {
+    event.preventDefault();
+    const d = details.deviceList.find(isLegion);
+    callback(d ? d.deviceId : '');
+  });
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1600,
@@ -1171,6 +1192,7 @@ function createWindow() {
     }
   });
   win.removeMenu();
+  allowLegionControllerHid(win.webContents.session);
   win.once('ready-to-show', () => win.show());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 

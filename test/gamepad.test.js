@@ -41,3 +41,44 @@ test('polling rate and stick helpers', () => {
   assert.equal(Pads.pollRate([5]), 0);
   assert.equal(Pads.stick(0.6, 0.8).mag, 1);
 });
+
+// A status report as WebHID delivers it (no report id byte), with bytes placed at the documented offsets.
+function report({ lb = 80, rb = 64, ls = 2, rs = 2 } = {}) {
+  const buf = new Uint8Array(64); // hidraw layout: buf[0] would be the report id
+  buf[5] = lb;
+  buf[7] = rb;
+  buf[12] = ls;
+  buf[13] = rs;
+  return buf.slice(1);
+}
+
+test('Legion Go status report: battery and attach state per half', () => {
+  assert.deepEqual(Pads.parseLegionStatus(0x04, report()), { left: { state: 'attached', battery: 80 }, right: { state: 'attached', battery: 64 } });
+  // Handheld Companion documents 3 (wireless) for a detached half; the GNOME helper saw 1 on newer firmware.
+  assert.deepEqual(Pads.parseLegionStatus(0x04, report({ rs: 3 })).right, { state: 'detached', battery: 64 });
+  assert.deepEqual(Pads.parseLegionStatus(0x04, report({ rs: 1 })).right, { state: 'detached', battery: 64 });
+  assert.deepEqual(Pads.parseLegionStatus(0x04, report({ ls: 1, lb: 0 })).left, { state: 'off', battery: 0 });
+  assert.equal(Pads.parseLegionStatus(0x04, report({ lb: 250 })).left.battery, 100);
+  // Not a status report: other report ids, misaligned state bytes, short reports.
+  assert.equal(Pads.parseLegionStatus(0x05, report()), null);
+  assert.equal(Pads.parseLegionStatus(0x04, report({ ls: 0 })), null);
+  assert.equal(Pads.parseLegionStatus(0x04, report({ rs: 0x92 })), null);
+  assert.equal(Pads.parseLegionStatus(0x04, new Uint8Array(8)), null);
+});
+
+test('Legion Go notices: attach changes, and one low-battery warning per discharge', () => {
+  const warned = { left: false, right: false };
+  const s = (l, r) => ({ left: l, right: r });
+  const att = (b) => ({ state: 'attached', battery: b });
+  const det = (b) => ({ state: 'detached', battery: b });
+  assert.deepEqual(Pads.legionChanges(null, s(att(80), att(64)), warned), []);
+  assert.deepEqual(Pads.legionChanges(s(att(80), att(64)), s(att(80), det(64)), warned), [{ side: 'right', event: 'detached' }]);
+  assert.deepEqual(Pads.legionChanges(s(att(80), det(16)), s(att(80), det(15)), warned), [{ side: 'right', event: 'low', battery: 15 }]);
+  assert.deepEqual(Pads.legionChanges(s(att(80), det(15)), s(att(80), det(12)), warned), []); // warned once
+  assert.deepEqual(Pads.legionChanges(s(att(80), det(12)), s(att(80), { state: 'off', battery: 0 }), warned), [{ side: 'right', event: 'off' }]);
+  assert.deepEqual(Pads.legionChanges(s(att(80), { state: 'off', battery: 0 }), s(att(80), att(30)), warned), [{ side: 'right', event: 'attached' }]);
+  assert.equal(warned.right, false); // reset once it's charging again
+  assert.equal(Pads.lowestBattery(s(att(80), det(12))), 12);
+  assert.equal(Pads.lowestBattery(s(att(80), { state: 'off', battery: 0 })), 80);
+  assert.equal(Pads.lowestBattery(s({ state: 'off', battery: 0 }, { state: 'off', battery: 0 })), null);
+});

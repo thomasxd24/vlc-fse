@@ -1,6 +1,6 @@
 'use strict';
 
-/* global S, idx, prefs, api, Stats, Pads, QuickMenu, go, back, modals, fmtSize, renderStatus, tsStateLabel, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
+/* global S, idx, prefs, api, Stats, Pads, LegionHid, QuickMenu, go, back, modals, fmtSize, renderStatus, tsStateLabel, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
    ICON, Backdrop, VIEWS, page, route, render, Nav, $, keyboardHtml */
 
 // ============================================================================ Cards
@@ -1362,6 +1362,21 @@ VIEWS.padtest = {
           <div class="pt-pad">${padDiagram()}</div>
           <div class="pt-side">
             <div class="pt-device"><span class="pt-badge" id="pt-badge" hidden>Legion Go</span><span id="pt-ids"></span></div>
+            <section class="pt-legion" id="pt-legion" hidden>
+              ${['left', 'right']
+                .map(
+                  (side) => `
+                <div class="pt-half" data-side="${side}">
+                  <span class="ph-name">${h(t(side === 'left' ? 'pad.left' : 'pad.right'))}</span>
+                  <span class="ph-state"></span>
+                  <span class="ph-bar"><i></i></span>
+                  <b class="ph-pct"></b>
+                </div>`
+                )
+                .join('')}
+              <div class="pt-raw" id="pt-raw" hidden><div class="pt-raw-bytes" id="pt-raw-bytes"></div><div class="pt-raw-note">${h(t('pad.rawNote'))}</div></div>
+            </section>
+            <p class="pt-nohid" id="pt-nohid" hidden>${h(t('pad.noHid'))}</p>
             <div class="pt-stats">
               ${padStat(t('pad.rate'), 'pt-rate')}
               ${padStat(t('pad.leftStick'), 'pt-l')}
@@ -1378,6 +1393,7 @@ VIEWS.padtest = {
               <button class="btn small focusable" data-pt="strong" data-key="pt-strong">${h(t('pad.rumbleStrong'))}</button>
               <button class="btn small focusable" data-pt="triggers" data-key="pt-triggers" hidden>${h(t('pad.rumbleTriggers'))}</button>
               <button class="btn small focusable" data-pt="reset" data-key="pt-reset">${ICON.restart}${h(t('pad.reset'))}</button>
+              <button class="btn small focusable" data-pt="raw" data-key="pt-raw-btn">${h(t('pad.showRaw'))}</button>
             </div>
           </div>
         </div>
@@ -1434,8 +1450,39 @@ function startPadTester(r) {
     const b = e.target.closest('[data-pt]');
     if (!b) return;
     if (b.dataset.pt === 'reset') reset();
-    else rumble(b.dataset.pt);
+    else if (b.dataset.pt === 'raw') {
+      const box = $id('pt-raw');
+      box.hidden = !box.hidden;
+      b.textContent = t(box.hidden ? 'pad.showRaw' : 'pad.hideRaw');
+    } else rumble(b.dataset.pt);
   });
+
+  /** The Legion Go halves' attach state and battery, and the raw status bytes for checking them. */
+  let rawShownAt = 0;
+  const renderLegion = () => {
+    const ls = LegionHid.status;
+    const info = pad ? Pads.describePad(pad.id) : null;
+    $id('pt-legion').hidden = !ls && !LegionHid.raw;
+    $id('pt-nohid').hidden = Boolean(ls || LegionHid.raw) || !(info && info.legion);
+    for (const side of ['left', 'right']) {
+      const row = page.querySelector(`.pt-half[data-side="${side}"]`);
+      const half = ls && ls[side];
+      row.dataset.state = half ? half.state : 'unknown';
+      row.querySelector('.ph-state').textContent = half ? t({ attached: 'pad.stAttached', detached: 'pad.stDetached', off: 'pad.stOff' }[half.state]) : t('pad.stUnknown');
+      row.querySelector('.ph-bar i').style.width = `${half ? half.battery : 0}%`;
+      row.querySelector('.ph-pct').textContent = half && half.state !== 'off' ? `${half.battery} %` : '–';
+    }
+    const raw = LegionHid.raw;
+    if (raw && !$id('pt-raw').hidden && raw.at !== rawShownAt) {
+      rawShownAt = raw.at;
+      // Numbered like hidraw: the report id is byte 0; the bytes Lounge reads are highlighted.
+      const bytes = [raw.reportId, ...raw.bytes].slice(0, 16);
+      const read = new Set(Object.values(Pads.OFFSETS));
+      $id('pt-raw-bytes').innerHTML = bytes
+        .map((b, i) => `<span class="${read.has(i) ? 'hl' : ''}"><small>${i}</small>${b.toString(16).padStart(2, '0')}</span>`)
+        .join('');
+    }
+  };
 
   const stop = () => {
     Nav.capture(null);
@@ -1504,6 +1551,8 @@ function startPadTester(r) {
     const names = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', '⧉', '☰', 'L3', 'R3', '↑', '↓', '←', '→', '⌂'];
     const down = pad.buttons.map((_, i) => i).filter(pressed).map((i) => names[i] || `#${i + 1}`);
     $id('pt-pressed').textContent = down.join(' ') || '–';
+
+    renderLegion();
 
     // L3 + R3 together: vibration test.
     const combo = pressed(10) && pressed(11);

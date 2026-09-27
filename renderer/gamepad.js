@@ -72,7 +72,73 @@
     return span > 0 ? Math.round(((times.length - 1) * 1000) / span) : 0;
   }
 
-  const api = { describePad, stick, circularity, pollRate, LEGION_IDS };
+  // ---- The Legion Go controllers' own status, from the vendor HID interface (usage page 0xFFA0) ----
+  // Input report 0x04 (64 bytes). Offsets below count the report id as byte 0, as hidraw/hidapi deliver it;
+  // WebHID's event.data leaves the id out, so they're read one lower. Sources: Handheld Companion
+  // (LegionController.cs: bytes 12/13 = controller state, 2 wired / 3 wireless) and the GNOME
+  // peripheral-battery helper (bytes 5/7 = battery %, bit 0 of 12/13 set = undocked; 0x01 seen when detached).
+  const LEGION_STATUS_REPORT = 0x04;
+  const LEGION_USAGE_PAGE = 0xffa0;
+  const OFFSETS = { leftBattery: 5, rightBattery: 7, leftState: 12, rightState: 13 };
+  const LOW_BATTERY = 15;
+  const LOW_BATTERY_RESET = 25;
+
+  function half(state, battery) {
+    if (state === 2) return { state: 'attached', battery };
+    // Detached: 0 % means the half is switched off but its slot still reports.
+    return battery === 0 ? { state: 'off', battery: 0 } : { state: 'detached', battery };
+  }
+
+  /**
+   * Read one status report: { left: {state, battery}, right: {...} }, state being 'attached' | 'detached' |
+   * 'off'. Null for anything that isn't a well-formed status report (other report ids, or the misaligned
+   * reports the controllers sometimes send, whose state bytes are out of range).
+   * @param {number} reportId
+   * @param {Uint8Array|number[]} data  the report without its id byte (WebHID's event.data)
+   */
+  function parseLegionStatus(reportId, data) {
+    if (reportId !== LEGION_STATUS_REPORT || !data || data.length < OFFSETS.rightState) return null;
+    const at = (i) => data[i - 1];
+    const ls = at(OFFSETS.leftState);
+    const rs = at(OFFSETS.rightState);
+    if (![1, 2, 3].includes(ls) || ![1, 2, 3].includes(rs)) return null;
+    return {
+      left: half(ls, Math.min(100, at(OFFSETS.leftBattery))),
+      right: half(rs, Math.min(100, at(OFFSETS.rightBattery)))
+    };
+  }
+
+  /**
+   * What changed between two readings, as notices to show: [{side, event}] with event 'attached' |
+   * 'detached' | 'off' | 'low'. `warned` ({left, right}) remembers low-battery warnings until the level
+   * recovers, so each is shown once; it's updated in place.
+   */
+  function legionChanges(prev, next, warned) {
+    const out = [];
+    for (const side of ['left', 'right']) {
+      const a = prev && prev[side];
+      const b = next && next[side];
+      if (!b) continue;
+      if (a && a.state !== b.state) out.push({ side, event: b.state });
+      // Attached halves charge from the tablet; only warn about ones running on their own battery.
+      if (b.state === 'detached' && b.battery <= LOW_BATTERY && !warned[side]) {
+        warned[side] = true;
+        out.push({ side, event: 'low', battery: b.battery });
+      } else if (warned[side] && (b.battery >= LOW_BATTERY_RESET || b.state === 'attached')) {
+        warned[side] = false;
+      }
+    }
+    return out;
+  }
+
+  /** The level to show next to the icon: the lower of the halves that are on. Null when none is. */
+  function lowestBattery(status) {
+    if (!status) return null;
+    const on = ['left', 'right'].map((k) => status[k]).filter((h) => h && h.state !== 'off');
+    return on.length ? Math.min(...on.map((h) => h.battery)) : null;
+  }
+
+  const api = { describePad, stick, circularity, pollRate, parseLegionStatus, legionChanges, lowestBattery, LEGION_IDS, LEGION_STATUS_REPORT, LEGION_USAGE_PAGE, OFFSETS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Pads = api;
 })(typeof window !== 'undefined' ? window : globalThis);
