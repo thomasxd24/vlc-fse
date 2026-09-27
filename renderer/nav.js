@@ -335,6 +335,7 @@ const Nav = (() => {
   // Long-press opens the options menu on touch, like right-click with a mouse or X on a controller.
   let press = null;
   let pressFired = false;
+  let pressEl = null;
   let pressStart = null;
   document.addEventListener(
     'touchstart',
@@ -343,6 +344,7 @@ const Nav = (() => {
       pressFired = false;
       const el = e.target.closest && e.target.closest('[data-opts]');
       if (!el || e.touches.length !== 1) return;
+      pressEl = el;
       pressStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       press = setTimeout(() => {
         pressFired = true;
@@ -369,12 +371,15 @@ const Nav = (() => {
   document.addEventListener(
     'click',
     (e) => {
-      // Swallow the tap that ends a long-press, so it doesn't also open the item.
-      if (pressFired) {
-        pressFired = false;
+      // Swallow the tap that ends a long-press on the same element, so it doesn't also open the item.
+      // A long-press action (emitAction('x')) can open a menu right under the finger while it's still
+      // down; the tap that releases it then lands on that new element and must go through normally,
+      // or its first button press would be silently eaten.
+      if (pressFired && pressEl && pressEl.contains(e.target)) {
         e.stopPropagation();
         e.preventDefault();
       }
+      pressFired = false;
     },
     true
   );

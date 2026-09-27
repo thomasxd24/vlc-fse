@@ -1749,6 +1749,17 @@ body.input-touch #hints {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
+/* Without this, a touch drag that starts on a horizontal card row (nested inside the page's own
+   vertical scroller) can get claimed by the row instead of the page, so a vertical swipe does
+   nothing or scrolls the wrong element. Declaring each scroller's single axis up front removes the
+   ambiguity instead of relying on the browser's own gesture-direction heuristics. */
+.track {
+  touch-action: pan-x;
+}
+.page,
+.rows {
+  touch-action: pan-y;
+}
 
 /* ---------- Handheld / small screens ---------- */
 
