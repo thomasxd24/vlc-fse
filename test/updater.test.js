@@ -135,3 +135,52 @@ test('with both names in a release, the Lounge files are preferred', async (t) =
     t.mock.restoreAll();
   }
 });
+
+test('rate-limited API: falls back to github.com and verifies against SHA256SUMS.txt', async (t) => {
+  const { parseChecksums } = require('../src/updater');
+  const payload = Buffer.alloc(5000, 9);
+  const sha = crypto.createHash('sha256').update(payload).digest('hex');
+  assert.deepEqual(parseChecksums(`${sha}  Lounge-FSE-2.2.0.zip\r\n${'a'.repeat(64)} *Lounge-Setup-2.2.0.exe\n`), {
+    'Lounge-FSE-2.2.0.zip': `sha256:${sha}`,
+    'Lounge-Setup-2.2.0.exe': `sha256:${'a'.repeat(64)}`
+  });
+  const calls = [];
+  const serve = (sums) =>
+    t.mock.method(globalThis, 'fetch', async (url, opts = {}) => {
+      url = String(url);
+      calls.push(url);
+      if (url.startsWith('https://api.github.com/')) return new Response('{"message":"API rate limit exceeded"}', { status: 403 });
+      if (url === 'https://github.com/o/r/releases/latest') {
+        assert.equal(opts.redirect, 'manual');
+        return new Response(null, { status: 302, headers: { location: 'https://github.com/o/r/releases/tag/v2.2.0' } });
+      }
+      if (url.endsWith('/SHA256SUMS.txt')) return sums ? new Response(sums) : new Response('Not Found', { status: 404 });
+      if (url === 'https://github.com/o/r/releases/download/v2.2.0/Lounge-FSE-2.2.0.zip') return new Response(payload, { headers: { 'content-length': String(payload.length) } });
+      return new Response('?', { status: 500 });
+    });
+
+  serve(`${sha}  Lounge-FSE-2.2.0.zip\n`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lounge-upd-'));
+  const u = new Updater({ repo: 'o/r', version: '2.1.2', installType: 'fse', dir });
+  const st = await u.check();
+  assert.equal(st.status, 'available');
+  assert.equal(st.version, '2.2.0');
+  await u.download();
+  assert.equal(u.state.status, 'ready');
+  assert.ok(fs.readFileSync(u.file).equals(payload));
+  t.mock.restoreAll();
+
+  // Already up to date: no downloads at all.
+  serve(null);
+  const current = new Updater({ repo: 'o/r', version: '2.2.0', installType: 'fse', dir });
+  assert.equal((await current.check()).status, 'uptodate');
+  t.mock.restoreAll();
+
+  // A newer release without a checksum file: nothing to verify against, so no update is offered.
+  serve(null);
+  const older = new Updater({ repo: 'o/r', version: '2.1.2', installType: 'fse', dir });
+  const err = await older.check();
+  assert.equal(err.status, 'error');
+  assert.match(err.error, /rate limited/);
+});
+

@@ -24,6 +24,25 @@ const ASSET_PATTERNS = {
   fse: /^(?:Lounge|Foyer)-FSE-\d+\.\d+\.\d+\.zip$/i
 };
 
+// The file each install type downloads, by version (used when the release list comes from github.com rather
+// than the API, see checkWithoutApi).
+const ASSET_NAMES = {
+  nsis: (v) => `Lounge-Setup-${v}.exe`,
+  zip: (v) => `Lounge-${v}-win-x64.zip`,
+  fse: (v) => `Lounge-FSE-${v}.zip`
+};
+const CHECKSUMS = 'SHA256SUMS.txt';
+
+/** "<sha256>  <file name>" lines, as sha256sum writes them, to { name: 'sha256:<hex>' }. */
+function parseChecksums(text) {
+  const out = {};
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const m = /^([0-9a-f]{64})\s+\*?(.+?)\s*$/i.exec(line);
+    if (m) out[m[2]] = `sha256:${m[1].toLowerCase()}`;
+  }
+  return out;
+}
+
 function parseVersion(v) {
   const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([\w.]+))?$/.exec(String(v || '').trim());
   return m ? { nums: [Number(m[1]), Number(m[2] || 0), Number(m[3] || 0)], pre: m[4] || null } : null;
@@ -116,6 +135,7 @@ class Updater extends EventEmitter {
     this.installType = installType;
     this.dir = dir;
     this.api = process.env.LOUNGE_UPDATE_API || 'https://api.github.com'; // override only for testing
+    this.web = process.env.LOUNGE_UPDATE_WEB || 'https://github.com';
     this.release = null;
     this.asset = null;
     this.file = null;
@@ -145,6 +165,9 @@ class Updater extends EventEmitter {
         this.set({ status: 'uptodate', checkedAt: Date.now() });
         return this.state;
       }
+      // 403/429: the API's hourly limit for this network (60 anonymous requests, shared by every device on
+      // it) is used up. The release pages on github.com aren't limited that way.
+      if (res.status === 403 || res.status === 429) return await this.checkWithoutApi();
       if (!res.ok) throw new Error(`GitHub ${res.status}`);
       const rel = await res.json();
       const latest = String(rel.tag_name || '').replace(/^v/, '');
@@ -161,6 +184,31 @@ class Updater extends EventEmitter {
     } catch (err) {
       this.set({ status: 'error', error: err.message, checkedAt: Date.now() });
     }
+    return this.state;
+  }
+
+  /**
+   * The same check without the API: github.com/<repo>/releases/latest redirects to the latest tag, the file
+   * name follows from the version, and the release's SHA256SUMS.txt supplies the checksum to verify against.
+   */
+  async checkWithoutApi() {
+    const res = await fetch(`${this.web}/${this.repo}/releases/latest`, { redirect: 'manual', headers: { 'User-Agent': 'Lounge-updater' }, signal: AbortSignal.timeout(15000) });
+    const m = /\/releases\/tag\/v?([^/?#]+)/.exec(res.headers.get('location') || '');
+    if (!m) throw new Error(res.status === 404 ? 'GitHub 404' : `GitHub ${res.status} (rate limited)`);
+    const latest = decodeURIComponent(m[1]);
+    if (compareVersions(latest, this.version) <= 0) {
+      this.set({ status: 'uptodate', version: latest, checkedAt: Date.now() });
+      return this.state;
+    }
+    const base = `${this.web}/${this.repo}/releases/download/v${latest}`;
+    const sums = await fetch(`${base}/${CHECKSUMS}`, { headers: { 'User-Agent': 'Lounge-updater' }, signal: AbortSignal.timeout(15000) });
+    const digests = sums.ok ? parseChecksums(await sums.text()) : {};
+    const name = ASSET_NAMES[this.installType](latest);
+    // Without a checksum to verify against, don't install; the API route will work again within the hour.
+    if (!digests[name]) throw new Error('GitHub 403 (rate limited)');
+    this.release = { tag_name: `v${latest}`, body: '' };
+    this.asset = { name, browser_download_url: `${base}/${encodeURIComponent(name)}`, digest: digests[name], size: 0 };
+    this.set({ status: 'available', version: latest, notes: '', size: 0, checkedAt: Date.now() });
     return this.state;
   }
 
@@ -229,4 +277,4 @@ class Updater extends EventEmitter {
   }
 }
 
-module.exports = { Updater, compareVersions, detectInstallType, ASSET_PATTERNS, ZIP_APPLY, FSE_APPLY };
+module.exports = { parseChecksums, ASSET_NAMES, Updater, compareVersions, detectInstallType, ASSET_PATTERNS, ZIP_APPLY, FSE_APPLY };

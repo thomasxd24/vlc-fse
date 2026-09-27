@@ -926,7 +926,7 @@ const ACTIONS = {
     S.update = st;
     if (st.status === 'available') maybePromptUpdate(true);
     else if (st.status === 'uptodate') toast(t('upd.upToDate'));
-    else if (st.status === 'error') toast(t('err.update', { message: st.error }), 'error');
+    else if (st.status === 'error') toast(updateErrorText(st.error), 'error');
     render({ keepFocus: true });
   },
   'install-update': () => startUpdate(),
@@ -1131,7 +1131,7 @@ function onUpdateState(st) {
   if (st.status === 'installing') updateLayerOpen = true;
   renderUpdateLayer();
   if (st.status === 'available' && prev !== 'available') maybePromptUpdate();
-  if (st.status === 'error' && prev === 'downloading') toast(t('err.update', { message: st.error }), 'error');
+  if (st.status === 'error' && prev === 'downloading') toast(updateErrorText(st.error), 'error');
   if (route().name === 'settings' && !modals.length && prev !== st.status) render({ keepFocus: true });
 }
 

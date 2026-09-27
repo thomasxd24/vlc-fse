@@ -881,7 +881,7 @@ function updateRows(st) {
     downloading: t('upd.downloading', { n: up.progress || 0 }),
     ready: t('upd.installing'),
     installing: t('upd.installing'),
-    error: t('err.update', { message: up.error || '' })
+    error: updateErrorText(up.error)
   }[up.status];
   const busy = ['checking', 'downloading', 'installing', 'ready'].includes(up.status);
   return `

@@ -214,6 +214,12 @@ function fmtSize(bytes) {
   return `${v.toLocaleString(S.lang, { maximumFractionDigits: v < 10 && i ? 1 : 0 })} ${units[i]}`;
 }
 
+/** "Update failed: …", in words for GitHub's hourly limit (shared by every device on the network). */
+function updateErrorText(message) {
+  if (/\b(403|429)\b|rate limit/i.test(String(message || ''))) return t('upd.rateLimited');
+  return t('err.update', { message: message || '' });
+}
+
 function pct(pr) {
   return pr.length ? Math.min(100, (pr.time / pr.length) * 100) : 0;
 }
