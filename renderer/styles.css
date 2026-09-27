@@ -2202,9 +2202,10 @@ body[data-nav='left'] #page[data-enter='yes'] > .page {
 
 /* ---------- Reduced motion (setting or Windows preference) ---------- */
 
-body.reduce-motion *,
-body.reduce-motion *::before,
-body.reduce-motion *::after {
+/* The startup intro handles this itself (a plain fade, see .intro-calm). */
+body.reduce-motion *:not(#splash, #splash *),
+body.reduce-motion *:not(#splash *)::before,
+body.reduce-motion *:not(#splash *)::after {
   animation-duration: 0.01ms !important;
   animation-delay: 0ms !important;
   animation-iteration-count: 1 !important;
@@ -2933,6 +2934,24 @@ body.reduce-motion *::after {
 }
 .no-intro #splash {
   display: none;
+}
+/* Held on its first frame until the window is on screen (boot.js adds .intro-play). */
+html:not(.intro-play) #splash,
+html:not(.intro-play) #splash * {
+  animation-play-state: paused !important;
+}
+/* Windows' animation effects off: the same intro as a plain fade, nothing moving or scaling. */
+.intro-calm .splash-mark,
+.intro-calm .splash-word span {
+  animation-name: calm-in !important;
+}
+.intro-calm .splash-glow {
+  animation: none;
+}
+@keyframes calm-in {
+  from {
+    opacity: 0;
+  }
 }
 body.booting #topbar,
 body.booting #page {

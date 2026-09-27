@@ -1182,7 +1182,6 @@ function onState(next) {
  * reads as intended, never longer than the page takes to be ready.
  */
 const INTRO_MS = 1300;
-const introStart = performance.now();
 function endIntro({ play }) {
   const splash = $('#splash');
   document.body.classList.remove('booting');
@@ -1191,7 +1190,12 @@ function endIntro({ play }) {
     splash.remove();
     return;
   }
-  const wait = Math.max(0, INTRO_MS - (performance.now() - introStart));
+  // The intro starts when the window is on screen (boot.js); wait for it, then let it run INTRO_MS.
+  if (window.__introAt === undefined) {
+    setTimeout(() => endIntro({ play }), 50);
+    return;
+  }
+  const wait = Math.max(0, INTRO_MS - (performance.now() - window.__introAt));
   setTimeout(() => {
     splash.classList.add('out');
     document.body.classList.add('boot-reveal');
@@ -1208,7 +1212,7 @@ function endIntro({ play }) {
   const intro = !document.documentElement.classList.contains('no-intro') && $('#splash');
   const initial = await api.getState();
   applyState(initial);
-  const playIntro = Boolean(intro) && !reducedMotion() && !(initial.uiState && initial.uiState.stack && initial.uiState.stack.length);
+  const playIntro = Boolean(intro) && S.settings.animations !== 'reduced' && !(initial.uiState && initial.uiState.stack && initial.uiState.stack.length);
   if (playIntro) Sound.boot();
   $('#back-btn').innerHTML = ICON.back;
   $('#menu-btn').innerHTML = ICON.menu;
