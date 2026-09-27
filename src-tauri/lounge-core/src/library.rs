@@ -375,6 +375,7 @@ pub fn scan_shows(root: &Path, cache: &mut DirCache) -> Vec<Show> {
     shows.into_values().collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryKind {
     Movies,
     Tv,

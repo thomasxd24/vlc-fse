@@ -1,8 +1,9 @@
 # Electron → Tauri migration
 
-Status: **scaffolding + first module ported.** Nothing here replaces Electron yet — `main.js`,
-`preload.js` and the app you ship today are untouched. This tree grows alongside them until a Tauri
-build has been proven equivalent on a real Windows handheld, at which point we cut over and delete
+Status: **every `src/*.js` module ported or deliberately deferred; a real, running Tauri shell exists
+and has been verified end to end on Linux.** Nothing here replaces Electron yet — `main.js`, `preload.js`
+and the app you ship today are untouched. This tree grows alongside them until a Tauri build has been
+proven equivalent on a real Windows handheld, at which point we cut over and delete
 `main.js`/`preload.js`/`electron-builder`.
 
 ## Why Tauri, not just "Rust"
@@ -19,14 +20,49 @@ browser engine resident in memory. `renderer/**` (HTML/CSS/JS) stays as-is; only
 ```
 src-tauri/
   Cargo.toml          workspace root
-  lounge-core/         <- ported business logic (this phase)
-  app/                 <- the actual Tauri binary crate (future, Windows-only, see below)
+  lounge-core/         <- ported business logic, no Tauri/WebView dependency (71 tests)
+  app/                 <- the Tauri binary crate: window, commands, the real (if partial) shell
 ```
 
 `lounge-core` has no dependency on Tauri, WebView, or any windowing toolkit. It's the direct Rust
 translation of `src/*.js`'s logic — same function shapes, same behaviour, verified against that file's
-existing `test/*.test.js` suite translated 1:1 into `#[test]`s. This crate is what `app` will call into
-once it exists.
+existing `test/*.test.js` suite translated 1:1 into `#[test]`s. `app` is what actually calls into it.
+
+## The `app` crate: real, running, honestly scoped
+
+This is **not** a 1:1 port of `main.js` — see `app/src/lib.rs`'s module doc for exactly why (in short:
+`main.js` integrates a long list of Electron APIs with no Rust equivalent chosen yet, plus every piece
+this migration deliberately deferred, all at once — porting that blind would be a far bigger unverified
+bet than anything else in this migration). Instead it proves the *architecture* end to end: a real
+window, loading the actual `renderer/**` UI completely unmodified, driven by real `lounge-core` calls
+through Tauri commands.
+
+**Verified by actually running it** (this sandbox has webkit2gtk and a real display, so unlike everything
+`cfg(windows)`, this could be built and run for real rather than just type-checked): `cargo run -p
+lounge-app` opens a real window, plays Lounge's actual startup intro, and lands on the real "Welcome to
+Lounge" screen — same HTML/CSS/JS as the Electron build, unmodified. "VLC not found yet. Install it from
+videolan.org…" on screen is `vlc::find_vlc()` genuinely reporting no VLC on this machine, not a
+placeholder string.
+
+Running it for real caught a bug static checking wouldn't have: `renderer/app.js`'s boot sequence does
+`await api.detectVlc()` with no `.catch`, so a stubbed command that *rejects* (as every not-yet-wired
+command in this shell deliberately does, to be honest about what isn't implemented) silently aborted the
+rest of `boot()` — including ending the startup intro, which is why the app sat on the splash screen
+indefinitely the first time it ran. Fixed by backing `detect_vlc` with the real `vlc::find_vlc` instead
+of the stub, which doubles as the first real proof that a `lounge-core` module and a Tauri command
+compose correctly. The lesson generalizes: any command the renderer calls *unconditionally* during boot
+needs a real implementation or a safe neutral default, never a rejection — reserve "not implemented"
+stubs for commands only reachable through explicit user action (a button click), where an error toast is
+acceptable UX for now.
+
+What's wired for real in `app/src/lib.rs`: `get_state` (settings from a real `JsonStore` merged over
+defaults; library from a real `library::scan_libraries` call), `rescan`, `save_settings`, `detect_vlc`,
+`quit`, `minimize`, `toggle_fullscreen`, plus `window.lounge` itself — recreated as a small
+`initialization_script` mapping every method `preload.js` exposes to `window.__TAURI__.core.invoke(...)`,
+so `renderer/**` needed zero changes to run against either shell. Every other command (`play`, `playGame`,
+`addGame`, dialogs, Tailscale, transfers, system controls, updates, …) is present as a real, callable
+`window.lounge.*` method but rejects with a clearly-labelled "not yet implemented" error — the renderer
+can call it and gets a real (if unhelpful) answer, not a silent hang or a thrown "unknown command".
 
 ## What's actually done
 
@@ -155,23 +191,25 @@ Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each 
 ## What isn't done, and can't be verified from this machine
 
 This development sandbox is Linux with no Rust toolchain pre-installed (added via `mise`, scoped to
-this repo only — see `.mise.toml`) and, more importantly, no Windows/WebView2/Steam/VLC/Tailscale to
-actually run the app against. Everything below needs a Windows box to build and check by hand before it
-can be trusted:
+this repo only — see `.mise.toml`). It does have webkit2gtk and a real display, which is how `app` could
+be built and actually run rather than merely type-checked — but it has no Windows/WebView2, and no
+Steam/VLC/Tailscale/real media library to exercise those integrations against. Everything below needs a
+Windows box, most of it also real installs of the things it talks to, before it can be trusted:
 
-- The `app` crate itself: `tauri.conf.json`, `main.rs`, and one `#[tauri::command]` per IPC handler
-  `main.js` currently registers via `ipcMain.handle`.
-- A drop-in replacement for `preload.js`'s `contextBridge`-exposed `api` object, so `renderer/**` needs
-  little to no change (it already calls everything through that one `api.*` surface).
-- `GameSession`, `VlcSession`, `SystemHelper` and the `Tailscale` class (see above) — once the `app`
-  crate's event/command shape exists to design against, and (for `VlcSession`) a real VLC install to
+- The rest of `main.js`'s IPC surface: every `window.lounge.*` method beyond the handful listed above
+  exists (so the renderer can call it) but rejects as "not yet implemented" — playback, game
+  launching/editing, dialogs (`pickFolder`/`pickVlc`/`pickKeyFile`/`addGame`'s file picker), Tailscale,
+  servers/transfers, system controls (volume/brightness/power), updates, Apps tab, WebHID permission for
+  the Legion Go's controllers, singleton-instance locking, login items, `safeStorage`-encrypted
+  passwords. Each needs either a straightforward Tauri equivalent (dialogs, shell-open, power controls)
+  or one of the pieces below.
+- `GameSession`, `VlcSession`, `SystemHelper` and the `Tailscale` class's process methods — designed
+  against the command/event shape `app` now actually has, and (for `VlcSession`) a real VLC install to
   verify against.
-- `remote.js`'s actual `connect`/`connect_sftp`/`connect_ftp` (see above) — once an SSH/FTP crate and the
-  `app` crate's async runtime are decided.
-- `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking) — this is the
-  last piece of `src/*.js`, and it's really where the `app` crate begins: it doesn't have much logic of
-  its own to port so much as it needs to be *rebuilt* as Tauri commands and window/event setup once that
-  crate exists.
+- `remote.js`'s actual `connect`/`connect_sftp`/`connect_ftp` — once an SSH/FTP crate is decided.
+- `src/apps.js` (Start-menu app scanning via `Get-StartApps`) — Windows-only, not yet looked at.
+- A real Windows path story for `file://` URLs (`app/src/lib.rs`'s `file_url` only handles Unix-style
+  paths so far — noted inline) and for `get_state`'s `platform` field.
 - `scripts/build-fse.ps1` and `.github/workflows/build.yml` reworked for `cargo`/Tauri's bundler instead
   of `electron-builder`.
 - Retiring/porting `test/*.test.js` (currently `node --test` against the JS modules directly).
