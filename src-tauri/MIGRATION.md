@@ -193,29 +193,169 @@ Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each 
 This development sandbox is Linux with no Rust toolchain pre-installed (added via `mise`, scoped to
 this repo only — see `.mise.toml`). It does have webkit2gtk and a real display, which is how `app` could
 be built and actually run rather than merely type-checked — but it has no Windows/WebView2, and no
-Steam/VLC/Tailscale/real media library to exercise those integrations against. Everything below needs a
-Windows box, most of it also real installs of the things it talks to, before it can be trusted:
+Steam/VLC/Tailscale/real media library to exercise those integrations against. See the checklist below
+for specifics; broadly, everything needs a Windows box, and most of it also real installs of the things
+it talks to, before it can be trusted.
 
-- The rest of `main.js`'s IPC surface: every `window.lounge.*` method beyond the handful listed above
-  exists (so the renderer can call it) but rejects as "not yet implemented" — playback, game
-  launching/editing, dialogs (`pickFolder`/`pickVlc`/`pickKeyFile`/`addGame`'s file picker), Tailscale,
-  servers/transfers, system controls (volume/brightness/power), updates, Apps tab, WebHID permission for
-  the Legion Go's controllers, singleton-instance locking, login items, `safeStorage`-encrypted
-  passwords. Each needs either a straightforward Tauri equivalent (dialogs, shell-open, power controls)
-  or one of the pieces below.
-- `GameSession`, `VlcSession`, `SystemHelper` and the `Tailscale` class's process methods — designed
-  against the command/event shape `app` now actually has, and (for `VlcSession`) a real VLC install to
-  verify against.
-- `remote.js`'s actual `connect`/`connect_sftp`/`connect_ftp` — once an SSH/FTP crate is decided.
-- `src/apps.js` (Start-menu app scanning via `Get-StartApps`) — Windows-only, not yet looked at.
-- A real Windows path story for `file://` URLs (`app/src/lib.rs`'s `file_url` only handles Unix-style
-  paths so far — noted inline) and for `get_state`'s `platform` field.
-- `scripts/build-fse.ps1` and `.github/workflows/build.yml` reworked for `cargo`/Tauri's bundler instead
-  of `electron-builder`.
-- Retiring/porting `test/*.test.js` (currently `node --test` against the JS modules directly).
+## TODO: everything left before a cutover is even on the table
+
+Checked = actually wired in `app` and working (verified here, on Linux, except where noted). Unchecked =
+not done. Nothing in this list should be treated as "mostly there" — an unchecked box means the
+`window.lounge.*` method either doesn't exist or currently rejects with "not yet implemented".
+
+### IPC commands — Media & playback
+
+- [x] `get-state` — real (settings + scanned library)
+- [ ] `play` / `stop` / `np-command` — need `VlcSession` (see below) built and wired
+- [ ] `set-watched`, `set-languages`, `set-pref` — need `progressStore`/`prefsStore` (plain `JsonStore`
+      instances, mechanical) plus the field-merge logic `main.js` does around them
+- [ ] `get-stats` — needs `statsStore` + the `statsData()` view assembly
+
+### IPC commands — Games
+
+- [ ] `play-game` / `end-game` / `back-to-game` — need `GameSession` (see below)
+- [ ] `add-game` — needs a folder/file picker (see Electron-API replacements) + `gamesStore` + `iconFor`
+      (`app.getFileIcon` equivalent)
+- [ ] `edit-game` / `remove-game` — needs `gamesStore` overrides plus calling `gameInfo.forget` +
+      re-enriching; the underlying `gameinfo.rs` logic is already ported
+- [ ] `search-steam` / `search-sgdb` / `sgdb-images` / `set-game-art` / `screenshot` — the underlying
+      `gameinfo::store_search`/`sgdb_search`/`sgdb_images`/`download` are **already ported and tested** in
+      `lounge-core`; this is "just" wiring a `GameInfo` instance into `AppState` and mapping these commands
+      to it, plus `screenshot`'s CDN-domain allowlist check
+- [ ] `show-game-folder` — needs a "reveal in file manager" equivalent (see Electron-API replacements)
+
+### IPC commands — Settings & dialogs
+
+- [x] `save-settings` — only the allowed-keys merge; missing the side effects `main.js` does around it
+      (relaunching a rescan when `libraries`/`steamEnabled`/`steamPath` change, re-enriching on a language
+      or `sgdbKey` change, `setLoginItemSettings`, live `setFullScreen`)
+- [ ] `pick-folder` / `pick-vlc` / `pick-key-file` — need a native file/folder picker
+- [ ] `clear-metadata` — needs `metaStore`/`gameInfoStore` cleared + re-triggering `enrich`/`enrichGames`
+- [ ] `show-in-folder` — needs a "reveal in file manager" equivalent
+
+### IPC commands — System (quick menu & status bar)
+
+- [ ] `system-get` / `system-set` — need `SystemHelper` (see below)
+- [ ] `wifi` — `system::wifi` is **already ported**; just needs wiring (and the `platform === 'win32'`
+      gate the renderer itself already applies)
+- [ ] `power` — `system::power` is **already ported**; needs wiring plus flushing every `JsonStore`
+      before sleep/restart/shutdown, same as `main.js` does
+- [ ] `open-external` — needs a "open URL in default browser" equivalent, restricted to `https://` and
+      `ms-settings:` like the original
+
+### IPC commands — Servers, remote browsing & transfers
+
+- [ ] `server-save` / `server-remove` / `server-forget-key` / `server-test` — need `serversStore` plus
+      (for `-test`) a real remote client
+- [ ] `remote-list` / `remote-plan` / `remote-download` — `transfer_plan.rs` is **already ported**; all
+      three need `remote.js`'s actual SFTP/FTP client to exist first (see below)
+- [ ] `transfer-cancel` / `transfer-clear` / `transfer-retry` — `transfers.rs`'s `TransferQueue` is
+      **already ported and tested**; needs a `TransferQueue` instance in `AppState` (constructed with a
+      real `connect` closure once the remote client exists) and its `update`/`finished` events wired to
+      `app.emit`
+
+### IPC commands — Apps & Tailscale
+
+- [ ] `apps-rescan` / `app-launch` / `app-hide` — need `src/apps.js` ported first (not started; Windows
+      Start-menu scanning via `Get-StartApps`, entirely untested territory)
+- [ ] `tailscale-status` — `tailscale::parse_status` is **already ported**; needs the `Tailscale`
+      struct's actual `tailscale status --json` invocation built
+- [ ] `tailscale-locate` — `tailscale::locate_cli`/`find_cli` are **already ported and tested**; needs
+      wiring with real `fs`/registry closures
+- [ ] `tailscale-action` (up/down/exit-node), `tailscale-login`, `tailscale-cancel-login` — need the
+      `Tailscale` struct's process-spawning methods built (see below); `tailscale-login` also needs a QR
+      code generator (`qrcode` on the JS side — pick a Rust equivalent, e.g. the `qrcode` crate)
+- [ ] `tailscale-open-app` — depends on `apps.js`
+
+### IPC commands — Updates
+
+- [ ] `update-check` — `updater.rs` is **fully ported and tested**; this is close to a pure wiring task
+      (construct an `Updater` in `AppState`, call `.check()`, emit its state)
+- [ ] `update-install` — needs the actual install flow: flushing every store, spawning the installer
+      command detached (NSIS/zip) or running the FSE flow (`install_command` + `wait_for_fse`, both
+      already ported), then quitting
+- [ ] `update-skip` — trivial once `save-settings`-style store access exists
+
+### Stateful `lounge-core` pieces still to build (all currently just documented as deferred)
+
+- [ ] `GameSession` — tracks a running Steam or manual game; needs a concrete design for how it reports
+      state back to `app` (a channel? direct `AppHandle::emit` calls from a background thread?) — this is
+      an actual design decision, not a mechanical port
+- [ ] `VlcSession` — spawns VLC, polls its HTTP interface for playback progress; same kind of design
+      decision as `GameSession`, and needs a real VLC install to verify against
+- [ ] `SystemHelper` — the PowerShell/COM volume-brightness-sleep helper process; JSON-line stdin/stdout
+      protocol, needs designing against `app`'s process-management approach
+- [ ] `Tailscale`'s process methods (`status`/`up`/`down`/`setExitNode`/`startLogin`/`cancelLogin`) —
+      subprocess-with-timeout and streaming-with-callback; same category as the above
+- [ ] `remote.js`'s actual `connect`/`connect_sftp`/`connect_ftp` — needs an SSH/FTP crate decision (a
+      pure-Rust SSH crate like `russh` is tokio-based, which has knock-on effects for whether `app` adopts
+      an async runtime at all)
+- [ ] `src/apps.js` — Start-menu app scanning, known-folder GUID resolution, Store package logos; entirely
+      unlooked-at so far
+
+### Electron-API replacements needed in `app`
+
+None of these exist yet in the Tauri shell:
+
+- [ ] Native file/folder picker (`dialog.showOpenDialog` equivalent) — needed by `add-game`, `pick-folder`,
+      `pick-vlc`, `pick-key-file`
+- [ ] "Reveal in file manager" (`shell.showItemInFolder`/`shell.openPath`) — needed by `show-in-folder`,
+      `show-game-folder`
+- [ ] "Open URL in default browser" (`shell.openExternal`) — needed by `open-external`, and internally
+      wherever `win.webContents.setWindowOpenHandler` currently intercepts a link
+- [ ] Encrypted secret storage (`safeStorage`, DPAPI-backed on Windows) — needed for saved server
+      passwords; `sealSecret`/`openSecret` in `main.js` is the exact shape to match
+- [ ] `powerSaveBlocker` equivalent — keep the display awake during playback
+- [ ] `app.getFileIcon` equivalent — game/app icons extracted from an `.exe`
+- [ ] WebHID device-permission handling for the Legion Go's controllers (`setDevicePermissionHandler`,
+      `select-hid-device`) — a Tauri/wry-level capability, may need investigating what's exposed there
+- [ ] Single-instance locking (`app.requestSingleInstanceLock` equivalent) — Tauri has a
+      single-instance plugin; needs adopting and wiring to the same "focus/resume the existing window"
+      behaviour as `app.on('second-instance', ...)`
+- [ ] "Launch at login" (`app.setLoginItemSettings` equivalent)
+- [ ] The rest of window setup: prevent navigation away from the app, intercept `target=_blank` links to
+      open externally instead, restore fullscreen/size preferences, the icon/title/background-color
+      already set in `tauri.conf.json` should carry over but needs checking once there's more to show
+
+### Windows-specific things that can only be verified on Windows
+
+- [ ] Everything already flagged `cfg(windows)`-only across `lounge-core` (steam.rs's registry lookup and
+      `launch_quietly`, vlc.rs's registry lookup, system.rs's entire Wi-Fi/power/priority/battery surface,
+      updater.rs's PowerShell script generation and WMI launch) — all type-check and clippy-clean cross-
+      compiled for `x86_64-pc-windows-gnu`, none have actually **run**
+- [ ] `app/src/lib.rs`'s `file_url` — only handles Unix-style paths so far; needs backslash-to-forward-
+      slash conversion and the `file:///C:/...` drive-letter form for real Windows paths
+- [ ] `get_state`'s `platform` field — currently reports `std::env::consts::OS` (would say `"linux"` on
+      this machine); needs to actually report `"win32"` the way the renderer expects, or the renderer's
+      several `platform === 'win32'` gates need re-checking against whatever this reports
+- [ ] WebView2 itself — confirm it's present/installable the way `tauri-conf.json`/the installer expects
+      on a clean Windows machine, since Electron currently bundles its own runtime and this won't
+
+### Build & release pipeline
+
+- [ ] `scripts/build-fse.ps1` reworked for whatever `cargo`/Tauri's bundler produces instead of
+      `electron-builder`'s output layout
+- [ ] `.github/workflows/build.yml` reworked: Rust toolchain setup instead of Node, `cargo build`/Tauri's
+      bundler instead of `electron-builder`, and re-checking every step that currently assumes an
+      `electron-builder`-shaped `dist/` (the NSIS/zip/FSE artifact naming `updater.rs` and
+      `ASSET_PATTERNS` depend on)
+- [ ] Decide how `lounge-core`'s 71 `#[test]`s and any future `app`-level tests fit into that CI run
+      alongside (or instead of) `npm test`
+
+### Testing
+
+- [ ] Retire or keep `test/*.test.js` running against `src/*.js` for as long as Electron ships alongside
+      Tauri; decide what happens to them at cutover (delete with `src/*.js`, presumably, once
+      `lounge-core`'s coverage is confirmed to be a superset)
+- [ ] Some kind of test coverage for `app`'s own command-wiring code (`app/src/lib.rs` currently has none
+      beyond "it compiles and I ran it once by hand" — worth at least a few `#[test]`s once there's more
+      logic in there than thin wiring)
 
 ## Ground rule
 
-No version bump or GitHub Release tag happens for this work until a Tauri build has actually run on a
-Windows handheld and been checked against the Electron build side by side — that tag is what the app's
-own auto-updater offers to real users.
+No version bump, no GitHub Release tag, and **no deletion of Electron/`main.js`/`preload.js`** happens
+until every box above is checked, the result has actually run on a Windows handheld side by side with the
+Electron build, and playback/game-launching/transfers/updates have all been exercised for real — not just
+"the window opens." The tag this eventually produces is what the app's own auto-updater offers to real
+users; shipping this before then would replace a working launcher with one that can't play media or
+launch games.
