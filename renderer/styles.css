@@ -44,10 +44,12 @@ body {
   user-select: none;
 }
 
-body.using-mouse {
+/* The pointer shows while the mouse is in use, and hides for the controller and keyboard (Nav sets input-*). */
+body.input-mouse {
   cursor: default;
 }
-body:not(.using-mouse) {
+body.input-pad,
+body.input-keyboard {
   cursor: none;
 }
 
@@ -1890,6 +1892,12 @@ body[data-nav='left'] #page[data-enter='yes'] > .page {
 
 .tabs-track {
   position: relative;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs-track::-webkit-scrollbar {
+  display: none;
 }
 #tab-ind {
   position: absolute;
@@ -3291,5 +3299,47 @@ body.pad-testing #hints {
   }
   .clock {
     font-size: 1.3rem;
+  }
+}
+
+/* ---------- Narrow or short windows (a remote-desktop window, a big text size) ---------- */
+
+/* The status side (Wi-Fi, battery, clock) never gives way; the tabs tighten, and scroll sideways last. */
+.topbar-right {
+  flex-shrink: 0;
+}
+.tabs-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+@media (max-width: 1400px) {
+  #topbar {
+    gap: 1.4rem;
+  }
+}
+@media (max-width: 1150px) {
+  .tab {
+    padding: 0.45rem 0.6rem;
+    font-size: 1rem;
+  }
+  #tabs {
+    gap: 0.2rem;
+  }
+  .clock {
+    font-size: 1.15rem;
+  }
+  .battery span:last-child {
+    display: none;
+  }
+}
+/* A short window: the banner keeps one line of description, then none, instead of cutting it mid-line. */
+@media (max-height: 720px) {
+  .hero .overview {
+    -webkit-line-clamp: 1;
+  }
+}
+@media (max-height: 600px) {
+  .hero .overview {
+    display: none;
   }
 }

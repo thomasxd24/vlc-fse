@@ -17,10 +17,14 @@ const Nav = (() => {
   let mode = 'keyboard';
   let active = true;
   let rumble = true;
+  let travel = 0; // mouse distance since the last mode change (see pointermove)
+  let lastPos = null;
 
   function setMode(m) {
     if (m === mode) return;
     mode = m;
+    travel = 0;
+    lastPos = null;
     document.body.classList.remove('input-pad', 'input-keyboard', 'input-mouse', 'input-touch');
     document.body.classList.add(`input-${m}`);
     for (const cb of listeners.mode) cb(m);
@@ -282,9 +286,16 @@ const Nav = (() => {
     },
     true
   );
+  // Switch to the mouse after it has travelled a few pixels in total (a stray event, or the pointer resting
+  // under a finger, doesn't count). Positions rather than movementX: remote-desktop tools such as Parsec and
+  // high-resolution mice can report tiny or zero per-event movement.
   document.addEventListener('pointermove', (e) => {
     if (e.pointerType !== 'mouse') return;
-    if (mode !== 'mouse' && (Math.abs(e.movementX) > 2 || Math.abs(e.movementY) > 2)) setMode('mouse');
+    if (mode !== 'mouse') {
+      if (lastPos) travel += Math.hypot(e.clientX - lastPos.x, e.clientY - lastPos.y);
+      lastPos = { x: e.clientX, y: e.clientY };
+      if (travel > 6) setMode('mouse');
+    }
     if (mode !== 'mouse') return;
     const el = e.target.closest && e.target.closest('.focusable');
     if (el && el !== document.activeElement && !isTextInput(document.activeElement) && scope().contains(el)) focus(el, { scroll: false });

@@ -484,6 +484,7 @@ function moveTabIndicator() {
     ind.style.opacity = '0';
     return;
   }
+  active.scrollIntoView({ block: 'nearest', inline: 'nearest' }); // when the tabs scroll sideways
   const wrap = $('#tabs').getBoundingClientRect();
   const r = active.getBoundingClientRect();
   ind.style.opacity = '1';
