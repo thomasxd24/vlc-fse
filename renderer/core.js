@@ -18,6 +18,8 @@ const S = {
   game: null,
   servers: [],
   transfers: [],
+  apps: [],
+  tailscale: null,
   platform: 'win32',
   systemControls: false,
   fsePackage: false,
@@ -32,7 +34,9 @@ const VIEW_PREFS_DEFAULT = {
   showFilter: 'all',
   gameSort: 'recent',
   gameFilter: 'all',
-  statsPeriod: 'week'
+  statsPeriod: 'week',
+  appSort: 'recent',
+  appFilter: 'all'
 };
 const prefs = loadPrefs();
 function loadPrefs() {
@@ -228,6 +232,8 @@ const ICON = {
   folder: svg('<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H10l2 2.5h7.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>'),
   stop: svg('<rect x="5" y="5" width="14" height="14" rx="2"/>', true),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  apps: svg('<rect x="3.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.8"/>'),
+  vpn: svg('<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z"/><path d="M8.8 12l2.2 2.2 4.4-4.4"/>'),
   refresh: svg('<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>'),
   star: svg('<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/>'),
   starOn: svg('<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/>', true),
@@ -348,6 +354,7 @@ const TABS = [
   { name: 'games', key: 'tab.games' },
   { name: 'movies', key: 'tab.movies' },
   { name: 'shows', key: 'tab.shows' },
+  { name: 'apps', key: 'tab.apps' },
   { name: 'transfers', key: 'tab.transfers' },
   { name: 'search', key: 'tab.search' },
   { name: 'settings', key: 'tab.settings' }
@@ -818,6 +825,12 @@ const Status = (() => {
 
 // ============================================================================ Quick menu (☰)
 
+/** One line for Tailscale's state: "Connected", "Disconnected", "Signed out"… */
+function tsStateLabel(st) {
+  if (!st || !st.installed) return '';
+  return t(`ts.${st.state || 'unknown'}`);
+}
+
 const QuickMenu = (() => {
   const root = $('#quick-menu');
   let open = false;
@@ -864,6 +877,7 @@ const QuickMenu = (() => {
           ${showPower ? `<button class="qm-btn focusable" data-qm="sleep" data-key="qm-sleep">${ICON.moon}<span>${h(t('qm.sleep'))}</span></button>` : ''}
           ${showPower ? `<button class="qm-btn focusable" data-qm="restart" data-key="qm-restart">${ICON.restart}<span>${h(t('qm.restart'))}</span></button>` : ''}
           ${showPower ? `<button class="qm-btn focusable" data-qm="shutdown" data-key="qm-shutdown">${ICON.power}<span>${h(t('qm.shutdown'))}</span></button>` : ''}
+          ${S.tailscaleInstalled ? `<button class="qm-btn qm-ts focusable" data-qm="tailscale" data-key="qm-tailscale">${ICON.vpn}<span>${h(t('ts.title'))}<small>${h(S.tailscale ? tsStateLabel(S.tailscale) : '')}</small></span></button>` : ''}
           <button class="qm-btn focusable" data-qm="stats" data-key="qm-stats">${ICON.chart}<span>${h(t('stats.title'))}</span></button>
           <button class="qm-btn focusable" data-qm="settings" data-key="qm-settings">${ICON.gamepad}<span>${h(t('tab.settings'))}</span></button>
           <button class="qm-btn danger focusable" data-qm="quit" data-key="qm-quit">${ICON.exit}<span>${h(t('qm.quit'))}</span></button>
@@ -932,6 +946,11 @@ const QuickMenu = (() => {
       switchTab('settings');
       return;
     }
+    if (action === 'tailscale') {
+      close();
+      tailscalePanel();
+      return;
+    }
     if (action === 'stats') {
       close();
       if (route().name !== 'stats') openStats();
@@ -968,6 +987,12 @@ const QuickMenu = (() => {
     Sound.open();
     paint();
     Hints.update();
+    if (S.tailscaleInstalled) {
+      api.tailscaleStatus().then((st) => {
+        S.tailscale = st;
+        if (open) paint();
+      });
+    }
     if (S.systemControls) {
       sys = await api.systemGet().catch(() => ({ supported: false }));
       if (open) paint();

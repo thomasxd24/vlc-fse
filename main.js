@@ -17,6 +17,8 @@ const remote = require('./src/remote');
 const { planTransfer, SUB_EXTENSIONS } = require('./src/transfer-plan');
 const { TransferQueue } = require('./src/transfers');
 const { isVideoFile, stripExtension } = require('./src/parse');
+const apps = require('./src/apps');
+const { Tailscale } = require('./src/tailscale');
 
 const REPO = 'thomasxd24/vlc-fse';
 const UPDATE_FIRST_CHECK_MS = 30 * 1000;
@@ -65,6 +67,9 @@ let gamesStore; // { manual: [], overrides: {}, stats: {} }
 let gameInfoStore;
 let serversStore; // { servers: [{ id, name, protocol, host, port, username, authType, keyPath, secret, root, hostKey, insecureTls }] }
 let transfers = null;
+let appsStore; // { apps: [...], icons: { [id]: file }, hidden: { [id]: true }, recent: { [id]: ms }, scannedAt }
+let appsScanning = false;
+const tailscale = new Tailscale();
 let statsStore; // { sessions: [{ kind: 'game' | 'watch', id, start, minutes }] }
 let prefsStore; // { favorites: {}, hidden: {}, languages: { [movie or show id]: {audio, subs} } }
 let metadata;
@@ -296,6 +301,10 @@ function state() {
     update: updater ? updater.state : null,
     hasBattery: batteryPresent,
     servers: serversStore.get('servers').map(publicServer),
+    apps: appsView(),
+    appsScanning,
+    appsScannedAt: appsStore.get('scannedAt'),
+    tailscaleInstalled: tailscale.installed,
     transfers: transfers ? transfers.state : [],
     version: app.getVersion()
   };
@@ -964,6 +973,128 @@ function setupTransfers() {
 }
 
 // ---------------------------------------------------------------------------
+// Apps: everything in the Start menu, launchable from the Apps tab
+
+const APP_STEP_ASIDE_MS = 1200;
+const isTailscaleApp = (a) => /(^|\\)tailscale-ipn\.exe$/i.test(a.appId) || /^tailscale$/i.test(a.name);
+
+function appsView() {
+  const icons = appsStore.get('icons');
+  const hidden = appsStore.get('hidden');
+  const recent = appsStore.get('recent');
+  return appsStore.get('apps').map((a) => ({
+    id: a.id,
+    name: a.name,
+    kind: a.kind,
+    icon: icons[a.id] && fs.existsSync(icons[a.id]) ? fileUrl(icons[a.id]) : null,
+    hidden: Boolean(hidden[a.id]),
+    lastLaunched: recent[a.id] || 0,
+    tailscale: isTailscaleApp(a)
+  }));
+}
+
+/** Save an app's icon as a PNG in the artwork folder (Store logo, or the program's own icon). */
+async function appIcon(a) {
+  const dest = userFile(path.join('artwork', 'apps', `${a.id}.png`));
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  if (a.kind === 'store') {
+    const logo = apps.storeLogo(a);
+    if (!logo) return null;
+    fs.copyFileSync(logo, dest);
+    return dest;
+  }
+  let target = a.exe && fs.existsSync(a.exe) ? a.exe : null;
+  if (!target && a.shortcut) {
+    try {
+      const link = shell.readShortcutLink(a.shortcut);
+      target = [link.icon, link.target].find((p) => p && fs.existsSync(p)) || a.shortcut;
+    } catch {
+      target = a.shortcut;
+    }
+  }
+  if (!target) return null;
+  const img = await app.getFileIcon(target, { size: 'large' });
+  if (img.isEmpty()) return null;
+  fs.writeFileSync(dest, img.toPNG());
+  return dest;
+}
+
+async function scanApps() {
+  if (appsScanning || gameSession || process.platform !== 'win32') return;
+  appsScanning = true;
+  pushLibrary();
+  try {
+    const list = await apps.listApps();
+    appsStore.set('apps', list);
+    appsStore.set('scannedAt', Date.now());
+    pushLibrary();
+    const icons = appsStore.get('icons');
+    for (const a of list) {
+      if (gameSession) break;
+      if (icons[a.id] && fs.existsSync(icons[a.id])) continue;
+      const file = await appIcon(a).catch(() => null);
+      if (file) {
+        icons[a.id] = file;
+        appsStore.save();
+        pushLibrary();
+      }
+    }
+  } catch (err) {
+    console.error('app scan failed', err);
+  } finally {
+    appsScanning = false;
+    pushLibrary();
+  }
+}
+
+async function launchInstalledApp(id) {
+  const a = appsStore.get('apps').find((x) => x.id === id);
+  if (!a) return { ok: false, errorKey: 'err.notFound' };
+  try {
+    await apps.launchApp(a.appId);
+  } catch (err) {
+    return { ok: false, errorKey: 'err.appLaunch', vars: { message: err.message } };
+  }
+  appsStore.get('recent')[id] = Date.now();
+  appsStore.save();
+  pushLibrary();
+  // Step aside so the app comes up in front; the home button (or Alt+Tab) brings Foyer back.
+  setTimeout(() => win && !win.isDestroyed() && win.minimize(), APP_STEP_ASIDE_MS);
+  return { ok: true };
+}
+
+// Tailscale (see src/tailscale.js)
+
+async function tailscaleAction({ action, node }) {
+  if (!tailscale.installed) return { ok: false, errorKey: 'err.tsMissing' };
+  try {
+    if (action === 'up') await tailscale.up();
+    else if (action === 'down') await tailscale.down();
+    else if (action === 'exitNode') await tailscale.setExitNode(node || null);
+    else return { ok: false };
+  } catch (err) {
+    return { ok: false, errorKey: 'err.tailscale', vars: { message: err.message }, status: await tailscale.status() };
+  }
+  return { ok: true, status: await tailscale.status() };
+}
+
+async function tailscaleLogin() {
+  if (!tailscale.installed) return { ok: false, errorKey: 'err.tsMissing' };
+  try {
+    const url = await tailscale.startLogin(async (ok) => {
+      const st = await tailscale.status();
+      send('tailscale', st);
+      if (ok && st.state === 'connected') toast('ts.signedIn', { name: st.hostName ? ` · ${st.hostName}` : '' });
+    });
+    if (!url) return { ok: true, url: null, status: await tailscale.status() };
+    const qr = await require('qrcode').toDataURL(url, { margin: 1, width: 360, errorCorrectionLevel: 'M' });
+    return { ok: true, url, qr };
+  } catch (err) {
+    return { ok: false, errorKey: 'err.tailscale', vars: { message: err.message } };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Updates (always the user's call: we only check, then ask)
 
 function setupUpdater() {
@@ -989,7 +1120,7 @@ async function installUpdate() {
     if (updater.state.status !== 'ready') await updater.download();
     if (gameSession) return { ok: false, errorKey: 'err.updateWhilePlaying' };
     const { command, args } = await updater.installCommand({ pid: process.pid, exePath: process.execPath });
-    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore]) if (s.timer) s.flush();
+    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore, appsStore]) if (s.timer) s.flush();
     if (session) session.kill();
     const child = require('child_process').spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
     await new Promise((resolve, reject) => {
@@ -1208,7 +1339,7 @@ function registerIpc() {
   ipcMain.handle('power', async (_e, action) => {
     if (action === 'desktop') return win.minimize();
     if (!['sleep', 'restart', 'shutdown'].includes(action)) return;
-    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore]) if (s.timer) s.flush();
+    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore, appsStore]) if (s.timer) s.flush();
     return power(action, helper).catch(() => null);
   });
   ipcMain.handle('open-external', (_e, url) => {
@@ -1246,6 +1377,25 @@ function registerIpc() {
   ipcMain.handle('transfer-clear', (_e, id) => transfers.clear(id));
   ipcMain.handle('transfer-retry', (_e, id) => transfers.retry(id));
 
+  // Apps & Tailscale
+  ipcMain.handle('apps-rescan', () => scanApps());
+  ipcMain.handle('app-launch', (_e, id) => launchInstalledApp(id));
+  ipcMain.handle('app-hide', (_e, { id, hidden }) => {
+    const map = appsStore.get('hidden');
+    if (hidden) map[id] = true;
+    else delete map[id];
+    appsStore.save();
+    pushLibrary();
+  });
+  ipcMain.handle('tailscale-status', () => tailscale.status());
+  ipcMain.handle('tailscale-action', (_e, req) => tailscaleAction(req || {}));
+  ipcMain.handle('tailscale-login', () => tailscaleLogin());
+  ipcMain.handle('tailscale-cancel-login', () => tailscale.cancelLogin());
+  ipcMain.handle('tailscale-open-app', () => {
+    const a = appsStore.get('apps').find(isTailscaleApp);
+    return a ? launchInstalledApp(a.id) : { ok: false, errorKey: 'err.tsMissing' };
+  });
+
   ipcMain.handle('update-check', () => (updater ? updater.check() : null));
   ipcMain.handle('update-install', () => installUpdate());
   ipcMain.handle('update-skip', (_e, version) => {
@@ -1274,6 +1424,7 @@ app.whenReady().then(() => {
   prefsStore = new JsonStore(userFile('prefs.json'), { favorites: {}, hidden: {}, languages: {} });
   statsStore = new JsonStore(userFile('stats.json'), { sessions: [] });
   serversStore = new JsonStore(userFile('servers.json'), { servers: [] });
+  appsStore = new JsonStore(userFile('apps.json'), { apps: [], icons: {}, hidden: {}, recent: {}, scannedAt: 0 });
   library = { games: [], ...libraryStore.data };
   metadata = new Metadata({ store: metaStore, imageDir: userFile('artwork'), apiKey: settings.get('tmdbKey') });
   makeGameInfo();
@@ -1287,14 +1438,19 @@ app.whenReady().then(() => {
   createWindow();
   setupUpdater();
   // Show the cached library immediately, then refresh it in the background.
-  win.webContents.once('did-finish-load', () => rescan());
+  win.webContents.once('did-finish-load', () => {
+    rescan();
+    // The installed-apps list refreshes a little later, so it doesn't compete with the library scan.
+    setTimeout(scanApps, 8000);
+  });
 });
 
 app.on('before-quit', () => {
   if (session) session.kill();
+  tailscale.cancelLogin();
   for (const id of [...browsing.keys()]) dropBrowse(id);
   helper.stop();
-  for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore]) if (s && s.timer) s.flush();
+  for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore, appsStore]) if (s && s.timer) s.flush();
 });
 
 app.on('window-all-closed', () => app.quit());

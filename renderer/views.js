@@ -1,6 +1,6 @@
 'use strict';
 
-/* global S, idx, prefs, api, Stats, modals, fmtSize, renderStatus, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
+/* global S, idx, prefs, api, Stats, modals, fmtSize, renderStatus, tsStateLabel, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
    ICON, Backdrop, VIEWS, page, route, render, Nav, $, keyboardHtml */
 
 // ============================================================================ Cards
@@ -737,13 +737,15 @@ function renderResults(r) {
   const games = visibleItems(S.library.games).filter(match).sort(rank);
   const movies = visibleItems(S.library.movies).filter(match).sort(rank);
   const shows = visibleItems(S.library.shows).filter(match).sort(rank);
-  const total = games.length + movies.length + shows.length;
+  const appsFound = (S.apps || []).filter((a) => !a.hidden && words.every((w) => norm(a.name).includes(w))).sort((a, b) => Number(norm(b.name).startsWith(q)) - Number(norm(a.name).startsWith(q)) || a.name.localeCompare(b.name));
+  const total = games.length + movies.length + shows.length + appsFound.length;
   const section = (title, list, prefix) => (list.length ? `<h2>${h(title)}</h2><div class="grid" data-nav-group>${list.slice(0, 60).map((x) => posterCard(x, prefix)).join('')}</div>` : '');
   box.innerHTML = `
     <div class="page-head" style="padding-left:0"><div class="page-count">${h(t('search.results', { n: total }))}</div></div>
     ${section(t('tab.games'), games, 'qg')}
     ${section(t('tab.shows'), shows, 'qs')}
     ${section(t('tab.movies'), movies, 'qm')}
+    ${appsFound.length ? `<h2>${h(t('tab.apps'))}</h2><div class="grid app-grid" data-nav-group>${appsFound.slice(0, 30).map((a) => appTile(a, 'qa')).join('')}</div>` : ''}
     ${!total ? `<div class="empty-hint">${h(t('search.none'))}</div>` : ''}`;
 }
 
@@ -1210,3 +1212,81 @@ async function loadRemote(r) {
   }
   if (route() === r) render({ keepFocus: true });
 }
+
+// ============================================================================ Apps
+
+function appTile(a, keyPrefix, autofocus = false) {
+  const art = a.icon ? `<img class="app-icon" src="${h(a.icon)}" alt="" loading="lazy">` : `<span class="app-letter">${h(a.name.slice(0, 1).toUpperCase())}</span>`;
+  return `
+    <button class="card app-tile focusable ${a.hidden ? 'is-hidden' : ''}" data-act="launch-app" data-id="${a.id}" data-opts="app:${a.id}" data-key="${keyPrefix}-${a.id}" data-hint="apps.open" ${autofocus ? 'data-autofocus' : ''}>
+      <div class="art" style="--h:${hueOf(a.name)}">${art}</div>
+      <div class="label">${h(a.name)}</div>
+    </button>`;
+}
+
+/** Tailscale at the top of Apps: its state and the main actions, without the tray icon FSE doesn't have. */
+function tailscaleCard() {
+  const st = S.tailscale;
+  if (!S.tailscaleInstalled) return '';
+  const state = st ? st.state : null;
+  let detail = '';
+  if (st && st.error && state === 'unknown') detail = t('ts.serviceDown');
+  else if (state === 'connected') {
+    detail = [st.hostName && st.ip ? t('ts.details', { host: st.hostName, ip: st.ip }) : '', t('ts.devices', { n: st.peersOnline || 0 }), st.exitNode ? t('ts.viaExit', { name: st.exitNode.name }) : ''].filter(Boolean).join(' · ');
+  }
+  const btn = (act, label, icon, extra = '') => `<button class="btn small focusable ${extra}" data-act="${act}" data-key="ts-${act}">${icon}${h(label)}</button>`;
+  const actions =
+    state === 'connected'
+      ? btn('ts-down', t('ts.disconnect'), ICON.power) + btn('ts-exit', t('ts.exitNode', { name: st.exitNode ? st.exitNode.name : t('ts.exitNone') }), ICON.link)
+      : state === 'needsLogin'
+        ? btn('ts-login', t('ts.signIn'), ICON.vpn, 'primary')
+        : state === 'stopped'
+          ? btn('ts-up', t('ts.connect'), ICON.vpn, 'primary')
+          : '';
+  return `
+    <section class="ts-card ${state || 'loading'}" data-nav-group>
+      <span class="ts-ico">${ICON.vpn}</span>
+      <div class="ts-text">
+        <div class="ts-name">${h(t('ts.title'))} <span class="ts-state"><i></i>${h(st ? tsStateLabel(st) : t('ts.working'))}</span></div>
+        ${detail ? `<div class="ts-detail">${h(detail)}</div>` : ''}
+      </div>
+      <div class="ts-actions">${actions}<button class="btn small icon-only focusable" data-act="ts-panel" data-key="ts-ts-panel" aria-label="${h(t('ts.title'))}">${ICON.more}</button></div>
+    </section>`;
+}
+
+VIEWS.apps = {
+  render() {
+    const all = S.apps || [];
+    const shown = prefs.appFilter === 'hidden' ? all.filter((a) => a.hidden) : all.filter((a) => !a.hidden);
+    const items = [...shown].sort((a, b) =>
+      prefs.appSort === 'recent' ? (b.lastLaunched || 0) - (a.lastLaunched || 0) || a.name.localeCompare(b.name) : a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
+    );
+    let empty = '';
+    if (!items.length) empty = S.platform !== 'win32' ? t('apps.windowsOnly') : S.appsScanning ? t('apps.scanning') : all.length ? t('grid.empty') : t('apps.empty');
+    const toolbar = `
+      ${chips('appSort', prefs.appSort, [['recent', 'sort.recentApps'], ['az', 'sort.az']])}
+      <span class="chip-sep"></span>
+      ${chips('appFilter', prefs.appFilter, [['all', 'filter.all'], ['hidden', 'filter.hidden']])}
+      <span class="chip-sep"></span>
+      <button class="chip icon-chip focusable" data-act="rescan-apps" data-key="apps-refresh">${ICON.refresh}${h(S.appsScanning ? t('apps.scanning') : t('apps.refresh'))}</button>`;
+    return `
+      <div class="page" data-scroll="apps">
+        <div class="page-head"><h1 class="page-title">${h(t('tab.apps'))}</h1><div class="page-count">${h(t('apps.count', { n: items.length }))}</div></div>
+        ${tailscaleCard()}
+        <div class="toolbar" data-nav-group>${toolbar}</div>
+        <div class="grid app-grid" data-nav-group>${items.map((a, i) => appTile(a, 'ap', i === 0)).join('') || `<div class="empty-hint">${h(empty)}</div>`}</div>
+      </div>`;
+  },
+  mount(r) {
+    Backdrop.set(null);
+    if (S.tailscaleInstalled && !r.tsLoading) {
+      r.tsLoading = true;
+      api.tailscaleStatus().then((st) => {
+        r.tsLoading = false;
+        const changed = JSON.stringify(st) !== JSON.stringify(S.tailscale);
+        S.tailscale = st;
+        if (changed && route() === r && !modals.length) render({ keepFocus: true });
+      });
+    }
+  }
+};

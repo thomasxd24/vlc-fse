@@ -2770,3 +2770,137 @@ body.reduce-motion *::after {
   margin: 0;
   max-width: 50rem;
 }
+
+/* ------------------------------------------------------------------ Apps & Tailscale */
+
+.app-grid {
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+}
+.app-tile .art {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(120% 120% at 30% 20%, hsl(var(--h) 30% 24%), hsl(calc(var(--h) + 30) 35% 11%));
+}
+.app-icon {
+  width: 46% !important;
+  height: 46% !important;
+  object-fit: contain !important;
+  filter: drop-shadow(0 0.3rem 0.6rem rgba(0, 0, 0, 0.35));
+}
+.app-letter {
+  font-size: 3rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+}
+.app-tile .label {
+  text-align: center;
+}
+.app-tile.is-hidden .art {
+  opacity: 0.45;
+}
+
+.ts-card {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  margin: 0 var(--gutter) 1.2rem;
+  padding: 1rem 1.3rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.ts-ico .ico {
+  width: 2rem;
+  height: 2rem;
+  color: var(--muted);
+}
+.ts-card.connected .ts-ico .ico {
+  color: var(--good);
+}
+.ts-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ts-name {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+.ts-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.ts-state i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.ts-card.connected .ts-state i {
+  background: var(--good);
+}
+.ts-card.needsLogin .ts-state i,
+.ts-card.unknown .ts-state i {
+  background: #f5a524;
+}
+.ts-detail {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ts-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex: 0 0 auto;
+}
+.qm-ts span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.qm-ts small {
+  font-size: 0.85rem;
+  font-weight: 600;
+  opacity: 0.7;
+}
+.ts-login {
+  display: flex;
+  align-items: center;
+  gap: 1.4rem;
+  margin: 0.4rem 0 1.2rem;
+}
+.ts-qr {
+  width: 11rem;
+  height: 11rem;
+  border-radius: 0.6rem;
+  background: #fff;
+  image-rendering: pixelated;
+  flex: 0 0 auto;
+}
+.ts-url {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 1rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+/* Eight tabs: on a handheld-sized window, the brand shrinks to its mark and the tabs tighten further. */
+@media (max-width: 1400px) {
+  .tab {
+    padding: 0.5rem 0.75rem;
+    font-size: 1.1rem;
+  }
+  .brand {
+    font-size: 0;
+    gap: 0;
+  }
+}

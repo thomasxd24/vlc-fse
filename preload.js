@@ -53,6 +53,15 @@ contextBridge.exposeInMainWorld('foyer', {
   cancelTransfer: call('transfer-cancel'),
   clearTransfers: call('transfer-clear'),
   retryTransfer: call('transfer-retry'),
+  // Apps & Tailscale
+  rescanApps: call('apps-rescan'),
+  launchApp: call('app-launch'),
+  hideApp: call('app-hide'),
+  tailscaleStatus: call('tailscale-status'),
+  tailscaleAction: call('tailscale-action'),
+  tailscaleLogin: call('tailscale-login'),
+  tailscaleCancelLogin: call('tailscale-cancel-login'),
+  tailscaleOpenApp: call('tailscale-open-app'),
   // System
   systemGet: call('system-get'),
   systemSet: call('system-set'),
@@ -71,5 +80,6 @@ contextBridge.exposeInMainWorld('foyer', {
   onGame: on('game'),
   onToast: on('toast'),
   onUpdate: on('update'),
-  onTransfers: on('transfers')
+  onTransfers: on('transfers'),
+  onTailscale: on('tailscale')
 });
