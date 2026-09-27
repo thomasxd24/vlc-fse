@@ -19,5 +19,6 @@ pub mod system;
 pub mod tailscale;
 pub mod transfer_plan;
 pub mod transfers;
+pub mod updater;
 pub mod vdf;
 pub mod vlc;

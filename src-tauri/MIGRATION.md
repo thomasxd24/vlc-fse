@@ -137,6 +137,20 @@ Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each 
   `russh` is tokio-based) is better decided alongside the Tauri `app` crate's async runtime, and
   `test/remote.test.js` only verifies this module against a real embedded SFTP server, which would mean
   either embedding an SSH server in Rust too just to test against, or shipping an unverified client.
+- **`updater.js` → `updater.rs` (fully ported).** The self-updater — this is the actual channel real
+  users update through, so unlike most of this migration's stateful classes it's ported and tested in
+  full, using the same `ureq` + local `httpmock` approach as `metadata.rs`/`gameinfo.rs`. Covers: GitHub
+  Releases lookup and asset matching (preferring `Lounge-`-named assets over legacy `Foyer-`-named ones),
+  the API-rate-limit fallback to scraping github.com's redirect and verifying against `SHA256SUMS.txt`,
+  checksummed download with progress, the NSIS/zip/FSE-specific install commands (including generating
+  the `ZIP_APPLY`/`FSE_APPLY` PowerShell scripts with a BOM and CRLF line endings, and launching the FSE
+  installer through WMI to escape the MSIX package), and `wait_for_fse`'s status-file polling. All 9 JS
+  tests in `test/updater.test.js` ported 1:1, including the multi-step rate-limit-fallback scenario
+  against two separate mock servers (API and web) and the FSE status-file state machine test.
+  One JS→Rust adaptation worth calling out: `encodeURIComponent`'s unreserved character set (`- _ . ! ~ *
+  ' ( )` stay unescaped) had to be reproduced explicitly, since `percent_encoding`'s `NON_ALPHANUMERIC`
+  is more aggressive and would have mangled ordinary filenames like `Lounge-FSE-2.2.0.zip` in the
+  fallback download URL.
 
 ## What isn't done, and can't be verified from this machine
 
@@ -154,10 +168,10 @@ can be trusted:
   verify against.
 - `remote.js`'s actual `connect`/`connect_sftp`/`connect_ftp` (see above) — once an SSH/FTP crate and the
   `app` crate's async runtime are decided.
-- Porting the rest of `src/*.js`:
-  1. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
-     through, so it's ported last and tested hardest.
-  2. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).
+- `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking) — this is the
+  last piece of `src/*.js`, and it's really where the `app` crate begins: it doesn't have much logic of
+  its own to port so much as it needs to be *rebuilt* as Tauri commands and window/event setup once that
+  crate exists.
 - `scripts/build-fse.ps1` and `.github/workflows/build.yml` reworked for `cargo`/Tauri's bundler instead
   of `electron-builder`.
 - Retiring/porting `test/*.test.js` (currently `node --test` against the JS modules directly).
