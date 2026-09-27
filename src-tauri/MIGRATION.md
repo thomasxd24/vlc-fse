@@ -100,6 +100,19 @@ Workspace scaffold (`Cargo.toml`, `lounge-core` crate) plus these modules, each 
   function (`parse_netsh_output`) specifically so it *is* testable here, independent of actually running
   `netsh`. `SystemHelper` (spawns a long-lived PowerShell process, talks JSON-lines over stdin/stdout for
   volume/brightness/sleep) is deliberately not ported — same reasoning as `GameSession`/`VlcSession`.
+- **`tailscale.js` (pure/injectable parts) → `tailscale.rs`.** `parse_status`, `find_auth_url`,
+  `exe_of_command`, `locate_cli`/`find_cli` (Tailscale CLI discovery: standard folders, the Windows
+  service's registered `ImagePath`, Start-menu-app hints, `PATH`). All 4 relevant `test/tailscale.test.js`
+  tests ported 1:1, including the JS version's own dependency-injection style for `locate_cli` (`exists`,
+  `query` as injected closures) — a case where the JS was already written the testable way, so the port
+  is closer to mechanical than `steam.rs`'s `find_steam` was. Added `win_join`/`win_dirname` since the JS
+  version explicitly uses `path.win32` so Windows-style paths parse correctly under test regardless of
+  host OS; Rust's `std::path::Path` doesn't understand `\` as a separator unless actually compiled for
+  Windows, so this needed its own small platform-independent implementation.
+  The `Tailscale` class itself (`status`/`up`/`down`/`setExitNode`/`startLogin`/`cancelLogin` — all
+  subprocess-with-timeout or streaming-with-callback) is deliberately not ported: none of it has a test,
+  and it's better designed against the Tauri `app` crate's real async runtime than blocking-and-polled
+  here — same reasoning as `GameSession`/`VlcSession`/`SystemHelper`.
 
 ## What isn't done, and can't be verified from this machine
 
@@ -112,14 +125,14 @@ can be trusted:
   `main.js` currently registers via `ipcMain.handle`.
 - A drop-in replacement for `preload.js`'s `contextBridge`-exposed `api` object, so `renderer/**` needs
   little to no change (it already calls everything through that one `api.*` surface).
-- `GameSession`, `VlcSession` and `SystemHelper` (see above) — once the `app` crate's event/command shape
-  exists to design against, and (for `VlcSession`) a real VLC install to verify against.
+- `GameSession`, `VlcSession`, `SystemHelper` and the `Tailscale` class (see above) — once the `app`
+  crate's event/command shape exists to design against, and (for `VlcSession`) a real VLC install to
+  verify against.
 - Porting the rest of `src/*.js`, roughly in this order (least to most risky):
-  1. `tailscale.js`, `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, spawn `tailscale`,
-     do FTP transfers.
+  1. `transfers.js`, `transfer-plan.js`, `remote.js` — network-facing, do FTP transfers.
   2. `updater.js` — talks to GitHub Releases; be careful, this is the same channel real users update
      through, so it's ported last and tested hardest.
-  8. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).
+  3. `main.js`'s own orchestration (window lifecycle, IPC wiring, playback session tracking).
 - `scripts/build-fse.ps1` and `.github/workflows/build.yml` reworked for `cargo`/Tauri's bundler instead
   of `electron-builder`.
 - Retiring/porting `test/*.test.js` (currently `node --test` against the JS modules directly).

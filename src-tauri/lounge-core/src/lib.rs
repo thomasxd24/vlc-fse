@@ -15,5 +15,6 @@ pub mod parse;
 pub mod steam;
 pub mod store;
 pub mod system;
+pub mod tailscale;
 pub mod vdf;
 pub mod vlc;
