@@ -266,6 +266,7 @@ const ICON = {
   sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
   gamepad: svg('<path d="M6.5 7h11a4.5 4.5 0 0 1 4.4 5.5l-1.1 4.6a2.5 2.5 0 0 1-4.3 1.1L14.4 16H9.6l-2.1 2.2a2.5 2.5 0 0 1-4.3-1.1l-1.1-4.6A4.5 4.5 0 0 1 6.5 7z"/><path d="M8 10v3M6.5 11.5h3"/><circle cx="15.5" cy="11" r=".6" fill="currentColor"/><circle cx="17" cy="12.8" r=".6" fill="currentColor"/>'),
   steam: svg('<circle cx="15.5" cy="8.5" r="3.5"/><circle cx="8" cy="16" r="2.5"/><path d="M10.3 15l2.8-3.8M2 11.5l4.1 1.8"/>'),
+  gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
   search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/>'),
   pause: svg('<rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/>', true),
   rewind: svg('<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8.5v4l2.5 1.5"/>'),
@@ -370,10 +371,14 @@ const TABS = [
   { name: 'games', key: 'tab.games' },
   { name: 'movies', key: 'tab.movies' },
   { name: 'shows', key: 'tab.shows' },
-  { name: 'apps', key: 'tab.apps' },
-  { name: 'transfers', key: 'tab.transfers' },
-  { name: 'search', key: 'tab.search' },
-  { name: 'settings', key: 'tab.settings' }
+  { name: 'apps', key: 'tab.apps' }
+];
+// The other top-level pages sit as icons beside the clock rather than as tabs: Search (also on Y), Transfers
+// (once there's a server or a transfer to show) and Settings. LB/RB only cycle through TABS.
+const TOOLS = [
+  { name: 'search', key: 'tab.search', icon: 'search' },
+  { name: 'transfers', key: 'tab.transfers', icon: 'download', when: () => (S.servers || []).length || (S.transfers || []).length },
+  { name: 'settings', key: 'tab.settings', icon: 'gear' }
 ];
 
 const stack = [{ name: 'home' }];
@@ -400,8 +405,10 @@ function go(r) {
 function switchTab(name) {
   if (stack.length === 1 && route().name === name) return;
   saveView();
-  const before = TABS.findIndex((tab) => tab.name === stack[0].name);
-  const after = TABS.findIndex((tab) => tab.name === name);
+  // The icon pages (Search, Transfers, Settings) count as sitting after the tabs, as they do on screen.
+  const order = [...TABS, ...TOOLS].map((tab) => tab.name);
+  const before = order.indexOf(stack[0].name);
+  const after = order.indexOf(name);
   document.body.dataset.nav = stack.length > 1 ? 'back' : after > before ? 'right' : 'left';
   stack.length = 0;
   stack.push({ name });
@@ -429,7 +436,7 @@ function back() {
   if (route().name !== 'home') {
     if (!inTabs && Nav.mode() !== 'touch') {
       // First Back from inside a tab jumps up to the tab bar, the second goes Home.
-      Nav.focus($(`#tabs [data-tab="${route().name}"]`));
+      Nav.focus($(`#topbar [data-tab="${route().name}"]`));
       return;
     }
     switchTab('home');
@@ -478,6 +485,13 @@ function renderTabs() {
     (tab) =>
       `<button class="tab focusable ${tab.name === root && topLevel ? 'active' : ''}" ${tab.name === root ? 'data-nav-default' : ''} data-tab="${tab.name}" data-key="tab-${tab.name}">${h(t(tab.key))}</button>`
   ).join('');
+  const busy = (S.transfers || []).some((j) => j.status === 'running' || j.status === 'queued');
+  $('#tools').innerHTML = TOOLS.filter((tool) => !tool.when || tool.when() || tool.name === root)
+    .map(
+      (tool) =>
+        `<button class="icon-btn tool focusable ${tool.name === root && topLevel ? 'active' : ''} ${tool.name === 'transfers' && busy ? 'busy' : ''}" data-tab="${tool.name}" data-key="tab-${tool.name}" aria-label="${h(t(tool.key))}" title="${h(t(tool.key))}">${ICON[tool.icon]}</button>`
+    )
+    .join('');
   document.body.classList.toggle('detail', !topLevel);
   requestAnimationFrame(moveTabIndicator);
 }
@@ -518,9 +532,9 @@ function render({ restore = false, focusTab = false, keepFocus = false, animate 
   let target = null;
   if (keepFocus && prevInTop) target = $(`#topbar [data-key="${CSS.escape(prevFocusKey || '')}"]`);
   else if (restore || keepFocus) target = restoreView(r);
-  if (!target && focusTab) target = $(`#tabs [data-tab="${r.name}"]`);
+  if (!target && focusTab) target = $(`#topbar [data-tab="${r.name}"]`);
   if (!target) target = page.querySelector('[data-autofocus]') || page.querySelector('.focusable');
-  if (!target) target = $(`#tabs [data-tab="${stack[0].name}"]`);
+  if (!target) target = $(`#topbar [data-tab="${stack[0].name}"]`);
   Nav.focus(target, { scroll: !(restore || keepFocus) });
   Hints.update();
   persistUiState();

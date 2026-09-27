@@ -1027,7 +1027,8 @@ Nav.onAction((btn) => {
     switchTab('search');
   } else if (btn === 'lb' || btn === 'rb') {
     const i = TABS.findIndex((tab) => tab.name === stack[0].name);
-    const next = TABS[(i + (btn === 'rb' ? 1 : TABS.length - 1)) % TABS.length];
+    // From Search, Transfers or Settings (not tabs): RB goes to the first tab, LB to the last.
+    const next = i < 0 ? TABS[btn === 'rb' ? 0 : TABS.length - 1] : TABS[(i + (btn === 'rb' ? 1 : TABS.length - 1)) % TABS.length];
     Sound.move();
     Nav.haptic(0.3, 14);
     switchTab(next.name);

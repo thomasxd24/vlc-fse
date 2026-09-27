@@ -3368,3 +3368,40 @@ body.pad-testing #hints {
     display: none;
   }
 }
+
+/* ---------- Search, Transfers and Settings as icons beside the clock ---------- */
+
+#tools {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+#tools .tool {
+  background: transparent;
+  color: var(--muted);
+  position: relative;
+}
+#tools .tool:hover,
+#tools .tool:focus {
+  background: var(--surface-2);
+  color: var(--text);
+}
+#tools .tool.active {
+  background: var(--surface);
+  color: var(--text);
+}
+/* A transfer in progress: a small accent dot on the Transfers icon. */
+#tools .tool.busy::after {
+  content: '';
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+body.detail #tools {
+  display: none;
+}
