@@ -1,6 +1,6 @@
 'use strict';
 
-/* global S, idx, prefs, api, Stats, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
+/* global S, idx, prefs, api, Stats, modals, fmtSize, renderStatus, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
    ICON, Backdrop, VIEWS, page, route, render, Nav, $, keyboardHtml */
 
 // ============================================================================ Cards
@@ -1050,3 +1050,163 @@ VIEWS.stats = {
     }
   }
 };
+
+// ============================================================================ Transfers (servers & downloads)
+
+function jobStatus(j) {
+  if (j.status === 'running') {
+    const bits = [t('xfer.running', { n: j.fileIndex + 1, total: j.files }), t('xfer.of', { done: fmtSize(j.bytesDone), total: fmtSize(j.bytesTotal) })];
+    if (j.rate) bits.push(t('xfer.rate', { rate: fmtSize(j.rate) }));
+    return bits.join(' · ');
+  }
+  if (j.status === 'queued') return `${t('xfer.queued')} · ${fmtSize(j.bytesTotal)}`;
+  if (j.status === 'done') return j.skipped ? t('xfer.doneSkipped', { n: j.skipped }) : `${t('xfer.done')} · ${fmtSize(j.bytesTotal)}`;
+  if (j.status === 'error') return t('xfer.error', { message: remoteErrorText(j.error) });
+  return t('xfer.cancelled');
+}
+
+/** Error codes from main (e.g. "auth") read as sentences; anything else is shown as is. */
+function remoteErrorText(code) {
+  const key = `err.remote.${code}`;
+  const s = t(key);
+  return s === key ? String(code || '') : s;
+}
+
+function jobPct(j) {
+  return j.bytesTotal ? Math.min(100, Math.floor((j.bytesDone / j.bytesTotal) * 100)) : j.status === 'done' ? 100 : 0;
+}
+
+function jobRow(j) {
+  const active = j.status === 'running' || j.status === 'queued';
+  return `
+    <button class="setting job focusable ${j.status}" data-act="job-menu" data-id="${j.id}" data-job="${j.id}" data-opts="job:${j.id}" data-key="job-${j.id}">
+      <span class="lib-type">${h(j.kind === 'tv' ? t('lib.tv') : t('tab.movies'))}</span>
+      <div class="s-label">
+        <div class="s-name">${h(j.title)}</div>
+        <div class="s-desc job-desc">${h(jobStatus(j))}</div>
+        ${active || j.status === 'done' ? `<div class="job-bar"><i style="width:${jobPct(j)}%"></i></div>` : ''}
+      </div>
+      <div class="s-value job-pct">${active ? `${jobPct(j)}%` : j.status === 'done' ? ICON.check : ''}</div>
+    </button>`;
+}
+
+VIEWS.transfers = {
+  render() {
+    const jobs = S.transfers || [];
+    const servers = S.servers || [];
+    const finished = jobs.some((j) => j.status !== 'running' && j.status !== 'queued');
+    return `
+      <div class="page settings transfers" data-scroll="transfers">
+        <div class="page-head" style="padding-left:0"><h1 class="page-title">${h(t('tab.transfers'))}</h1></div>
+        <div class="settings-grid" data-nav-group>
+          ${
+            jobs.length
+              ? `<div class="section-title">${h(t('xfer.queue'))}</div>
+                 ${jobs.map(jobRow).join('')}
+                 ${finished ? `<div class="settings-actions" data-nav-group><button class="btn small focusable" data-act="clear-transfers" data-key="xfer-clear">${ICON.trash}${h(t('xfer.clear'))}</button></div>` : ''}`
+              : ''
+          }
+          <div class="section-title">${h(t('xfer.servers'))}</div>
+          ${servers
+            .map(
+              (x) => `
+            <button class="setting focusable" data-act="open-server" data-id="${x.id}" data-opts="server:${x.id}" data-key="srv-${x.id}">
+              <span class="lib-type">${h(x.protocol.toUpperCase())}</span>
+              <div class="s-label"><div class="s-name">${h(x.name)}</div><div class="s-desc">${h(`${x.username ? x.username + '@' : ''}${x.host}:${x.port}${x.root ? '  ·  ' + x.root : ''}`)}</div></div>
+              <div class="s-value">${ICON.server}</div>
+            </button>`
+            )
+            .join('')}
+          ${servers.length ? '' : `<p class="xfer-intro">${h(t('xfer.noServers'))}</p>`}
+          <div class="settings-actions" data-nav-group>
+            <button class="btn small ${servers.length ? '' : 'primary'} focusable" data-act="add-server" data-key="add-server" ${servers.length || jobs.length ? '' : 'data-autofocus'}>${ICON.plus}${h(t('xfer.addServer'))}</button>
+          </div>
+        </div>
+      </div>`;
+  },
+  mount() {
+    Backdrop.set(null);
+  }
+};
+
+/** Progress ticks update the rows in place; a job appearing, finishing or disappearing re-renders the page. */
+let transferSig = '';
+function onTransfers(st) {
+  S.transfers = st;
+  renderStatus();
+  const sig = st.map((j) => `${j.id}:${j.status}`).join();
+  const changed = sig !== transferSig;
+  transferSig = sig;
+  if (route().name !== 'transfers' || modals.length) return;
+  if (changed) return render({ keepFocus: true });
+  for (const j of st) {
+    const row = page.querySelector(`[data-job="${j.id}"]`);
+    if (!row) continue;
+    row.querySelector('.job-desc').textContent = jobStatus(j);
+    const bar = row.querySelector('.job-bar i');
+    if (bar) bar.style.width = `${jobPct(j)}%`;
+    const p = row.querySelector('.job-pct');
+    if (p && (j.status === 'running' || j.status === 'queued')) p.textContent = `${jobPct(j)}%`;
+  }
+}
+
+const joinRemote = (dir, name) => `${String(dir || '/').replace(/\/+$/, '')}/${name}`;
+
+VIEWS.remote = {
+  render(r) {
+    const srv = (S.servers || []).find((x) => x.id === r.serverId);
+    const title = srv ? srv.name : '';
+    let body;
+    if (r.error) {
+      body = `
+        <div class="remote-state">
+          <p>${h(r.error)}</p>
+          <div class="actions" data-nav-group><button class="btn primary focusable" data-act="remote-retry" data-key="remote-retry" data-autofocus>${ICON.refresh}${h(t('xfer.retry'))}</button></div>
+        </div>`;
+    } else if (!r.entries) {
+      body = `<div class="remote-state"><span class="spinner"></span> ${h(t('xfer.connecting'))}</div>`;
+    } else if (!r.entries.length) {
+      body = `<div class="remote-state">${h(t('xfer.empty'))}</div>`;
+    } else {
+      body = `
+        <div class="remote-list" data-nav-group>
+          ${r.entries
+            .map((e, i) => {
+              const video = !e.isDir && /\.(mkv|mp4|m4v|avi|mov|wmv|mpg|mpeg|ts|m2ts|webm|flv|vob|ogv|3gp|divx|iso)$/i.test(e.name);
+              const icon = e.isDir ? ICON.folder : video ? ICON.play : ICON.file;
+              return `
+                <button class="remote-row focusable ${e.isDir ? 'dir' : video ? 'video' : 'other'}" data-act="remote-open" data-index="${i}" data-opts="remote:${i}" data-key="re-${h(e.name)}" ${i === 0 ? 'data-autofocus' : ''}>
+                  <span class="remote-ico">${icon}</span>
+                  <span class="remote-name">${h(e.name)}</span>
+                  <span class="remote-size">${e.isDir ? '' : h(fmtSize(e.size))}</span>
+                </button>`;
+            })
+            .join('')}
+        </div>`;
+    }
+    return `
+      <div class="page remote" data-scroll="remote-${h(r.path || '')}">
+        <div class="page-head"><h1 class="page-title">${h(title)}</h1><div class="page-count remote-path">${h(r.path || '')}</div></div>
+        ${r.entries && r.entries.length ? `<div class="toolbar" data-nav-group><button class="chip accent focusable" data-act="remote-download-here" data-key="remote-here">${ICON.download}${h(t('xfer.downloadFolder'))}</button></div>` : ''}
+        ${body}
+      </div>`;
+  },
+  mount(r) {
+    Backdrop.set(null);
+    if (!r.entries && !r.error && !r.loading) loadRemote(r);
+  }
+};
+
+async function loadRemote(r) {
+  r.loading = true;
+  const res = await api.remoteList({ serverId: r.serverId, path: r.path });
+  r.loading = false;
+  if (res.ok) {
+    r.path = res.path;
+    r.entries = res.entries;
+    r.error = null;
+  } else {
+    r.error = t(res.errorKey, res.vars);
+  }
+  if (route() === r) render({ keepFocus: true });
+}

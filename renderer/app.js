@@ -126,6 +126,23 @@ async function openOptions(spec) {
     if (v === 'play') playEpisode(a, e.id, e.progress.resumable ? 'resume' : 'start');
     else if (v === 'watched') api.setWatched({ kind: 'episode', showId: a, id: e.id, watched: !e.progress.watched });
     else if (v === 'show') go({ name: 'show', id: a, season: e.season });
+  } else if (kind === 'server') {
+    serverMenu(a);
+  } else if (kind === 'job') {
+    jobMenu(a);
+  } else if (kind === 'remote') {
+    const r = route();
+    const e = r.entries && r.entries[Number(a)];
+    if (!e) return;
+    const v = await choose({
+      title: e.name,
+      choices: [
+        ...(e.isDir ? [{ label: t('xfer.open'), value: 'open', icon: ICON.folder, primary: true }] : []),
+        { label: t('xfer.download'), value: 'download', icon: ICON.download, primary: !e.isDir }
+      ]
+    });
+    if (v === 'open') go({ name: 'remote', serverId: r.serverId, path: joinRemote(r.path, e.name) });
+    else if (v === 'download') downloadRemote(r.serverId, joinRemote(r.path, e.name), e.isDir);
   } else if (kind === 'season') {
     const s = idx.shows.get(a);
     const n = Number(b);
@@ -187,6 +204,195 @@ async function chooseItemLanguages(item) {
     await refreshState();
     item = idx.movies.get(item.id) || idx.shows.get(item.id);
     if (!item) return;
+  }
+}
+
+// ============================================================================ Servers & transfers
+
+const PROTOCOL_LABELS = { sftp: 'SFTP', ftp: 'FTP', ftps: 'FTPS' };
+
+/** Add (no argument) or edit a server; saving connects once to check it and to learn its host key. */
+async function editServer(existing) {
+  const draft = existing
+    ? { ...existing }
+    : { name: '', protocol: 'sftp', host: '', port: 22, username: '', authType: 'password', keyPath: '', root: '', insecureTls: false };
+  let secret; // undefined: keep what's stored
+  for (;;) {
+    const sftp = draft.protocol === 'sftp';
+    const usesKey = sftp && draft.authType === 'key';
+    const hasSecret = secret !== undefined ? Boolean(secret) : Boolean(existing && existing.hasSecret);
+    const row = (field, label, value, icon) => ({ label: `${label}: ${value}`, value: field, icon });
+    const choices = [
+      row('protocol', t('srv.protocol'), PROTOCOL_LABELS[draft.protocol], ICON.link),
+      row('host', t('srv.host'), draft.host || t('srv.notSet'), ICON.server),
+      row('port', t('srv.port'), String(draft.port), ICON.server),
+      row('username', t('srv.user'), draft.username || t('srv.notSet'), ICON.edit),
+      ...(sftp ? [row('authType', t('srv.auth'), usesKey ? t('srv.authKey') : t('srv.authPassword'), ICON.edit)] : []),
+      ...(usesKey ? [row('keyPath', t('srv.keyFile'), draft.keyPath || t('srv.notSet'), ICON.file)] : []),
+      row('secret', usesKey ? t('srv.passphrase') : t('srv.password'), hasSecret ? t('srv.set') : t('srv.notSet'), ICON.edit),
+      row('root', t('srv.root'), draft.root || t('srv.home'), ICON.folder),
+      ...(draft.protocol === 'ftps' ? [row('insecureTls', t('srv.tls'), draft.insecureTls ? t('srv.yes') : t('srv.no'), ICON.check)] : []),
+      row('name', t('srv.name'), draft.name || draft.host || t('srv.notSet'), ICON.edit),
+      { label: t('srv.save'), value: 'save', icon: ICON.check, primary: true },
+      { label: t('common.cancel'), value: null }
+    ];
+    const v = await choose({
+      title: existing ? t('srv.edit', { name: existing.name }) : t('srv.new'),
+      text: draft.protocol === 'ftp' ? t('srv.ftpWarning') : '',
+      choices
+    });
+    if (!v) return null;
+    if (v === 'protocol') {
+      const p = await choose({ title: t('srv.protocol'), choices: Object.entries(PROTOCOL_LABELS).map(([value, label]) => ({ label, value, icon: value === draft.protocol ? ICON.check : '' })) });
+      if (p && p !== draft.protocol) {
+        // Keep a custom port; swap the default one along with the protocol.
+        if (Number(draft.port) === (draft.protocol === 'sftp' ? 22 : 21)) draft.port = p === 'sftp' ? 22 : 21;
+        draft.protocol = p;
+      }
+    } else if (v === 'authType') {
+      draft.authType = usesKey ? 'password' : 'key';
+    } else if (v === 'keyPath') {
+      const f = await api.pickKeyFile();
+      if (f) draft.keyPath = f;
+    } else if (v === 'insecureTls') {
+      draft.insecureTls = !draft.insecureTls;
+    } else if (v === 'secret') {
+      const val = await promptText({ title: usesKey ? t('srv.passphrase') : t('srv.password'), symbols: true, secret: true });
+      if (val !== null) secret = val;
+    } else if (v === 'port') {
+      const val = await promptText({ title: t('srv.port'), value: String(draft.port) });
+      if (val !== null && /^\d+$/.test(val.trim())) draft.port = Number(val.trim());
+    } else if (['host', 'username', 'root', 'name'].includes(v)) {
+      const labels = { host: 'srv.host', username: 'srv.user', root: 'srv.root', name: 'srv.name' };
+      const placeholders = { host: 'nas.local', username: '', root: '/media/downloads', name: draft.host };
+      const val = await promptText({ title: t(labels[v]), value: draft[v] || '', placeholder: placeholders[v], symbols: true });
+      if (val !== null) draft[v] = val.trim();
+    } else if (v === 'save') {
+      const res = await api.saveServer({ ...draft, secret });
+      if (!res.ok) {
+        toast(t(res.errorKey, res.vars), 'error');
+        continue;
+      }
+      draft.id = res.id;
+      existing = existing || { ...draft, hasSecret: Boolean(secret) };
+      secret = undefined;
+      existing.hasSecret = hasSecret;
+      toast(t('xfer.connecting'));
+      const test = await api.testServer(res.id);
+      await refreshState();
+      if (test.ok) {
+        toast(t('xfer.connected', { name: draft.name || draft.host }));
+        return res.id;
+      }
+      toast(t(test.errorKey, test.vars), 'error');
+    }
+  }
+}
+
+async function serverMenu(id) {
+  const srv = (S.servers || []).find((x) => x.id === id);
+  if (!srv) return;
+  const v = await choose({
+    title: srv.name,
+    text: srv.hostKey ? t('xfer.hostKey', { key: srv.hostKey.match(/.{1,16}/g).join(' ') }) : '',
+    choices: [
+      { label: t('xfer.browse'), value: 'browse', icon: ICON.folder, primary: true },
+      { label: t('xfer.edit'), value: 'edit', icon: ICON.edit },
+      { label: t('xfer.test'), value: 'test', icon: ICON.refresh },
+      ...(srv.hostKey ? [{ label: t('xfer.forgetKey'), value: 'forget', icon: ICON.restart }] : []),
+      { label: t('xfer.removeServer'), value: 'remove', icon: ICON.trash, danger: true }
+    ]
+  });
+  if (v === 'browse') go({ name: 'remote', serverId: id, path: null });
+  else if (v === 'edit') editServer(srv);
+  else if (v === 'test') {
+    toast(t('xfer.connecting'));
+    const r = await api.testServer(id);
+    toast(r.ok ? t('xfer.connected', { name: srv.name }) : t(r.errorKey, r.vars), r.ok ? 'info' : 'error');
+  } else if (v === 'forget') {
+    await api.forgetHostKey(id);
+    toast(t('xfer.keyForgotten'));
+  } else if (v === 'remove') {
+    const ok = await choose({
+      title: t('xfer.removeConfirm', { name: srv.name }),
+      text: t('xfer.removeText'),
+      choices: [
+        { label: t('xfer.removeServer'), value: true, danger: true, icon: ICON.trash },
+        { label: t('common.cancel'), value: false }
+      ]
+    });
+    if (ok) await api.removeServer(id);
+  }
+}
+
+async function jobMenu(id) {
+  const j = (S.transfers || []).find((x) => x.id === id);
+  if (!j) return;
+  const active = j.status === 'running' || j.status === 'queued';
+  const v = await choose({
+    title: j.title,
+    text: [jobStatus(j), ...(j.folders || []).slice(0, 3)].join('\n'),
+    choices: active
+      ? [{ label: t('xfer.cancel'), value: 'cancel', icon: ICON.stop, danger: true }, { label: t('common.cancel'), value: null }]
+      : [
+          ...(j.status === 'error' || j.status === 'cancelled' ? [{ label: t('xfer.retry'), value: 'retry', icon: ICON.refresh, primary: true }] : []),
+          { label: t('xfer.remove'), value: 'remove', icon: ICON.trash }
+        ]
+  });
+  if (v === 'cancel') api.cancelTransfer(id);
+  else if (v === 'retry') api.retryTransfer(id);
+  else if (v === 'remove') api.clearTransfers(id);
+}
+
+/** Work out where a remote file or folder would go, confirm it, and queue the download. */
+async function downloadRemote(serverId, remotePath, isDir) {
+  const name = remotePath.split('/').pop();
+  const req = { serverId, path: remotePath, isDir, kind: undefined, library: undefined };
+  for (;;) {
+    toast(t('xfer.planning'));
+    const plan = await api.remotePlan(req);
+    if (!plan.ok) return toast(t(plan.errorKey, plan.vars), 'error');
+    const other = plan.kind === 'tv' ? { label: t('xfer.asMovie'), value: 'movie', icon: ICON.edit } : { label: t('xfer.asShow'), value: 'tv', icon: ICON.edit };
+    if (!plan.root) {
+      const v = await choose({
+        title: t('xfer.planTitle', { name }),
+        text: t(plan.kind === 'tv' ? 'err.remote.noTvLibrary' : 'err.remote.noMovieLibrary'),
+        choices: [{ label: t('xfer.addLibrary'), value: 'add', icon: ICON.plus, primary: true }, other, { label: t('common.cancel'), value: null }]
+      });
+      if (!v) return;
+      if (v === 'add') await addLibrary(plan.kind === 'tv' ? 'tv' : 'movies');
+      else req.kind = v;
+      continue;
+    }
+    const subs = plan.files - plan.videos;
+    const counts = [t(plan.kind === 'tv' ? 'xfer.planEpisodes' : 'xfer.planMovies', { n: plan.videos }), ...(subs ? [t('xfer.planSubs', { n: subs })] : []), fmtSize(plan.totalSize)].join(' · ');
+    const into = plan.folders.length > 1 ? t('xfer.planMore', { path: plan.folders[0], n: plan.folders.length - 1 }) : t('xfer.planInto', { path: plan.folders[0] || plan.root });
+    const v = await choose({
+      title: t('xfer.planTitle', { name }),
+      text: `${counts}\n${into}`,
+      choices: [
+        { label: t('xfer.download'), value: 'go', icon: ICON.download, primary: true },
+        other,
+        ...(plan.roots.length > 1 ? [{ label: t('xfer.otherFolder'), value: 'folder', icon: ICON.folder }] : []),
+        { label: t('common.cancel'), value: null }
+      ]
+    });
+    if (!v) return;
+    if (v === 'go') {
+      const r = await api.remoteDownload({ ...req, kind: plan.kind, library: plan.root });
+      if (!r.ok) return toast(t(r.errorKey, r.vars), 'error');
+      return toast(t('xfer.added'));
+    }
+    if (v === 'folder') {
+      const f = await choose({ title: t('xfer.otherFolder'), choices: plan.roots.map((p) => ({ label: p, value: p, icon: p === plan.root ? ICON.check : ICON.folder })) });
+      if (f) {
+        req.library = f;
+        req.kind = plan.kind;
+      }
+      continue;
+    }
+    req.kind = v;
+    req.library = undefined;
   }
 }
 
@@ -395,6 +601,30 @@ const ACTIONS = {
   options: (d) => openOptions(d.opts),
   'edit-game': (d) => editGame(d.id),
   'add-game': () => addGame(),
+  'add-server': async () => {
+    const id = await editServer(null);
+    if (id) go({ name: 'remote', serverId: id, path: null });
+  },
+  'open-server': (d) => go({ name: 'remote', serverId: d.id, path: null }),
+  'job-menu': (d) => jobMenu(d.id),
+  'clear-transfers': () => api.clearTransfers(),
+  'remote-open': (d) => {
+    const r = route();
+    const e = r.entries && r.entries[Number(d.index)];
+    if (!e) return;
+    if (e.isDir) go({ name: 'remote', serverId: r.serverId, path: joinRemote(r.path, e.name) });
+    else downloadRemote(r.serverId, joinRemote(r.path, e.name), false);
+  },
+  'remote-download-here': () => {
+    const r = route();
+    downloadRemote(r.serverId, r.path, true);
+  },
+  'remote-retry': () => {
+    const r = route();
+    r.error = null;
+    r.entries = null;
+    render({ keepFocus: true });
+  },
   'open-stats': () => openStats(),
   screenshot: (d) => showScreenshot(d.id, Number(d.index)),
   'see-all': (d) => {
@@ -816,6 +1046,7 @@ function onState(next) {
     renderGameLayer();
   });
   api.onUpdate(onUpdateState);
+  api.onTransfers(onTransfers);
   if (S.update && S.update.status === 'available') maybePromptUpdate();
   api.onToast((m) => toast(m.key ? t(m.key, m.vars) : m.text, m.kind));
   for (const m of initial.toasts || []) toast(t(m.key, m.vars), m.kind);

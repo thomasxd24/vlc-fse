@@ -41,6 +41,18 @@ contextBridge.exposeInMainWorld('foyer', {
   pickVlc: call('pick-vlc'),
   detectVlc: call('detect-vlc'),
   clearMetadata: call('clear-metadata'),
+  // Servers & transfers
+  saveServer: call('server-save'),
+  removeServer: call('server-remove'),
+  forgetHostKey: call('server-forget-key'),
+  testServer: call('server-test'),
+  pickKeyFile: call('pick-key-file'),
+  remoteList: call('remote-list'),
+  remotePlan: call('remote-plan'),
+  remoteDownload: call('remote-download'),
+  cancelTransfer: call('transfer-cancel'),
+  clearTransfers: call('transfer-clear'),
+  retryTransfer: call('transfer-retry'),
   // System
   systemGet: call('system-get'),
   systemSet: call('system-set'),
@@ -58,5 +70,6 @@ contextBridge.exposeInMainWorld('foyer', {
   onNowPlaying: on('now-playing'),
   onGame: on('game'),
   onToast: on('toast'),
-  onUpdate: on('update')
+  onUpdate: on('update'),
+  onTransfers: on('transfers')
 });

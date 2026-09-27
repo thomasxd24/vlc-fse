@@ -58,7 +58,12 @@
       "createDesktopShortcut": true,
       "shortcutName": "Foyer",
       "artifactName": "${productName}-Setup-${version}.${ext}"
-    }
+    },
+    "npmRebuild": false
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "basic-ftp": "^6.2.1",
+    "ssh2": "^1.17.0"
+  }
 }

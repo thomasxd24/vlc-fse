@@ -16,6 +16,8 @@ const S = {
   gameInfoStatus: {},
   nowPlaying: null,
   game: null,
+  servers: [],
+  transfers: [],
   platform: 'win32',
   systemControls: false,
   fsePackage: false,
@@ -193,6 +195,17 @@ function seasonName(n) {
   return n === 0 ? t('season.specials') : t('season.n', { n });
 }
 
+function fmtSize(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = bytes || 0;
+  let i = 0;
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toLocaleString(S.lang, { maximumFractionDigits: v < 10 && i ? 1 : 0 })} ${units[i]}`;
+}
+
 function pct(pr) {
   return pr.length ? Math.min(100, (pr.time / pr.length) * 100) : 0;
 }
@@ -242,7 +255,10 @@ const ICON = {
   forward: svg('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><path d="M12 8.5v4l2.5 1.5"/>'),
   next: svg('<path d="M5 5.5v13a1 1 0 0 0 1.5.86L16 13.5v5h2.5v-13H16v5L6.5 4.64A1 1 0 0 0 5 5.5z"/>', true),
   subs: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M13 15h4M7 11.5h2M11 11.5h6"/>'),
-  chart: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>')
+  chart: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+  server: svg('<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/>'),
+  download: svg('<path d="M12 4v11"/><path d="M7 10.5l5 5 5-5"/><path d="M4 20h16"/>'),
+  file: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>')
 };
 
 // ============================================================================ Sound
@@ -332,6 +348,7 @@ const TABS = [
   { name: 'games', key: 'tab.games' },
   { name: 'movies', key: 'tab.movies' },
   { name: 'shows', key: 'tab.shows' },
+  { name: 'transfers', key: 'tab.transfers' },
   { name: 'search', key: 'tab.search' },
   { name: 'settings', key: 'tab.settings' }
 ];
@@ -426,7 +443,7 @@ function persistUiState() {
   clearTimeout(uiStateTimer);
   uiStateTimer = setTimeout(() => {
     saveView();
-    const clean = stack.map(({ name, id, season, query, focusKey, scroll }) => ({ name, id, season, query, focusKey, scroll }));
+    const clean = stack.map(({ name, id, season, query, serverId, path, focusKey, scroll }) => ({ name, id, season, query, serverId, path, focusKey, scroll }));
     api.saveUiState({ stack: clean });
   }, 300);
 }
@@ -561,24 +578,33 @@ function choose({ title, text, choices }) {
 }
 
 const KEYS = 'abcdefghijklmnopqrstuvwxyz1234567890'.split('');
+const SYMBOL_KEYS = ['.', '-', '_', '/', '@', ':', '~', '!', '#', '$', '%', '&', '*', '+', '=', '?'];
 
-/** On-screen keyboard markup (letters, digits, space, delete, clear) for controller typing. */
-function keyboardHtml(extraKeys = '') {
+/**
+ * On-screen keyboard markup (letters, digits, space, delete, clear) for controller typing. `symbols` adds
+ * punctuation and a Shift key, for addresses, paths and passwords.
+ */
+function keyboardHtml(extraKeys = '', { symbols = false } = {}) {
+  const keys = symbols ? [...KEYS, ...SYMBOL_KEYS] : KEYS;
   return `
-    <div class="keyboard" data-nav-group>
-      ${KEYS.map((k) => `<button class="key focusable" data-k="${k}" data-key="k-${k}" ${k === 'a' ? 'data-autofocus' : ''}>${k}</button>`).join('')}
+    <div class="keyboard ${symbols ? 'sym' : ''}" data-nav-group>
+      ${keys.map((k) => `<button class="key focusable" data-k="${h(k)}" data-key="k-${h(k)}" ${k === 'a' ? 'data-autofocus' : ''}>${h(k)}</button>`).join('')}
+      ${symbols ? `<button class="key wide focusable" data-k="shift" data-key="k-shift">⇧ ${h(t('kb.shift'))}</button>` : ''}
       <button class="key wide focusable" data-k=" " data-key="k-space">${h(t('kb.space'))}</button>
       <button class="key wide focusable" data-k="back" data-key="k-back">${h(t('kb.delete'))}</button>
       ${extraKeys || `<button class="key wide full focusable" data-k="clear" data-key="k-clear">${h(t('kb.clear'))}</button>`}
     </div>`;
 }
 
-/** Ask for a line of text with an on-screen keyboard (physical and touch keyboards work too). */
-function promptText({ title, value = '', placeholder: ph = '', ok }) {
+/**
+ * Ask for a line of text with an on-screen keyboard (physical and touch keyboards work too). `symbols` adds
+ * punctuation and Shift to the keyboard; `secret` hides what's typed.
+ */
+function promptText({ title, value = '', placeholder: ph = '', ok, symbols = false, secret = false }) {
   const html = `
     <h2>${h(title)}</h2>
-    <input class="text-input focusable" id="prompt-input" value="${h(value)}" placeholder="${h(ph)}" spellcheck="false" autocomplete="off">
-    ${keyboardHtml(`<button class="key wide focusable" data-k="clear" data-key="k-clear">${h(t('kb.clear'))}</button><button class="key wide ok focusable" data-k="ok" data-key="k-ok">${h(ok || t('common.ok'))}</button>`)}`;
+    <input class="text-input focusable" id="prompt-input" type="${secret ? 'password' : 'text'}" value="${h(value)}" placeholder="${h(ph)}" spellcheck="false" autocomplete="off">
+    ${keyboardHtml(`<button class="key wide focusable" data-k="clear" data-key="k-clear">${h(t('kb.clear'))}</button><button class="key wide ok focusable" data-k="ok" data-key="k-ok">${h(ok || t('common.ok'))}</button>`, { symbols })}`;
   return openModal(html, {
     onMount(root, close) {
       const input = root.querySelector('#prompt-input');
@@ -587,9 +613,10 @@ function promptText({ title, value = '', placeholder: ph = '', ok }) {
         if (!k) return;
         const key = k.dataset.k;
         if (key === 'ok') return close(input.value);
-        if (key === 'back') input.value = input.value.slice(0, -1);
+        if (key === 'shift') root.classList.toggle('caps');
+        else if (key === 'back') input.value = input.value.slice(0, -1);
         else if (key === 'clear') input.value = '';
-        else input.value += key;
+        else input.value += root.classList.contains('caps') ? key.toUpperCase() : key;
       });
       input.addEventListener('change', () => close(input.value));
       // Typing on a physical keyboard while a key is focused goes straight into the field.
@@ -688,8 +715,13 @@ function renderStatus() {
   const el = $('#status');
   let text = '';
   const up = S.update;
+  const xfer = (S.transfers || []).filter((j) => j.status === 'running' || j.status === 'queued');
   if (up && up.status === 'downloading' && !$('#update-layer').innerHTML) text = t('upd.downloadingShort', { n: up.progress || 0 });
-  else if (S.scanning) text = t('status.scanning');
+  else if (xfer.length) {
+    const total = xfer.reduce((n, j) => n + j.bytesTotal, 0);
+    const done = xfer.reduce((n, j) => n + j.bytesDone, 0);
+    text = t('xfer.statusShort', { n: total ? Math.floor((done / total) * 100) : 0 });
+  } else if (S.scanning) text = t('status.scanning');
   else if (S.metaStatus && S.metaStatus.running) text = t('status.artwork');
   else if (S.gameInfoStatus && S.gameInfoStatus.running) text = t('status.gameInfo');
   el.hidden = !text;

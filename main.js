@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, powerSaveBlocker, safeStorage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -13,6 +13,10 @@ const { GameInfo } = require('./src/gameinfo');
 const { GameSession, titleFromExe, manualId } = require('./src/games');
 const { SystemHelper, wifi, power, setPriority, hasBattery } = require('./src/system');
 const { Updater, detectInstallType } = require('./src/updater');
+const remote = require('./src/remote');
+const { planTransfer, SUB_EXTENSIONS } = require('./src/transfer-plan');
+const { TransferQueue } = require('./src/transfers');
+const { isVideoFile, stripExtension } = require('./src/parse');
 
 const REPO = 'thomasxd24/vlc-fse';
 const UPDATE_FIRST_CHECK_MS = 30 * 1000;
@@ -59,6 +63,8 @@ let progressStore;
 let metaStore;
 let gamesStore; // { manual: [], overrides: {}, stats: {} }
 let gameInfoStore;
+let serversStore; // { servers: [{ id, name, protocol, host, port, username, authType, keyPath, secret, root, hostKey, insecureTls }] }
+let transfers = null;
 let statsStore; // { sessions: [{ kind: 'game' | 'watch', id, start, minutes }] }
 let prefsStore; // { favorites: {}, hidden: {}, languages: { [movie or show id]: {audio, subs} } }
 let metadata;
@@ -289,6 +295,8 @@ function state() {
     systemControls: helper.supported,
     update: updater ? updater.state : null,
     hasBattery: batteryPresent,
+    servers: serversStore.get('servers').map(publicServer),
+    transfers: transfers ? transfers.state : [],
     version: app.getVersion()
   };
 }
@@ -747,6 +755,215 @@ function removeGame(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Servers & transfers: browse an SFTP/FTP server and copy films and shows into the library folders
+
+const BROWSE_IDLE_MS = 60000;
+const browsing = new Map(); // server id -> { client: Promise, timer }
+
+function findServer(id) {
+  return serversStore.get('servers').find((x) => x.id === id) || null;
+}
+
+/** A server as the page sees it: never the password. */
+function publicServer(x) {
+  const { secret, ...rest } = x;
+  return { ...rest, hasSecret: Boolean(secret) };
+}
+
+// Passwords are encrypted with the OS's user key (DPAPI on Windows) when available.
+function sealSecret(plain) {
+  if (!plain) return '';
+  if (safeStorage.isEncryptionAvailable()) return `enc:${safeStorage.encryptString(plain).toString('base64')}`;
+  return `plain:${Buffer.from(plain, 'utf8').toString('base64')}`;
+}
+
+function openSecret(sealed) {
+  if (!sealed) return '';
+  try {
+    if (sealed.startsWith('enc:')) return safeStorage.decryptString(Buffer.from(sealed.slice(4), 'base64'));
+    if (sealed.startsWith('plain:')) return Buffer.from(sealed.slice(6), 'base64').toString('utf8');
+  } catch {}
+  return '';
+}
+
+/** Open a fresh connection to a saved server, remembering its SSH host key the first time. */
+function connectServer(id) {
+  const srv = findServer(id);
+  if (!srv) return Promise.reject(new remote.RemoteError('noServer'));
+  return remote.connect(srv, openSecret(srv.secret), {
+    onHostKey: (key) => {
+      srv.hostKey = key;
+      serversStore.save();
+      pushLibrary();
+    }
+  });
+}
+
+/** The connection used for browsing, kept open for a minute between folders. */
+function browseClient(id) {
+  let entry = browsing.get(id);
+  if (!entry) {
+    entry = { client: connectServer(id), timer: null };
+    browsing.set(id, entry);
+    entry.client.catch(() => browsing.get(id) === entry && browsing.delete(id));
+  }
+  clearTimeout(entry.timer);
+  entry.timer = setTimeout(() => dropBrowse(id), BROWSE_IDLE_MS);
+  return entry.client;
+}
+
+function dropBrowse(id) {
+  const entry = browsing.get(id);
+  if (!entry) return;
+  browsing.delete(id);
+  clearTimeout(entry.timer);
+  entry.client.then((c) => c.close()).catch(() => {});
+}
+
+function remoteError(err) {
+  const code = err && typeof err.code === 'string' && /^[a-zA-Z]+$/.test(err.code) ? err.code : null;
+  const known = ['auth', 'hostKeyChanged', 'notFound', 'keyUnreadable', 'noHost', 'noServer', 'ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EHOSTUNREACH'];
+  return { ok: false, errorKey: known.includes(code) ? `err.remote.${code}` : 'err.remote.other', vars: { message: (err && err.message) || String(err) } };
+}
+
+async function remoteList(id, dir) {
+  try {
+    const c = await browseClient(id);
+    const p = dir || findServer(id)?.root || (await c.home());
+    return { ok: true, path: p, entries: await c.list(p) };
+  } catch (err) {
+    dropBrowse(id);
+    return remoteError(err);
+  }
+}
+
+function libraryRoots(kind, preferred) {
+  const libs = settings.get('libraries').filter((l) => l.type === (kind === 'tv' ? 'tv' : 'movies'));
+  return libs.find((l) => l.path === preferred) ? [preferred, ...libs.map((l) => l.path).filter((p) => p !== preferred)] : libs.map((l) => l.path);
+}
+
+function subdirs(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
+/** Work out what a remote file or folder contains and where each file will go. */
+async function planRemote({ serverId, path: p, isDir, kind, library }) {
+  const c = await browseClient(serverId);
+  const posix = path.posix;
+  const name = posix.basename(p);
+  let files;
+  if (isDir) {
+    files = await c.walk(p);
+  } else {
+    // A single video brings the subtitles sitting next to it.
+    const base = stripExtension(name).toLowerCase();
+    const siblings = await c.list(posix.dirname(p)).catch(() => []);
+    const me = siblings.find((e) => e.name === name);
+    files = [{ remote: p, rel: name, size: me ? me.size : 0 }];
+    if (isVideoFile(name)) {
+      for (const e of siblings) {
+        if (!e.isDir && e.name !== name && SUB_EXTENSIONS.has(posix.extname(e.name).toLowerCase()) && e.name.toLowerCase().startsWith(base)) {
+          files.push({ remote: posix.join(posix.dirname(p), e.name), rel: e.name, size: e.size });
+        }
+      }
+    }
+  }
+  const selection = { name, isDir, parent: posix.basename(posix.dirname(p)) };
+  const first = planTransfer(selection, files, { kind, movieRoot: '/', tvRoot: '/' });
+  const roots = libraryRoots(first.kind, library);
+  const root = roots[0] || null;
+  const plan = planTransfer(selection, files, {
+    kind: first.kind,
+    movieRoot: first.kind === 'movie' ? root : null,
+    tvRoot: first.kind === 'tv' ? root : null,
+    existingShowDirs: first.kind === 'tv' && root ? subdirs(root) : []
+  });
+  return { plan, roots, name };
+}
+
+async function remotePlan(req) {
+  try {
+    const { plan, roots } = await planRemote(req);
+    return {
+      ok: true,
+      kind: plan.kind,
+      root: plan.root,
+      roots,
+      files: plan.items.length,
+      videos: plan.items.filter((i) => isVideoFile(i.rel)).length,
+      totalSize: plan.totalSize,
+      folders: plan.folders
+    };
+  } catch (err) {
+    dropBrowse(req.serverId);
+    return remoteError(err);
+  }
+}
+
+async function remoteDownload(req) {
+  try {
+    const { plan, name } = await planRemote(req);
+    if (!plan.root) return { ok: false, errorKey: plan.kind === 'tv' ? 'err.remote.noTvLibrary' : 'err.remote.noMovieLibrary' };
+    if (!plan.items.length) return { ok: false, errorKey: 'err.remote.nothing' };
+    const id = transfers.add({ serverId: req.serverId, title: req.isDir ? name : stripExtension(name), plan });
+    return { ok: true, id };
+  } catch (err) {
+    dropBrowse(req.serverId);
+    return remoteError(err);
+  }
+}
+
+const PROTOCOLS = ['sftp', 'ftp', 'ftps'];
+
+/** Add or update a saved server. `secret` replaces the stored password only when given. */
+function saveServer(input) {
+  const list = serversStore.get('servers');
+  const existing = input.id ? list.find((x) => x.id === input.id) : null;
+  const host = String(input.host || '').trim();
+  const port = Number(input.port) || remote.DEFAULT_PORTS[input.protocol] || 22;
+  if (!PROTOCOLS.includes(input.protocol)) return { ok: false, errorKey: 'err.remote.protocol' };
+  if (!host || /\s/.test(host)) return { ok: false, errorKey: 'err.remote.noHost' };
+  if (port < 1 || port > 65535) return { ok: false, errorKey: 'err.remote.port' };
+  const srv = existing || { id: require('crypto').randomBytes(6).toString('hex'), secret: '', hostKey: '' };
+  // Pointing the entry at another machine means its old host key no longer applies.
+  if (existing && (existing.host !== host || Number(existing.port) !== port || existing.protocol !== input.protocol)) srv.hostKey = '';
+  Object.assign(srv, {
+    name: String(input.name || '').trim() || host,
+    protocol: input.protocol,
+    host,
+    port,
+    username: String(input.username || '').trim(),
+    authType: input.protocol === 'sftp' && input.authType === 'key' ? 'key' : 'password',
+    keyPath: input.protocol === 'sftp' && input.authType === 'key' ? String(input.keyPath || '') : '',
+    root: String(input.root || '').trim(),
+    insecureTls: input.protocol === 'ftps' && Boolean(input.insecureTls)
+  });
+  if (input.secret !== undefined && input.secret !== null) srv.secret = sealSecret(String(input.secret));
+  if (!existing) list.push(srv);
+  serversStore.save();
+  dropBrowse(srv.id);
+  pushLibrary();
+  return { ok: true, id: srv.id };
+}
+
+function setupTransfers() {
+  transfers = new TransferQueue({ connect: connectServer });
+  transfers.on('update', (st) => send('transfers', st));
+  transfers.on('finished', (job) => {
+    if (job.status === 'done') {
+      toast('xfer.doneToast', { title: job.title });
+      if (job.skipped < job.items.length) rescan();
+    } else if (job.status === 'error') {
+      toast('xfer.failedToast', { title: job.title, message: job.error }, 'error');
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Updates (always the user's call: we only check, then ask)
 
 function setupUpdater() {
@@ -772,7 +989,7 @@ async function installUpdate() {
     if (updater.state.status !== 'ready') await updater.download();
     if (gameSession) return { ok: false, errorKey: 'err.updateWhilePlaying' };
     const { command, args } = await updater.installCommand({ pid: process.pid, exePath: process.execPath });
-    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore]) if (s.timer) s.flush();
+    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore]) if (s.timer) s.flush();
     if (session) session.kill();
     const child = require('child_process').spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
     await new Promise((resolve, reject) => {
@@ -991,12 +1208,43 @@ function registerIpc() {
   ipcMain.handle('power', async (_e, action) => {
     if (action === 'desktop') return win.minimize();
     if (!['sleep', 'restart', 'shutdown'].includes(action)) return;
-    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore]) if (s.timer) s.flush();
+    for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore]) if (s.timer) s.flush();
     return power(action, helper).catch(() => null);
   });
   ipcMain.handle('open-external', (_e, url) => {
     if (/^(https:\/\/|ms-settings:)/.test(url)) shell.openExternal(url);
   });
+
+  // Servers & transfers
+  ipcMain.handle('server-save', (_e, input) => saveServer(input || {}));
+  ipcMain.handle('server-remove', (_e, id) => {
+    dropBrowse(id);
+    serversStore.set('servers', serversStore.get('servers').filter((x) => x.id !== id));
+    pushLibrary();
+  });
+  ipcMain.handle('server-forget-key', (_e, id) => {
+    const srv = findServer(id);
+    if (srv) {
+      srv.hostKey = '';
+      serversStore.save();
+      dropBrowse(id);
+      pushLibrary();
+    }
+  });
+  ipcMain.handle('server-test', async (_e, id) => {
+    dropBrowse(id);
+    return remoteList(id, null);
+  });
+  ipcMain.handle('pick-key-file', async () => {
+    const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'showHiddenFiles'], defaultPath: path.join(app.getPath('home'), '.ssh') });
+    return r.canceled ? null : r.filePaths[0];
+  });
+  ipcMain.handle('remote-list', (_e, { serverId, path: p }) => remoteList(serverId, p));
+  ipcMain.handle('remote-plan', (_e, req) => remotePlan(req));
+  ipcMain.handle('remote-download', (_e, req) => remoteDownload(req));
+  ipcMain.handle('transfer-cancel', (_e, id) => transfers.cancel(id));
+  ipcMain.handle('transfer-clear', (_e, id) => transfers.clear(id));
+  ipcMain.handle('transfer-retry', (_e, id) => transfers.retry(id));
 
   ipcMain.handle('update-check', () => (updater ? updater.check() : null));
   ipcMain.handle('update-install', () => installUpdate());
@@ -1025,6 +1273,7 @@ app.whenReady().then(() => {
   gameInfoStore = new JsonStore(userFile('gameinfo.json'), { games: {} });
   prefsStore = new JsonStore(userFile('prefs.json'), { favorites: {}, hidden: {}, languages: {} });
   statsStore = new JsonStore(userFile('stats.json'), { sessions: [] });
+  serversStore = new JsonStore(userFile('servers.json'), { servers: [] });
   library = { games: [], ...libraryStore.data };
   metadata = new Metadata({ store: metaStore, imageDir: userFile('artwork'), apiKey: settings.get('tmdbKey') });
   makeGameInfo();
@@ -1033,6 +1282,7 @@ app.whenReady().then(() => {
     pushLibrary();
   });
 
+  setupTransfers();
   registerIpc();
   createWindow();
   setupUpdater();
@@ -1042,8 +1292,9 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   if (session) session.kill();
+  for (const id of [...browsing.keys()]) dropBrowse(id);
   helper.stop();
-  for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore]) if (s && s.timer) s.flush();
+  for (const s of [settings, libraryStore, progressStore, metaStore, gamesStore, gameInfoStore, prefsStore, statsStore, serversStore]) if (s && s.timer) s.flush();
 });
 
 app.on('window-all-closed', () => app.quit());

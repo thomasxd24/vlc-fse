@@ -160,6 +160,7 @@ body.detail #topbar {
 }
 .tab {
   padding: 0.55rem 1.3rem;
+  white-space: nowrap;
   border-radius: 999px;
   font-size: 1.15rem;
   font-weight: 600;
@@ -1419,6 +1420,16 @@ span.ph-icon .ico {
   background: var(--accent);
   color: var(--accent-ink);
 }
+/* With Shift available, the keys show the case they type. */
+.keyboard.sym .key {
+  text-transform: none;
+}
+.caps .keyboard.sym .key:not(.wide) {
+  text-transform: uppercase;
+}
+.caps .key[data-k='shift'] {
+  box-shadow: inset 0 0 0 0.15rem var(--accent);
+}
 .picker {
   display: grid;
   gap: 1rem;
@@ -2623,4 +2634,139 @@ body.reduce-motion *::after {
   .stat-lists {
     grid-template-columns: 1fr;
   }
+}
+
+/* Seven tabs on a 16:10 handheld: tighten the tab bar a little when space runs short. */
+@media (max-width: 1400px) {
+  .tab {
+    padding: 0.55rem 0.95rem;
+  }
+}
+
+/* ------------------------------------------------------------------ Transfers */
+
+.xfer-intro {
+  margin: 0 0 0.6rem;
+  color: var(--muted);
+  font-size: 1.15rem;
+  line-height: 1.5;
+  max-width: 56rem;
+}
+.job-bar {
+  margin-top: 0.55rem;
+  height: 0.3rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.job-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 1rem;
+  background: var(--accent);
+  transition: width 0.5s linear;
+}
+.job.done .job-bar i {
+  background: var(--good);
+}
+.job.error .job-desc {
+  color: #ff8a80;
+}
+.setting.job:focus .job-bar {
+  background: rgba(0, 0, 0, 0.12);
+}
+.setting.job:focus.error .job-desc {
+  color: #b3261e;
+}
+.job-pct .ico {
+  width: 1.4rem;
+  height: 1.4rem;
+  color: var(--good);
+}
+.setting .s-value .ico {
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+.remote-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.remote-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.4rem var(--gutter) 3rem;
+}
+.remote-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 0.85rem 1.2rem;
+  border-radius: 0.6rem;
+  background: var(--surface);
+  text-align: left;
+  transition: transform 0.15s var(--ease), background 0.15s, color 0.15s;
+}
+.remote-row:focus {
+  background: var(--focus);
+  color: var(--accent-ink);
+  transform: scale(1.01);
+}
+.remote-ico {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  color: var(--muted);
+}
+.remote-ico .ico {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+.remote-row.dir .remote-ico {
+  color: var(--accent);
+}
+.remote-row.video .remote-ico .ico {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.remote-row:focus .remote-ico {
+  color: inherit;
+}
+.remote-row.other {
+  color: var(--muted);
+}
+.remote-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-size {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.remote-row:focus .remote-size {
+  color: #3a3f4a;
+}
+.remote-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem var(--gutter);
+  color: var(--muted);
+  font-size: 1.2rem;
+}
+.remote-state p {
+  margin: 0;
+  max-width: 50rem;
 }
