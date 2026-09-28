@@ -21,4 +21,5 @@ pub mod transfer_plan;
 pub mod transfers;
 pub mod updater;
 pub mod vdf;
+pub mod viewmodel;
 pub mod vlc;

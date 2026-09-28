@@ -6,6 +6,7 @@ description = "Ported business logic from src/*.js (Electron -> Tauri migration)
 publish = false
 
 [dependencies]
+base64 = "0.23.1"
 chrono = "0.4.45"
 fancy-regex = "0.19.2"
 hex = "0.4.3"
@@ -26,5 +27,4 @@ httpmock = "0.8.3"
 tempfile = "3.27.0"
 
 [target."cfg(windows)".dependencies]
-base64 = "0.23.1"
 windows-sys = { version = "0.61.2", features = ["Win32_System_Threading", "Win32_Foundation"] }

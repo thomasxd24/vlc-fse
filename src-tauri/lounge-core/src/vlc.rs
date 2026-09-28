@@ -1,15 +1,17 @@
-//! Locating VLC and building its command line. Direct port of the pure/locate parts of `src/vlc.js`.
+//! Locating VLC, building its command line, and driving a playback session. Direct port of
+//! `src/vlc.js`, including `VlcSession` (spawns VLC with its HTTP interface, polls
+//! `status.json`/`playlist.json` and maps VLC's idea of the current item back to the queue).
 //!
-//! `VlcSession` (the JS `EventEmitter`-based class that spawns VLC, polls its HTTP interface for
-//! playback progress, and maps status back to queue entries) is **not** ported here, for the same
-//! reason as `games::GameSession`: no unit test exists to verify a port against — the one test that
-//! exercises it (`test/vlc-real.test.js`) launches a *real* VLC binary and is skipped when one isn't
-//! installed, which is the case in this sandbox — and its event/async shape should follow the Tauri
-//! `app` crate's design once that exists, not be guessed at now. `find_vlc`'s registry lookup is
-//! `cfg(windows)`-gated and untested here for the same reason as `steam::find_steam`'s.
+//! Where the JS version is an `EventEmitter`, this hands back a `std::sync::mpsc::Receiver` of
+//! [`VlcEvent`]s, drained by the caller (the Tauri `app` crate turns them into `now-playing` pushes
+//! and progress records). Everything else follows the JS structure one-to-one; the pure helpers
+//! (`resolve_current`, playlist flattening, the previous-item-finished rule) are split out so they're
+//! testable without a real VLC — the one thing that can't be exercised here (`test/vlc-real.test.js`
+//! needs an installed VLC) is the live spawn/poll loop itself.
 
 #[cfg(target_os = "windows")]
 use fancy_regex::Regex;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -211,9 +213,284 @@ fn registry_default_value(_key: &str) -> Option<PathBuf> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// VlcSession
+
+const POLL_MS: u64 = 1500;
+
+/// One playback-status report, as `progress` events carried in the JS version.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Progress {
+    pub path: String,
+    pub time: f64,
+    pub length: f64,
+    pub paused: bool,
+}
+
+/// Events from a running session: roughly one [`VlcEvent::Progress`] per [`POLL_MS`] while playing,
+/// and one [`VlcEvent::Exit`] when VLC closes.
+#[derive(Debug, Clone)]
+pub enum VlcEvent {
+    Progress(Progress),
+    Exit { code: Option<i32>, last: Option<Progress> },
+}
+
+/// Owned per-session options, the `String` equivalents of [`BuildArgsOptions`]'s borrowed fields.
+#[derive(Debug, Clone, Default)]
+pub struct SessionOptions {
+    pub fullscreen: bool,
+    /// Preferred audio track language: a code, or `"original"` for the file's default.
+    pub audio_language: Option<String>,
+    /// Preferred subtitle language: a code, or `"off"` to start without subtitles.
+    pub sub_language: Option<String>,
+    pub extra_args: Vec<String>,
+}
+
+struct SessionInner {
+    port: u16,
+    password: String,
+    queue: Vec<String>,
+    last: Option<Progress>,
+    /// VLC's last reported state ("playing"/"paused"/"stopped"), as `this.state` in the JS version.
+    state: Option<String>,
+}
+
+/// A single VLC playback session. `spawn` starts VLC and a poller thread; `events` yields
+/// [`VlcEvent`]s, `command` drives the "Playing in VLC" screen's controls, `kill` stops playback.
+pub struct VlcSession {
+    inner: std::sync::Arc<std::sync::Mutex<SessionInner>>,
+    child: std::sync::Arc<std::sync::Mutex<std::process::Child>>,
+    events: std::sync::mpsc::Receiver<VlcEvent>,
+}
+
+/// VLC's basic-auth password: 24 hex characters like the JS version's `randomBytes(12)`. Entropy only
+/// needs to defeat other local processes guessing; a hash of clock + pid + a process-wide counter is
+/// plenty for a loopback-only interface.
+fn random_password() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos().to_le_bytes());
+    hasher.update(std::process::id().to_le_bytes());
+    hasher.update(COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    hex::encode(hasher.finalize())[..24].to_string()
+}
+
+fn free_port() -> std::io::Result<u16> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
+}
+
+fn request(port: u16, password: &str, file: &str, params: &[(&str, String)]) -> Option<Value> {
+    use base64::Engine as _;
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!(":{password}"));
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_millis(1200)))
+        .build()
+        .into();
+    let mut req = agent.get(format!("http://127.0.0.1:{port}/requests/{file}")).header("Authorization", format!("Basic {auth}"));
+    for (k, v) in params {
+        req = req.query(k, v);
+    }
+    match req.call() {
+        Ok(mut resp) => resp.body_mut().read_json::<serde_json::Value>().ok(),
+        Err(_) => None,
+    }
+}
+
+/// File name of a queue path, with and without its extension — VLC only reports the basename.
+fn base_names(p: &str) -> (String, String) {
+    let name = p.rsplit(['/', '\\']).next().unwrap_or(p).to_string();
+    let stem = match name.rfind('.') {
+        Some(i) if i > 0 => name[..i].to_string(),
+        _ => name.clone(),
+    };
+    (name, stem)
+}
+
+/// Map VLC's idea of the current item back to a queue index. Matching is by reported file name, with a
+/// single-item queue as the fallback (`resolveCurrent` in the JS version).
+pub fn resolve_current(queue: &[String], meta_filename: Option<&str>) -> Option<usize> {
+    if let Some(name) = meta_filename.filter(|n| !n.is_empty()) {
+        if let Some(i) = queue.iter().position(|q| {
+            let (base, stem) = base_names(q);
+            base == name || stem == name
+        }) {
+            return Some(i);
+        }
+    }
+    if queue.len() == 1 {
+        return Some(0);
+    }
+    None
+}
+
+/// Flatten VLC's `playlist.json` tree to the leaf ids in queue order (`collect` in the JS version).
+pub fn playlist_leaf_ids(node: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        if let Some(children) = n.get("children").and_then(|v| v.as_array()) {
+            // Depth-first in order: push reversed so the first child is visited first.
+            for c in children.iter().rev() {
+                stack.push(c);
+            }
+        } else if n.get("type").and_then(Value::as_str) == Some("leaf") {
+            if let Some(id) = n.get("id") {
+                out.push(match id {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                });
+            }
+        }
+    }
+    out
+}
+
+impl VlcSession {
+    /// Start VLC for `queue` and begin polling. Returns the session handle; events arrive on
+    /// [`VlcSession::events`]. Fails only when VLC itself couldn't be spawned.
+    pub fn spawn(vlc_path: &Path, queue: &[String], opts: &SessionOptions) -> std::io::Result<VlcSession> {
+        let port = free_port()?;
+        let password = random_password();
+        let borrowed: Vec<QueueItem> = queue.iter().map(|p| QueueItem { path: p, start_time: None, languages: None }).collect();
+        let args = build_args(&borrowed, &BuildArgsOptions {
+            port,
+            password: &password,
+            fullscreen: opts.fullscreen,
+            languages: Languages { audio: opts.audio_language.as_deref(), subs: opts.sub_language.as_deref() },
+            extra_args: &opts.extra_args.iter().map(String::as_str).collect::<Vec<_>>(),
+        });
+        let child = std::process::Command::new(vlc_path).args(&args).spawn()?;
+
+        let inner = std::sync::Arc::new(std::sync::Mutex::new(SessionInner { port, password, queue: queue.to_vec(), last: None, state: None }));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let poll_inner = std::sync::Arc::clone(&inner);
+        let child_cell = std::sync::Arc::new(std::sync::Mutex::new(child));
+        let poll_child = std::sync::Arc::clone(&child_cell);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
+                let exited = poll_child.lock().unwrap().try_wait();
+                match exited {
+                    Ok(Some(status)) => {
+                        let last = poll_inner.lock().unwrap().last.clone();
+                        let _ = tx.send(VlcEvent::Exit { code: status.code(), last });
+                        return;
+                    }
+                    Err(_) => {
+                        let _ = tx.send(VlcEvent::Exit { code: None, last: poll_inner.lock().unwrap().last.clone() });
+                        return;
+                    }
+                    Ok(None) => {}
+                }
+                for p in poll(&poll_inner) {
+                    let _ = tx.send(VlcEvent::Progress(p));
+                }
+            }
+        });
+        Ok(VlcSession { inner, child: child_cell, events: rx })
+    }
+
+    /// Receive progress/exit events (never blocks the caller; `try_recv` semantics).
+    pub fn try_event(&self) -> Option<VlcEvent> {
+        self.events.try_recv().ok()
+    }
+
+    /// Stop the session: kills VLC, which ends the poller thread with an `Exit` event.
+    pub fn kill(&self) {
+        let _ = self.child.lock().unwrap().kill();
+        let _ = self.child.lock().unwrap().wait();
+    }
+
+    /// Send a playback command (`pl_pause`, `seek`, `pl_next`, `key`, …) and return VLC's updated
+    /// status. Track switching goes through VLC's own hotkeys (`key` + `audio-track` /
+    /// `subtitle-track`): the "Stream N" numbers in the status don't reliably match the ids
+    /// `audio_track` expects, and cycling also shows VLC's on-screen label for the new track.
+    pub fn command(&self, command: &str, val: Option<&str>) -> Option<Value> {
+        let params: Vec<(&str, String)> = match val {
+            Some(v) => vec![("command", command.into()), ("val", v.into())],
+            None => vec![("command", command.into())],
+        };
+        let (port, password) = {
+            let inner = self.inner.lock().unwrap();
+            (inner.port, inner.password.clone())
+        };
+        let status = request(port, &password, "status.json", &params);
+        if let Some(s) = &status {
+            if let Some(state) = s.get("state").and_then(Value::as_str) {
+                self.inner.lock().unwrap().state = Some(state.to_string());
+            }
+        }
+        status
+    }
+}
+
+/// One poll tick, shared by the poller thread. Returns the progress events to emit (none, one, or —
+/// when VLC moved on to the next item — two: the previous item played to its end, then the new position).
+fn poll(inner: &std::sync::Mutex<SessionInner>) -> Vec<Progress> {
+    let (port, password, queue_len, queue) = {
+        let i = inner.lock().unwrap();
+        (i.port, i.password.clone(), i.queue.len(), i.queue.clone())
+    };
+    let Some(status) = request(port, &password, "status.json", &[]) else { return Vec::new() };
+    if status.get("state").and_then(Value::as_str) == Some("stopped") {
+        return Vec::new();
+    }
+    inner.lock().unwrap().state = status.get("state").and_then(Value::as_str).map(String::from);
+
+    let name = status.pointer("/information/category/meta/filename").and_then(Value::as_str);
+    let mut item = resolve_current(&queue, name);
+    if item.is_none() {
+        // Fall back to the playlist: items appear in queue order.
+        let currentplid = status.get("currentplid").and_then(Value::as_i64).unwrap_or(-1);
+        if currentplid >= 0 {
+            if let Some(pl) = request(port, &password, "playlist.json", &[]) {
+                let leaves = playlist_leaf_ids(&pl);
+                let key = currentplid.to_string();
+                if let Some(idx) = leaves.iter().position(|l| *l == key) {
+                    if idx < queue_len {
+                        item = Some(idx);
+                    }
+                }
+            }
+        }
+    }
+    let Some(idx) = item else { return Vec::new() };
+    let length = num_field(&status, "length");
+    let time = num_field(&status, "time");
+    if length == 0.0 {
+        return Vec::new();
+    }
+    let Some(path) = queue.get(idx).cloned() else { return Vec::new() };
+
+    let mut out = Vec::new();
+    let mut inner = inner.lock().unwrap();
+    if let Some(last) = inner.last.clone() {
+        let last_idx = queue.iter().position(|q| q == &last.path).unwrap_or(0);
+        if last.path != path && idx > last_idx {
+            // VLC moved on to a later item, so the previous one played to the end (or was skipped on purpose).
+            out.push(Progress { path: last.path.clone(), time: last.length, length: last.length, paused: false });
+        }
+    }
+    let paused = status.get("state").and_then(Value::as_str) == Some("paused");
+    let progress = Progress { path, time, length, paused };
+    inner.last = Some(progress.clone());
+    out.push(progress);
+    out
+}
+
+fn num_field(v: &Value, key: &str) -> f64 {
+    v.get(key).and_then(Value::as_f64).unwrap_or(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use tempfile::tempdir;
 
     fn args_to_str(args: &[String]) -> Vec<&str> {
@@ -289,5 +566,96 @@ mod tests {
         let path_env = dir.path().to_string_lossy().into_owned();
         assert_eq!(which("vlc", &path_env, false), Some(vlc));
         assert_eq!(which("nope", &path_env, false), None);
+    }
+
+    fn queue(paths: &[&str]) -> Vec<String> {
+        paths.iter().map(|p| p.to_string()).collect()
+    }
+
+    #[test]
+    fn resolve_current_matches_by_reported_file_name() {
+        let q = queue(&["/media/Film (2020)/Film.mkv", "/media/Show/s01e02.mkv"]);
+        assert_eq!(resolve_current(&q, Some("Film.mkv")), Some(0));
+        assert_eq!(resolve_current(&q, Some("s01e02.mkv")), Some(1));
+        assert_eq!(resolve_current(&q, Some("Film")), Some(0), "VLC sometimes reports the name without its extension");
+        assert_eq!(resolve_current(&q, Some("other.mkv")), None);
+        assert_eq!(resolve_current(&q, None), None);
+        assert_eq!(resolve_current(&q, Some("")), None);
+    }
+
+    #[test]
+    fn a_single_item_queue_is_its_own_fallback() {
+        let q = queue(&["/media/Film.mkv"]);
+        assert_eq!(resolve_current(&q, Some("whatever.avi")), Some(0));
+        assert_eq!(resolve_current(&q, None), Some(0));
+    }
+
+    #[test]
+    fn resolve_current_understands_windows_separators() {
+        let q = queue(&[r"C:\Movies\Film.mkv"]);
+        assert_eq!(resolve_current(&q, Some("Film.mkv")), Some(0));
+        assert_eq!(base_names(&q[0]).0, "Film.mkv");
+        assert_eq!(base_names(&q[0]).1, "Film");
+    }
+
+    #[test]
+    fn playlist_leaf_ids_walk_the_tree_in_order() {
+        let pl = json!({
+            "children": [
+                { "type": "leaf", "id": 10 },
+                { "type": "node", "children": [
+                    { "type": "leaf", "id": 11 },
+                    { "type": "leaf", "id": "12" },
+                ]},
+                { "type": "node", "name": "empty" },
+                { "type": "leaf", "id": 13 },
+            ]
+        });
+        assert_eq!(playlist_leaf_ids(&pl), vec!["10", "11", "12", "13"]);
+        assert!(playlist_leaf_ids(&json!({ "type": "leaf", "id": 1 })).len() == 1);
+        assert!(playlist_leaf_ids(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn session_options_map_onto_build_args() {
+        let opts = SessionOptions {
+            fullscreen: true,
+            audio_language: Some("fr".into()),
+            sub_language: Some("off".into()),
+            extra_args: vec!["--rate=1.5".into()],
+        };
+        let q = queue(&["/media/Film.mkv"]);
+        let borrowed: Vec<QueueItem> = q.iter().map(|p| QueueItem { path: p, start_time: None, languages: None }).collect();
+        let args = build_args(&borrowed, &BuildArgsOptions {
+            port: 8080,
+            password: "pw",
+            fullscreen: opts.fullscreen,
+            languages: Languages { audio: opts.audio_language.as_deref(), subs: opts.sub_language.as_deref() },
+            extra_args: &opts.extra_args.iter().map(String::as_str).collect::<Vec<_>>(),
+        });
+        let joined = args.join(" ");
+        assert!(joined.contains("--http-port=8080"));
+        assert!(joined.contains("--audio-language=fre,fra,fr,any"));
+        assert!(joined.contains("--sub-language=none"));
+        assert!(joined.contains("--rate=1.5"));
+    }
+
+    #[test]
+    fn passwords_are_24_hex_chars_and_unique() {
+        let a = random_password();
+        let b = random_password();
+        assert_eq!(a.len(), 24);
+        assert_ne!(a, b);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn free_port_binds_a_usable_loopback_port() {
+        let port = free_port().unwrap();
+        assert!(port > 0);
+        // A second bind of the same port must now fail (it was released, but that's not what this
+        // asserts): what matters is the listener is gone so VLC can take it.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        drop(listener);
     }
 }
