@@ -12,6 +12,7 @@
 use fancy_regex::Regex;
 use serde_json::{json, Value};
 use std::sync::LazyLock;
+use std::time::Duration;
 
 pub static AUTH_URL_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https://login\.tailscale\.com/a/[\w-]+|https://[\w.-]+/a/[\w-]{6,}").unwrap());
 
@@ -262,6 +263,330 @@ pub fn parse_status(json: &Value) -> TsStatus {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The Tailscale driver: locating the CLI, status, up/down/exit-node, sign-in
+
+/// [`TsStatus`] as the UI's `tailscaleStatus()` payload, merged under `"installed": true`.
+pub fn status_json(s: &TsStatus) -> Value {
+    json!({
+        "installed": true,
+        "state": s.state,
+        "tailnet": s.tailnet,
+        "user": s.user,
+        "hostName": s.host_name,
+        "ip": s.ip,
+        "authUrl": s.auth_url,
+        "peersOnline": s.peers_online,
+        "peersTotal": s.peers_total,
+        "exitNode": s.exit_node.as_ref().map(|e| json!({"name": e.name, "ip": e.ip})),
+        "exitNodes": s.exit_nodes.iter().map(|e| json!({"name": e.name, "ip": e.ip, "online": e.online, "active": e.active})).collect::<Vec<_>>(),
+    })
+}
+
+/// Run the CLI and capture its stdout, with a timeout. On failure the error is the first line of
+/// stderr/stdout (or the IO error's message), like the JS `run()`'s `err.message` rewrite.
+fn run(cli: &str, args: &[&str], timeout: Duration) -> Result<String, String> {
+    let mut child = std::process::Command::new(cli)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = child.stdout.take().map(|mut s| {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = s.read_to_string(&mut buf);
+                    buf
+                });
+                let err_out = child.stderr.take().map(|mut s| {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = s.read_to_string(&mut buf);
+                    buf
+                });
+                if status.success() {
+                    return Ok(out.unwrap_or_default());
+                }
+                let message = [err_out.unwrap_or_default(), out.unwrap_or_default()].into_iter().find(|s| !s.trim().is_empty()).map(|s| s.lines().next().unwrap_or("").trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| format!("tailscale exited with code {}", status.code().unwrap_or(-1)));
+                return Err(message);
+            }
+            Ok(None) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("tailscale timed out".into());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn file_exists(p: &str) -> bool {
+    std::fs::metadata(p).map(|m| m.is_file()).unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn registry_value(key: &str, value: &str) -> Option<String> {
+    let output = std::process::Command::new("reg").args(["query", key, "/v", value]).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let re = Regex::new(&format!(r"{value}\s+REG_\w+\s+(.*)")).ok()?;
+    let caps = re.captures(&stdout).ok().flatten()?;
+    Some(caps.get(1)?.as_str().trim().to_string())
+}
+#[cfg(not(target_os = "windows"))]
+fn registry_value(_key: &str, _value: &str) -> Option<String> {
+    None
+}
+
+/// The final outcome of a sign-in attempt: `Ok(Some(url))` when a URL was printed, `Ok(None)` when we
+/// were already signed in, `Err(message)` on failure.
+pub type LoginOutcome = Result<Option<String>, String>;
+
+/// One sign-in attempt: `tailscale up` waiting for the user to complete sign-in in a browser.
+pub struct LoginHandle {
+    url: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// Everything `tailscale up` printed, for the failure message's last line (like the JS `buf`).
+    output: std::sync::Arc<std::sync::Mutex<String>>,
+    outcome: std::sync::Arc<std::sync::Mutex<Option<LoginOutcome>>>,
+    child: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>>,
+}
+
+impl LoginHandle {
+    /// The sign-in URL once `tailscale up` prints one (also what a second `startLogin` returns).
+    pub fn url(&self) -> Option<String> {
+        self.url.lock().unwrap().clone()
+    }
+
+    /// The final outcome (see [`LoginOutcome`]): `None` while the attempt is still running.
+    pub fn outcome(&self) -> Option<LoginOutcome> {
+        self.outcome.lock().unwrap().clone()
+    }
+}
+
+/// The live state behind the app's tailscale commands: which CLI was found, where we looked, and any
+/// in-flight sign-in. Mirrors the JS `Tailscale` class.
+pub struct Tailscale {
+    env: TailscaleEnv,
+    inner: std::sync::Mutex<TailscaleState>,
+}
+
+struct TailscaleState {
+    cli: Option<String>,
+    tried: Vec<TriedPath>,
+    login: Option<std::sync::Arc<LoginHandle>>,
+}
+
+impl Tailscale {
+    /// Quick synchronous guess at startup (the standard folders); [`Tailscale::locate`] does the full search.
+    pub fn new() -> Self {
+        let env = TailscaleEnv::from_process_env();
+        let cli = find_cli(&env, cfg!(target_os = "windows"), file_exists);
+        Tailscale { env, inner: std::sync::Mutex::new(TailscaleState { cli, tried: Vec::new(), login: None }) }
+    }
+
+    /// A driver already pointed at a known CLI (used by tests, and anywhere a CLI was found by other means).
+    pub fn with_cli(cli: Option<String>) -> Self {
+        Tailscale { env: TailscaleEnv::default(), inner: std::sync::Mutex::new(TailscaleState { cli, tried: Vec::new(), login: None }) }
+    }
+
+    pub fn installed(&self) -> bool {
+        self.inner.lock().unwrap().cli.is_some()
+    }
+
+    pub fn cli(&self) -> Option<String> {
+        self.inner.lock().unwrap().cli.clone()
+    }
+
+    pub fn tried(&self) -> Vec<TriedPath> {
+        self.inner.lock().unwrap().tried.clone()
+    }
+
+    /// Search everywhere Tailscale might be (see [`locate_cli`]); `hints` are extra folders to try.
+    pub fn locate(&self, hints: &[String]) -> LocateResult {
+        let is_windows = cfg!(target_os = "windows");
+        let r = locate_cli(&self.env, hints, is_windows, file_exists, registry_value);
+        let mut inner = self.inner.lock().unwrap();
+        inner.cli = r.cli.clone();
+        inner.tried = r.tried.clone();
+        r
+    }
+
+    /// Shape `tailscale status --json` for the UI; an unreachable daemon becomes
+    /// `{"installed": true, "state": "unknown", "error": ...}`.
+    pub fn status(&self) -> Value {
+        let Some(cli) = self.cli() else {
+            return json!({"installed": false});
+        };
+        match run(&cli, &["status", "--json"], Duration::from_secs(15)) {
+            Ok(out) => {
+                let mut v = match serde_json::from_str::<Value>(&out) {
+                    Ok(parsed) => status_json(&parse_status(&parsed)),
+                    Err(_) => json!({"installed": true, "state": "unknown"}),
+                };
+                v["installed"] = json!(true);
+                v
+            }
+            // "failed to connect to local tailscaled" when the service isn't running.
+            Err(e) => json!({"installed": true, "state": "unknown", "error": e}),
+        }
+    }
+
+    pub fn up(&self) -> Result<(), String> {
+        let cli = self.cli().ok_or_else(|| "not installed".to_string())?;
+        run(&cli, &["up"], Duration::from_secs(30)).map(|_| ())
+    }
+
+    pub fn down(&self) -> Result<(), String> {
+        let cli = self.cli().ok_or_else(|| "not installed".to_string())?;
+        run(&cli, &["down"], Duration::from_secs(15)).map(|_| ())
+    }
+
+    /// Route all traffic through a peer (its IP or name), or stop using an exit node (`None`).
+    pub fn set_exit_node(&self, node: Option<&str>) -> Result<(), String> {
+        let cli = self.cli().ok_or_else(|| "not installed".to_string())?;
+        run(&cli, &["set", &format!("--exit-node={}", node.unwrap_or(""))], Duration::from_secs(15)).map(|_| ())
+    }
+
+    /// Start signing in: runs `tailscale up`, which prints a login URL and waits until the sign-in
+    /// completes in a browser. Returns a handle to the running attempt (the existing one, if a login
+    /// is already in flight); poll [`LoginHandle::url`] / [`LoginHandle::outcome`].
+    pub fn start_login(&self) -> std::sync::Arc<LoginHandle> {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(existing) = &inner.login {
+            return std::sync::Arc::clone(existing);
+        }
+        let Some(cli) = inner.cli.clone() else {
+            let handle = std::sync::Arc::new(LoginHandle {
+                url: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                output: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+                outcome: std::sync::Arc::new(std::sync::Mutex::new(Some(Err("not installed".into())))),
+                child: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            });
+            return handle;
+        };
+        // Plain `up`: any settings flag would make Tailscale insist on restating every non-default setting.
+        let child = std::process::Command::new(&cli)
+            .arg("up")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn();
+        let child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                let handle = std::sync::Arc::new(LoginHandle {
+                    url: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                    output: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+                    outcome: std::sync::Arc::new(std::sync::Mutex::new(Some(Err(e.to_string())))),
+                    child: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                });
+                return handle;
+            }
+        };
+        let handle = std::sync::Arc::new(LoginHandle {
+            url: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            output: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+            outcome: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            child: std::sync::Arc::new(std::sync::Mutex::new(Some(child))),
+        });
+        inner.login = Some(std::sync::Arc::clone(&handle));
+        drop(inner);
+
+        // Both output streams are scanned for the URL, like the JS `scan` on stdout+stderr.
+        fn spawn_reader(pipe: Box<dyn std::io::Read + Send>, url_cell: std::sync::Arc<std::sync::Mutex<Option<String>>>, output_cell: std::sync::Arc<std::sync::Mutex<String>>) {
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(pipe);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match std::io::BufRead::read_line(&mut reader, &mut line) {
+                        Ok(0) | Err(_) => return,
+                        Ok(_) => {}
+                    }
+                    output_cell.lock().unwrap().push_str(&line);
+                    let mut url = url_cell.lock().unwrap();
+                    if url.is_none() {
+                        if let Some(found) = find_auth_url(&line) {
+                            *url = Some(found);
+                        }
+                    }
+                }
+            });
+        }
+        let mut child_guard = handle.child.lock().unwrap();
+        let stdout = child_guard.as_mut().and_then(|c| c.stdout.take());
+        let stderr = child_guard.as_mut().and_then(|c| c.stderr.take());
+        if let Some(out) = stdout {
+            spawn_reader(Box::new(out), std::sync::Arc::clone(&handle.url), std::sync::Arc::clone(&handle.output));
+        }
+        if let Some(err_pipe) = stderr {
+            spawn_reader(Box::new(err_pipe), std::sync::Arc::clone(&handle.url), std::sync::Arc::clone(&handle.output));
+        }
+        drop(child_guard);
+        let watch_child = std::sync::Arc::clone(&handle.child);
+        let watch_url = std::sync::Arc::clone(&handle.url);
+        let watch_outcome = std::sync::Arc::clone(&handle.outcome);
+        let watch_output = std::sync::Arc::clone(&handle.output);
+        std::thread::spawn(move || {
+            // Watch in place (never taking the child), so `cancel_login` can kill the same process.
+            let mut code: Option<i32> = None;
+            loop {
+                std::thread::sleep(Duration::from_millis(50));
+                let observed = match watch_child.lock().unwrap().as_mut() {
+                    None => break,
+                    Some(c) => match c.try_wait() {
+                        Ok(Some(status)) => status.code(),
+                        Ok(None) => continue,
+                        Err(_) => None,
+                    },
+                };
+                code = observed;
+                break;
+            }
+            *watch_child.lock().unwrap() = None;
+            let url = watch_url.lock().unwrap().clone();
+            let result = match (&url, code) {
+                (Some(u), _) => Ok(Some(u.clone())),
+                (None, Some(0)) => Ok(None),
+                (None, code) => {
+                    let last_line = watch_output.lock().unwrap().lines().rev().map(|l| l.trim()).find(|l| !l.is_empty()).map(String::from);
+                    Err(last_line.unwrap_or_else(|| format!("tailscale exited with code {}", code.unwrap_or(-1))))
+                }
+            };
+            let mut o = watch_outcome.lock().unwrap();
+            if o.is_none() {
+                *o = Some(result);
+            }
+        });
+        handle
+    }
+
+    /// Stop an in-flight sign-in attempt. The attempt's watcher observes the kill and resolves.
+    pub fn cancel_login(&self) {
+        let child = self.inner.lock().unwrap().login.take();
+        if let Some(handle) = child {
+            if let Some(c) = handle.child.lock().unwrap().as_mut() {
+                let _ = c.kill();
+            }
+        }
+    }
+}
+
+impl Default for Tailscale {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +673,128 @@ mod tests {
         assert_eq!(exe_of_command(r"C:\x\a.exe -arg").as_deref(), Some(r"C:\x\a.exe"));
         assert_eq!(exe_of_command(r"\??\C:\x\a.exe").as_deref(), Some(r"C:\x\a.exe"));
         assert_eq!(exe_of_command(""), None);
+    }
+
+    // ---- the Tailscale driver
+
+    use std::time::Duration;
+    use tempfile::tempdir;
+
+    /// A fake CLI: a shell script with the given body, marked executable on Unix.
+    fn fake_cli(dir: &std::path::Path, body: &str) -> String {
+        let exe = dir.join("tailscale");
+        std::fs::write(&exe, format!("#!/bin/sh\n{body}\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        exe.to_string_lossy().into_owned()
+    }
+
+    fn poll<F: Fn() -> Option<T>, T>(f: F) -> Option<T> {
+        for _ in 0..200 {
+            if let Some(v) = f() {
+                return Some(v);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        None
+    }
+
+    #[test]
+    fn status_without_a_cli_reports_not_installed() {
+        let ts = Tailscale::with_cli(None);
+        assert!(!ts.installed());
+        assert_eq!(ts.status(), json!({"installed": false}));
+    }
+
+    #[test]
+    fn status_runs_the_cli_and_shapes_the_result() {
+        let dir = tempdir().unwrap();
+        let cli = fake_cli(dir.path(), r#"if [ "$1" = "status" ]; then echo '{"BackendState":"Running","CurrentTailnet":{"Name":"example.com"},"Self":{"HostName":"box.example.com","TailscaleIPs":["100.64.0.1","fd7a::1"],"UserID":11},"User":{"11":{"LoginName":"me@example.com"}},"Peer":{"1":{"HostName":"peer.example.com","Online":true,"ExitNodeOption":true,"TailscaleIPs":["100.64.0.2"]}}}'; fi"#);
+        let ts = Tailscale::with_cli(Some(cli));
+        let st = ts.status();
+        assert_eq!(st["installed"], json!(true));
+        assert_eq!(st["state"], json!("connected"));
+        assert_eq!(st["hostName"], json!("box.example.com"), "no DNSName: the HostName stands");
+        assert_eq!(st["user"], json!("me@example.com"));
+        assert_eq!(st["ip"], json!("100.64.0.1"));
+        assert_eq!(st["peersOnline"], json!(1));
+        assert_eq!(st["exitNodes"][0]["name"], json!("peer.example.com"));
+    }
+
+    #[test]
+    fn an_unreachable_daemon_is_an_unknown_state_with_the_error() {
+        let dir = tempdir().unwrap();
+        let cli = fake_cli(dir.path(), "echo failed to connect to local tailscaled >&2; exit 1");
+        let ts = Tailscale::with_cli(Some(cli));
+        let st = ts.status();
+        assert_eq!(st["installed"], json!(true));
+        assert_eq!(st["state"], json!("unknown"));
+        assert!(st["error"].as_str().unwrap().contains("failed to connect"));
+    }
+
+    #[test]
+    fn up_down_and_exit_node_pass_the_expected_arguments() {
+        let dir = tempdir().unwrap();
+        let cli_path = dir.path().join("tailscale");
+        let log = dir.path().join("args.log");
+        let log_display = log.to_string_lossy().into_owned();
+        std::fs::write(&cli_path, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{log_display}'\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let ts = Tailscale::with_cli(Some(cli_path.to_string_lossy().into_owned()));
+
+        ts.up().unwrap();
+        ts.down().unwrap();
+        ts.set_exit_node(Some("100.64.0.2")).unwrap();
+        ts.set_exit_node(None).unwrap();
+        let logged = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(logged, "up\ndown\nset\n--exit-node=100.64.0.2\nset\n--exit-node=\n");
+    }
+
+    #[test]
+    fn start_login_finds_the_url_and_cancel_stops_it() {
+        let dir = tempdir().unwrap();
+        let cli = fake_cli(dir.path(), "echo 'https://login.tailscale.com/a/abc123'; sleep 30");
+        let ts = Tailscale::with_cli(Some(cli));
+
+        let handle = ts.start_login();
+        let url = poll(|| handle.url());
+        assert_eq!(url.as_deref(), Some("https://login.tailscale.com/a/abc123"));
+        assert!(handle.outcome().is_none(), "still waiting for sign-in");
+
+        ts.cancel_login();
+        let outcome = poll(|| handle.outcome());
+        assert!(outcome.is_some(), "cancel resolves the attempt");
+        // A second login after cancel starts fresh.
+        let dir2 = tempdir().unwrap();
+        let ts2 = Tailscale::with_cli(Some(fake_cli(dir2.path(), "exit 0")));
+        let h2 = ts2.start_login();
+        assert_eq!(poll(|| h2.outcome()), Some(Ok(None)), "exit 0 with no URL means already signed in");
+    }
+
+    #[test]
+    fn an_in_flight_login_is_returned_to_a_second_caller() {
+        let dir = tempdir().unwrap();
+        let cli = fake_cli(dir.path(), "echo 'https://login.tailscale.com/a/xyz789'; sleep 30");
+        let ts = Tailscale::with_cli(Some(cli));
+        let first = ts.start_login();
+        let second = ts.start_login();
+        assert!(std::sync::Arc::ptr_eq(&first, &second), "the same attempt, not a second process");
+        ts.cancel_login();
+    }
+
+    #[test]
+    fn a_failed_login_carries_the_cli_output_line() {
+        let dir = tempdir().unwrap();
+        let cli = fake_cli(dir.path(), "echo 'not logged in' >&2; exit 3");
+        let ts = Tailscale::with_cli(Some(cli));
+        let handle = ts.start_login();
+        assert_eq!(poll(|| handle.outcome()), Some(Err("not logged in".into())));
     }
 }
