@@ -27,13 +27,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const KEEP_FINISHED: usize = 20;
 
-/// What `remote.js`'s `connect()` would eventually return: something that can fetch one file and be
-/// closed (which aborts whatever it's doing, same as the JS version relying on `client.close()` to
-/// abort an in-flight download on cancel).
-pub trait RemoteClient: Send + Sync {
-    fn download(&self, remote: &str, local: &Path, on_bytes: &mut dyn FnMut(u64)) -> Result<(), String>;
-    fn close(&self);
-}
+/// What `remote.rs`'s `connect()` returns: something that can fetch one file and be closed (which
+/// aborts whatever it's doing, same as the JS version relying on `client.close()` to abort an
+/// in-flight download on cancel).
+pub use crate::remote::RemoteClient;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobStatus {
