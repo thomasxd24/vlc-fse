@@ -9,8 +9,6 @@
 
 #[cfg(any(test, target_os = "windows"))]
 use fancy_regex::Regex;
-#[cfg(target_os = "windows")]
-use std::process::Command;
 #[cfg(any(test, target_os = "windows"))]
 use std::sync::LazyLock;
 use std::time::Duration;

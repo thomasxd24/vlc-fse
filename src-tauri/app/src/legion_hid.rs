@@ -3,15 +3,21 @@
 //! WebHID silently, so the native side reads the device and the renderer feeds the reports to the same
 //! parser it uses elsewhere (`Pads.parseLegionStatus`). Windows only; other platforms never start it.
 
+#[cfg(windows)]
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
+#[cfg(windows)]
+use tauri::Emitter;
+use tauri::AppHandle;
 
+#[cfg(any(windows, test))]
 const USAGE_PAGE: u16 = 0xffa0;
+#[cfg(any(windows, test))]
 const IDS: &[(u16, &[u16])] = &[
     (0x17ef, &[0x6182, 0x6183, 0x6184, 0x6185, 0x61eb, 0x61ec, 0x61ed, 0x61ee]),
     (0x1a86, &[0xe310, 0xe311]),
 ];
 
+#[cfg(any(windows, test))]
 fn is_candidate(vendor: u16, product: u16, usage_page: u16) -> bool {
     usage_page == USAGE_PAGE && IDS.iter().any(|(v, ps)| *v == vendor && ps.contains(&product))
 }
