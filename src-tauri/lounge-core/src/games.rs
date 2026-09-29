@@ -486,17 +486,45 @@ mod tests {
         assert!(matches!(events.last(), Some(GameEvent::Exit { reason: ExitReason::Timeout, played_ms: 0, .. })), "{events:?}");
     }
 
+    /// A stub "game" that stays alive for about a second: a shell script on Unix, `cmd /c ping` on
+    /// Windows (a text file can't be spawned as an `.exe` there, so the stub has to be a real exe).
+    fn stub_game_that_lives_a_second(dir: &std::path::Path) -> SessionGame {
+        #[cfg(unix)]
+        {
+            let exe = dir.join("game.exe");
+            std::fs::write(&exe, "#!/bin/sh\nsleep 1\n").unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+            SessionGame { id: "manual-x".into(), source: "manual".into(), exe: exe.to_string_lossy().into(), ..Default::default() }
+        }
+        #[cfg(windows)]
+        {
+            let _ = dir;
+            SessionGame { id: "manual-x".into(), source: "manual".into(), exe: r"C:\Windows\System32\cmd.exe".into(), args: "/c ping -n 2 127.0.0.1".into(), ..Default::default() }
+        }
+    }
+
+    /// The stub-launcher twin: exits immediately, which counts as a stub, not a session.
+    fn stub_game_that_exits_at_once(dir: &std::path::Path) -> SessionGame {
+        #[cfg(unix)]
+        {
+            let exe = dir.join("launcher.exe");
+            std::fs::write(&exe, "#!/bin/sh\nexit 0\n").unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+            SessionGame { id: "manual-x".into(), source: "manual".into(), exe: exe.to_string_lossy().into(), ..Default::default() }
+        }
+        #[cfg(windows)]
+        {
+            let _ = dir;
+            SessionGame { id: "manual-x".into(), source: "manual".into(), exe: r"C:\Windows\System32\cmd.exe".into(), args: "/c exit 0".into(), ..Default::default() }
+        }
+    }
+
     #[test]
     fn a_manual_game_is_watched_until_its_process_exits() {
         let dir = tempdir().unwrap();
-        let exe = dir.path().join("game.exe");
-        std::fs::write(&exe, "#!/bin/sh\nsleep 0.5\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let game = SessionGame { id: "manual-x".into(), source: "manual".into(), exe: exe.to_string_lossy().into(), ..Default::default() };
+        let game = stub_game_that_lives_a_second(dir.path());
         // A short stub window so a game that outlives it counts as a real session.
         let deps = GameDeps { tuning: Tuning { launcher_stub_ms: 100, ..fast_tuning() }, ..Default::default() };
 
@@ -509,14 +537,7 @@ mod tests {
     #[test]
     fn a_manual_launcher_that_quits_at_once_counts_as_a_stub() {
         let dir = tempdir().unwrap();
-        let exe = dir.path().join("launcher.exe");
-        std::fs::write(&exe, "#!/bin/sh\nexit 0\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let game = SessionGame { id: "manual-x".into(), source: "manual".into(), exe: exe.to_string_lossy().into(), ..Default::default() };
+        let game = stub_game_that_exits_at_once(dir.path());
         let session = GameSession::spawn(&game, GameDeps { tuning: fast_tuning(), ..Default::default() }).unwrap();
         let events = drain(&session, 4000);
         assert!(matches!(events.last(), Some(GameEvent::Exit { reason: ExitReason::Stub, played_ms: 0, .. })), "{events:?}");

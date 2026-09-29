@@ -571,7 +571,13 @@ mod tests {
         write(
             steam,
             "steamapps/libraryfolders.vdf",
-            &format!(r#""libraryfolders" {{ "0" {{ "path" "{}" }} "1" {{ "path" "{}" }} }}"#, steam.display(), lib2.display()),
+            // VDF strings escape backslashes, which real Steam's Windows paths arrive with doubled;
+            // on Unix the paths have no backslashes and this is a no-op.
+            &format!(
+                r#""libraryfolders" {{ "0" {{ "path" "{}" }} "1" {{ "path" "{}" }} }}"#,
+                steam.display().to_string().replace('\\', "\\\\"),
+                lib2.display().to_string().replace('\\', "\\\\"),
+            ),
         );
         write(steam, "steamapps/appmanifest_620.acf", r#""AppState" { "appid" "620" "name" "Portal 2" "installdir" "Portal 2" "StateFlags" "4" "SizeOnDisk" "123" }"#);
         write(steam, "steamapps/appmanifest_228980.acf", r#""AppState" { "appid" "228980" "name" "Steamworks Common Redistributables" "StateFlags" "4" }"#);

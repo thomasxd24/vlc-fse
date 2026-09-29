@@ -695,15 +695,24 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
-    /// A fake CLI: a shell script with the given body, marked executable on Unix.
-    fn fake_cli(dir: &std::path::Path, body: &str) -> String {
+    /// A fake CLI the driver can actually spawn: a shell script on Unix, a batch file on Windows
+    /// (Rust runs `.cmd` through cmd.exe; a text file can't be executed as an `.exe` there). Each
+    /// test provides both bodies, which express the same behaviour.
+    #[cfg(unix)]
+    fn fake_cli(dir: &std::path::Path, unix_body: &str, _windows_body: &str) -> String {
         let exe = dir.join("tailscale");
-        std::fs::write(&exe, format!("#!/bin/sh\n{body}\n")).unwrap();
-        #[cfg(unix)]
+        std::fs::write(&exe, format!("#!/bin/sh\n{unix_body}\n")).unwrap();
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        exe.to_string_lossy().into_owned()
+    }
+
+    #[cfg(windows)]
+    fn fake_cli(dir: &std::path::Path, _unix_body: &str, windows_body: &str) -> String {
+        let exe = dir.join("tailscale.cmd");
+        std::fs::write(&exe, format!("@echo off\r\n{windows_body}\r\n")).unwrap();
         exe.to_string_lossy().into_owned()
     }
 
@@ -727,7 +736,11 @@ mod tests {
     #[test]
     fn status_runs_the_cli_and_shapes_the_result() {
         let dir = tempdir().unwrap();
-        let cli = fake_cli(dir.path(), r#"if [ "$1" = "status" ]; then echo '{"BackendState":"Running","CurrentTailnet":{"Name":"example.com"},"Self":{"HostName":"box.example.com","TailscaleIPs":["100.64.0.1","fd7a::1"],"UserID":11},"User":{"11":{"LoginName":"me@example.com"}},"Peer":{"1":{"HostName":"peer.example.com","Online":true,"ExitNodeOption":true,"TailscaleIPs":["100.64.0.2"]}}}'; fi"#);
+        let cli = fake_cli(
+            dir.path(),
+            r#"if [ "$1" = "status" ]; then echo '{"BackendState":"Running","CurrentTailnet":{"Name":"example.com"},"Self":{"HostName":"box.example.com","TailscaleIPs":["100.64.0.1","fd7a::1"],"UserID":11},"User":{"11":{"LoginName":"me@example.com"}},"Peer":{"1":{"HostName":"peer.example.com","Online":true,"ExitNodeOption":true,"TailscaleIPs":["100.64.0.2"]}}}'; fi"#,
+            r#"if "%~1"=="status" echo {"BackendState":"Running","CurrentTailnet":{"Name":"example.com"},"Self":{"HostName":"box.example.com","TailscaleIPs":["100.64.0.1","fd7a::1"],"UserID":11},"User":{"11":{"LoginName":"me@example.com"}},"Peer":{"1":{"HostName":"peer.example.com","Online":true,"ExitNodeOption":true,"TailscaleIPs":["100.64.0.2"]}}}"#,
+        );
         let ts = Tailscale::with_cli(Some(cli));
         let st = ts.status();
         assert_eq!(st["installed"], json!(true));
@@ -742,7 +755,7 @@ mod tests {
     #[test]
     fn an_unreachable_daemon_is_an_unknown_state_with_the_error() {
         let dir = tempdir().unwrap();
-        let cli = fake_cli(dir.path(), "echo failed to connect to local tailscaled >&2; exit 1");
+        let cli = fake_cli(dir.path(), "echo failed to connect to local tailscaled >&2; exit 1", "echo failed to connect to local tailscaled 1>&2\r\nexit /b 1");
         let ts = Tailscale::with_cli(Some(cli));
         let st = ts.status();
         assert_eq!(st["installed"], json!(true));
@@ -753,29 +766,48 @@ mod tests {
     #[test]
     fn up_down_and_exit_node_pass_the_expected_arguments() {
         let dir = tempdir().unwrap();
-        let cli_path = dir.path().join("tailscale");
         let log = dir.path().join("args.log");
         let log_display = log.to_string_lossy().into_owned();
-        std::fs::write(&cli_path, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{log_display}'\n")).unwrap();
+        // Both fakes log one argument per line. (The batch loop's `%~1>>` is safe even when the
+        // argument ends in a digit: cmd picks redirection targets before expanding `%~1`.)
         #[cfg(unix)]
         {
+            let cli_path = dir.path().join("tailscale");
+            std::fs::write(&cli_path, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{log_display}'\n")).unwrap();
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&cli_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let ts = Tailscale::with_cli(Some(cli_path.to_string_lossy().into_owned()));
+            ts.up().unwrap();
+            ts.down().unwrap();
+            ts.set_exit_node(Some("100.64.0.2")).unwrap();
+            ts.set_exit_node(None).unwrap();
+            let logged = std::fs::read_to_string(&log).unwrap();
+            assert_eq!(logged, "up\ndown\nset\n--exit-node=100.64.0.2\nset\n--exit-node=\n");
         }
-        let ts = Tailscale::with_cli(Some(cli_path.to_string_lossy().into_owned()));
-
-        ts.up().unwrap();
-        ts.down().unwrap();
-        ts.set_exit_node(Some("100.64.0.2")).unwrap();
-        ts.set_exit_node(None).unwrap();
-        let logged = std::fs::read_to_string(&log).unwrap();
-        assert_eq!(logged, "up\ndown\nset\n--exit-node=100.64.0.2\nset\n--exit-node=\n");
+        #[cfg(windows)]
+        {
+            let cli_path = dir.path().join("tailscale.cmd");
+            std::fs::write(
+                &cli_path,
+                format!("@echo off\r\n:next\r\nif \"%~1\"==\"\" goto :done\r\necho %~1>>\"{log_display}\"\r\nshift\r\ngoto :next\r\n:done\r\n"),
+            )
+            .unwrap();
+            let ts = Tailscale::with_cli(Some(cli_path.to_string_lossy().into_owned()));
+            ts.up().unwrap();
+            ts.down().unwrap();
+            ts.set_exit_node(Some("100.64.0.2")).unwrap();
+            ts.set_exit_node(None).unwrap();
+            let logged = std::fs::read_to_string(&log).unwrap();
+            assert_eq!(logged, "up\r\ndown\r\nset\r\n--exit-node=100.64.0.2\r\nset\r\n--exit-node=\r\n");
+        }
     }
 
     #[test]
     fn start_login_finds_the_url_and_cancel_stops_it() {
         let dir = tempdir().unwrap();
-        let cli = fake_cli(dir.path(), "echo 'https://login.tailscale.com/a/abc123'; sleep 30");
+        // The trailing wait keeps the process alive until cancel kills it; on Windows ping's own
+        // output goes to nul so the killed cmd.exe is the only holder of the output pipes.
+        let cli = fake_cli(dir.path(), "echo 'https://login.tailscale.com/a/abc123'; sleep 30", "echo https://login.tailscale.com/a/abc123\r\nping -n 31 127.0.0.1 > nul");
         let ts = Tailscale::with_cli(Some(cli));
 
         let handle = ts.start_login();
@@ -788,7 +820,7 @@ mod tests {
         assert!(outcome.is_some(), "cancel resolves the attempt");
         // A second login after cancel starts fresh.
         let dir2 = tempdir().unwrap();
-        let ts2 = Tailscale::with_cli(Some(fake_cli(dir2.path(), "exit 0")));
+        let ts2 = Tailscale::with_cli(Some(fake_cli(dir2.path(), "exit 0", "exit /b 0")));
         let h2 = ts2.start_login();
         assert_eq!(poll(|| h2.outcome()), Some(Ok(None)), "exit 0 with no URL means already signed in");
     }
@@ -796,7 +828,7 @@ mod tests {
     #[test]
     fn an_in_flight_login_is_returned_to_a_second_caller() {
         let dir = tempdir().unwrap();
-        let cli = fake_cli(dir.path(), "echo 'https://login.tailscale.com/a/xyz789'; sleep 30");
+        let cli = fake_cli(dir.path(), "echo 'https://login.tailscale.com/a/xyz789'; sleep 30", "echo https://login.tailscale.com/a/xyz789\r\nping -n 31 127.0.0.1 > nul");
         let ts = Tailscale::with_cli(Some(cli));
         let first = ts.start_login();
         let second = ts.start_login();
@@ -807,7 +839,7 @@ mod tests {
     #[test]
     fn a_failed_login_carries_the_cli_output_line() {
         let dir = tempdir().unwrap();
-        let cli = fake_cli(dir.path(), "echo 'not logged in' >&2; exit 3");
+        let cli = fake_cli(dir.path(), "echo 'not logged in' >&2; exit 3", "echo not logged in 1>&2\r\nexit /b 3");
         let ts = Tailscale::with_cli(Some(cli));
         let handle = ts.start_login();
         assert_eq!(poll(|| handle.outcome()), Some(Err("not logged in".into())));

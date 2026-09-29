@@ -793,7 +793,9 @@ mod tests {
         set_watched(st, &["/lib/Film.mkv".into()], false);
 
         let items = st.progress.get("items").unwrap();
-        let entry = &items["/lib/Film.mkv"];
+        // Look the entry up through progress_key, which is the store's own keying (it lowercases on
+        // Windows, where paths are case-insensitive) - a literal would only match on Unix.
+        let entry = &items[progress_key("/lib/Film.mkv")];
         assert_eq!(entry["length"], json!(1000.0), "the length from playback survives marking");
         assert_eq!(entry["watched"], json!(false));
     }
@@ -805,13 +807,14 @@ mod tests {
         let st = &stores_ref(&stores);
         record_progress(st, Path::new("/lib/Film.mkv"), 899.0, 1000.0);
         let items = st.progress.get("items").unwrap();
-        assert_eq!(items["/lib/Film.mkv"]["watched"], json!(false));
-        assert_eq!(items["/lib/Film.mkv"]["time"], json!(899.0));
+        let film = progress_key("/lib/Film.mkv");
+        assert_eq!(items[&film]["watched"], json!(false));
+        assert_eq!(items[&film]["time"], json!(899.0));
 
         record_progress(st, Path::new("/lib/Film.mkv"), 910.0, 1000.0);
         let items = st.progress.get("items").unwrap();
-        assert_eq!(items["/lib/Film.mkv"]["watched"], json!(true));
-        assert_eq!(items["/lib/Film.mkv"]["time"], json!(0.0), "a watched item's time resets");
+        assert_eq!(items[&film]["watched"], json!(true));
+        assert_eq!(items[&film]["time"], json!(0.0), "a watched item's time resets");
     }
 
     #[test]
