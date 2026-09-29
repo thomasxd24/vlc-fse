@@ -135,9 +135,19 @@ function placeholder(title, text = title) {
   return `<div class="placeholder" style="background:linear-gradient(135deg,hsl(${h1} 42% 30%),hsl(${(h1 + 40) % 360} 48% 12%))">${h(text)}</div>`;
 }
 
+/**
+ * Local artwork arrives as asset-protocol URLs of the full-size file. A webview decodes images at full pixel
+ * size, so cards and backdrops ask for a downscaled copy from the shell's `thumb` protocol instead.
+ */
+function thumb(src, width) {
+  const m = /^(?:http:\/\/asset\.localhost|asset:\/\/localhost)\/(.+)$/.exec(src || '');
+  if (!m) return src;
+  return `${src.startsWith('http') ? 'http://thumb.localhost' : 'thumb://localhost'}/${width}/${m[1]}`;
+}
+
 function img(src, title, text) {
   return src
-    ? `<img src="${h(src)}" alt="" loading="lazy" decoding="async" data-title="${h(title)}" data-text="${h(text ?? title)}">`
+    ? `<img src="${h(thumb(src, 640))}" alt="" loading="lazy" decoding="async" data-title="${h(title)}" data-text="${h(text ?? title)}">`
     : placeholder(title, text);
 }
 
@@ -351,12 +361,12 @@ const Backdrop = (() => {
       const probe = new Image();
       probe.onload = () => {
         if (currentUrl !== url) return;
-        nextLayer.style.backgroundImage = `url("${url}")`;
+        nextLayer.style.backgroundImage = `url("${thumb(url, 1600)}")`;
         nextLayer.classList.add('on');
         prevLayer.classList.remove('on');
         active = 1 - active;
       };
-      probe.src = url;
+      probe.src = thumb(url, 1600);
     };
     if (immediate) apply();
     else timer = setTimeout(apply, 220);

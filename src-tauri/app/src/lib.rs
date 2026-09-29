@@ -16,6 +16,7 @@
 //! - While a game runs the page is blanked and the window minimised (freeing GPU work).
 
 mod legion_hid;
+mod thumbs;
 
 use lounge_core::library;
 use lounge_core::remote::{self, RemoteClient, ServerSpec};
@@ -2070,6 +2071,24 @@ pub fn run() {
                 bring_to_front(app);
             }
         }))
+        // Downscaled artwork for cards (see thumbs.rs). Async so resizing never runs on the main thread.
+        .register_asynchronous_uri_scheme_protocol("thumb", |ctx, request, responder| {
+            let cache = ctx.app_handle().path().app_cache_dir().ok().map(|d| d.join("thumbs"));
+            let url_path = request.uri().path().to_string();
+            std::thread::spawn(move || {
+                let reply = || -> Result<Vec<u8>, String> {
+                    let (width, path) = thumbs::parse_request(&url_path).ok_or("bad request")?;
+                    thumbs::thumbnail(&cache.ok_or("no cache dir")?, &path, width)
+                };
+                let response = match reply() {
+                    Ok(bytes) => tauri::http::Response::builder().header("Content-Type", "image/jpeg").header("Cache-Control", "max-age=31536000").body(bytes),
+                    Err(_) => tauri::http::Response::builder().status(404).body(Vec::new()),
+                };
+                if let Ok(r) = response {
+                    responder.respond(r);
+                }
+            });
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
