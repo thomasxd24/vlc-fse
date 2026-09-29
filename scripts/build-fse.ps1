@@ -2,7 +2,7 @@
   Builds dist\Lounge-FSE-<version>.zip: Lounge packaged as an MSIX that Windows offers as a
   Full screen experience home app, plus a certificate and an installer.
 
-  Run after `electron-builder --win --dir` (needs dist\win-unpacked). Requires the Windows SDK
+  Needs dist\win-unpacked holding Lounge.exe (CI stages it from the Tauri build). Requires the Windows SDK
   (makeappx.exe, signtool.exe), which GitHub's windows-latest runners include.
 
   The package is signed with a fresh self-signed certificate. Only its public part (.cer) is

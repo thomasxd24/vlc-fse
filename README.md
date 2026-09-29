@@ -13,6 +13,10 @@ It used to be called Foyer (and before that, Marquee).
 | --- | --- | --- |
 | ![](docs/games.jpg) | ![](docs/game.jpg) | ![](docs/options.jpg) |
 
+| Show page | Now playing | Home in French |
+| --- | --- | --- |
+| ![](docs/show.jpg) | ![](docs/now-playing.jpg) | ![](docs/home-fr.jpg) |
+
 ## Features
 
 **Games**
@@ -27,8 +31,9 @@ It used to be called Foyer (and before that, Marquee).
   automatically. You can also pick the match yourself with *Edit info → Find info on Steam*.
 - **Your choice of artwork.** With a free [SteamGridDB](https://www.steamgriddb.com/profile/preferences/api)
   API key, you can choose covers, backgrounds and logos for any game, Steam or not.
-- **Jump back in.** Home puts your most recent games first. Lounge tracks playtime for games you add too.
-- **Out of the way while you play.** Once a game is running, Lounge unloads its interface and minimises
+- **Jump back in.** Home is deliberately quiet: the time, one **Resume** button for whatever you last played or
+  watched, and shortcuts to Games, Movies, TV Shows and Apps. Lounge tracks playtime for games you add too.
+- **Out of the way while you play.** Once a game is running, Lounge blanks its interface and minimises
   itself. It also drops to low CPU priority and pauses all background work (scans, downloads). When the game
   quits, Lounge comes back to the page you left. The *Free up resources while playing* setting turns this on
   or off.
@@ -76,6 +81,11 @@ launch. A copy installed as Foyer 2.0.0 looks for updates under the old name, so
 hand; it updates itself from then on. Installers and the FSE package upgrade the Foyer install in place.
 
 Films and shows need [VLC](https://www.videolan.org/vlc/).
+
+**Linux (test build).** Releases also carry `Lounge-x.y.z-linux-x64.tar.gz`, a single `lounge` binary for trying
+the app on a Linux desktop such as Omarchy. It needs `webkit2gtk-4.1` (Arch: `sudo pacman -S webkit2gtk-4.1`). Only
+the interface and library browsing are meant to work there so far; the Windows-specific parts (Steam
+detection, system controls, updates) are not implemented on Linux.
 
 ### Updates
 
@@ -129,28 +139,21 @@ The package is signed with a certificate made fresh for each build. Only its pub
 ## Development
 
 ```sh
-npm install
-npm start          # run the app
-npm test           # unit tests (parsers, Steam scanning, game info, i18n, VLC)
-npm run dist       # installer + zip into dist/ (on Windows)
+cd src-tauri
+cargo run -p lounge-app     # run the app (Windows: WebView2; Linux: webkit2gtk, for development)
+cargo test -p lounge-core   # Rust unit tests
+cd .. && npm install && npm test   # renderer tests (gamepad, i18n, stats, clicks in jsdom)
+node scripts/screenshots.js   # regenerate docs/*.jpg (needs playwright, see the script's header)
+npx -y @tauri-apps/cli@2 build --bundles nsis   # installer (run in src-tauri, on Windows)
 ```
 
 ```
-main.js             Electron main process: window, IPC, view model, VLC & game sessions, suspend while playing
-preload.js          The API exposed to the page
-src/steam.js        Finds Steam, its library folders, installed games, playtime and cached artwork
-src/vdf.js          Parser for Steam's .vdf/.acf files
-src/games.js        Launching and tracking games (Steam via RunningAppID, others by process)
-src/gameinfo.js     Steam store details, Steam CDN and SteamGridDB artwork, cached on disk
-src/system.js       Volume, brightness, Wi-Fi, power and process priority (Windows)
-src/updater.js      Checks GitHub Releases, downloads and verifies updates, hands off to the right installer
-src/library.js      Film & TV folder scanning; src/parse.js name parsing; src/metadata.js TMDB
-src/vlc.js          Finding and driving VLC
-renderer/           The interface: nav.js (controller/touch/keyboard), core.js, views.js, app.js, i18n.js
-build/fse/          MSIX manifest, assets and installer for the full screen experience package
-scripts/build-fse.ps1  Builds the FSE package (CI runs it on Windows)
+src-tauri/lounge-core/  Business logic: Steam scanning, games, library, VLC, metadata, system, updater, transfers, remote
+src-tauri/app/          The Tauri shell: window, commands, sessions, settings side effects
+renderer/               The interface: nav.js (controller/touch/keyboard), core.js, views.js, app.js, i18n.js
+build/fse/              MSIX manifest, assets and installer for the full screen experience package
+scripts/build-fse.ps1   Builds the FSE package (CI runs it on Windows)
 ```
 
-CI (`.github/workflows/build.yml`) runs on a Windows runner for every push. It runs the tests, including
-one against real VLC, then builds all three downloads. Pushing a tag like `v2.0.0` publishes a release with
+CI (`.github/workflows/build.yml`) runs on a Windows runner for every push. It runs the tests, then builds all three downloads. Pushing a tag like `v2.0.0` publishes a release with
 them attached.

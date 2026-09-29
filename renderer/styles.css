@@ -119,7 +119,7 @@ body.dim-backdrop #backdrop .layer.on {
   z-index: 20;
   display: flex;
   align-items: center;
-  gap: 3rem;
+  gap: 1.8rem;
   padding: 2rem var(--gutter) 1rem;
   background: linear-gradient(180deg, rgba(7, 8, 12, 0.85), rgba(7, 8, 12, 0));
   transition: opacity 0.3s var(--ease), transform 0.3s var(--ease);
@@ -148,12 +148,10 @@ body.detail #topbar {
   letter-spacing: 0.02em;
 }
 .brand-mark {
-  width: 1.5rem;
-  height: 1.5rem;
-  border-radius: 0.35rem;
-  background: conic-gradient(from 200deg, var(--accent), #ffcf7a, var(--accent));
-  box-shadow: 0 0 1.4rem rgba(255, 138, 30, 0.45);
-  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  width: 2.4rem;
+  height: 2.4rem;
+  background: url('logo-mark.svg') center / contain no-repeat;
+  filter: drop-shadow(0 0 0.7rem rgba(255, 138, 30, 0.45));
 }
 
 #tabs {
@@ -1125,6 +1123,11 @@ body.input-pad #back-btn,
 body.input-keyboard #back-btn {
   visibility: hidden;
 }
+/* The menu button is only there for touch; when hidden it mustn't leave a gap at the top-right corner. */
+body.input-pad #menu-btn,
+body.input-keyboard #menu-btn {
+  display: none;
+}
 .wifi,
 .battery {
   display: inline-flex;
@@ -1995,7 +1998,6 @@ body[data-nav='left'] #page[data-enter='yes'] > .page {
 }
 #backdrop .layer.on {
   transform: translateX(calc(var(--px) * -2%)) scale(1);
-  animation: drift 38s ease-in-out infinite alternate;
 }
 @keyframes drift {
   to {
@@ -2201,7 +2203,6 @@ body[data-nav='left'] #page[data-enter='yes'] > .page {
   display: inline-block;
   width: 4rem;
   height: 4rem;
-  border-radius: 0.8rem;
   animation: pulse 1.6s ease-in-out infinite;
 }
 @keyframes pulse {
@@ -2800,7 +2801,7 @@ body.reduce-motion *:not(#splash *)::after {
   max-width: 50rem;
 }
 
-/* ------------------------------------------------------------------ Apps & Tailscale */
+/* ------------------------------------------------------------------ Apps */
 
 .app-grid {
   grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
@@ -2827,99 +2828,6 @@ body.reduce-motion *:not(#splash *)::after {
 }
 .app-tile.is-hidden .art {
   opacity: 0.45;
-}
-
-.ts-card {
-  display: flex;
-  align-items: center;
-  gap: 1.2rem;
-  margin: 0 var(--gutter) 1.2rem;
-  padding: 1rem 1.3rem;
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-.ts-ico .ico {
-  width: 2rem;
-  height: 2rem;
-  color: var(--muted);
-}
-.ts-card.connected .ts-ico .ico {
-  color: var(--good);
-}
-.ts-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.ts-name {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  font-size: 1.3rem;
-  font-weight: 700;
-}
-.ts-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-.ts-state i {
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 50%;
-  background: var(--faint);
-}
-.ts-card.connected .ts-state i {
-  background: var(--good);
-}
-.ts-card.needsLogin .ts-state i,
-.ts-card.unknown .ts-state i {
-  background: #f5a524;
-}
-.ts-detail {
-  margin-top: 0.25rem;
-  color: var(--muted);
-  font-size: 1rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ts-actions {
-  display: flex;
-  gap: 0.6rem;
-  flex: 0 0 auto;
-}
-.qm-ts span {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.qm-ts small {
-  font-size: 0.85rem;
-  font-weight: 600;
-  opacity: 0.7;
-}
-.ts-login {
-  display: flex;
-  align-items: center;
-  gap: 1.4rem;
-  margin: 0.4rem 0 1.2rem;
-}
-.ts-qr {
-  width: 11rem;
-  height: 11rem;
-  border-radius: 0.6rem;
-  background: #fff;
-  image-rendering: pixelated;
-  flex: 0 0 auto;
-}
-.ts-url {
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  font-size: 1rem;
-  color: var(--muted);
-  word-break: break-all;
 }
 
 /* Eight tabs: on a handheld-sized window, the brand shrinks to its mark and the tabs tighten further. */
@@ -2982,8 +2890,7 @@ body.booting #page {
 .splash-mark {
   width: 5.5rem;
   height: 5.5rem;
-  background: conic-gradient(from 200deg, var(--accent), #ffcf7a, var(--accent));
-  clip-path: polygon(8% 0, 100% 50%, 8% 100%);
+  background: url('logo-mark.svg') center / contain no-repeat;
   animation: mark-in 0.85s var(--spring) both;
 }
 .splash-word {
@@ -3535,4 +3442,189 @@ body.detail #tools {
 }
 .home .row[data-row='cn'] .card.wide {
   width: 19rem;
+}
+
+
+/* ------------------------------------------------------------------ Home: minimal launcher */
+
+.page.home.mini {
+  display: flex;
+  flex-direction: column;
+  padding: 7rem var(--gutter) 3.5rem;
+  overflow: hidden;
+}
+.mh-top {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.mh-clock {
+  font-size: 7.5rem;
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.mh-date {
+  font-size: 1.5rem;
+  color: var(--muted);
+}
+.mh-greet {
+  margin-top: 0.8rem;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+}
+.mh-main {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 2.4rem;
+}
+.mh-resume {
+  position: relative;
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+  text-align: left;
+  min-width: 26rem;
+  max-width: 44rem;
+  padding: 1.6rem 5.5rem 1.6rem 1.8rem;
+  border-radius: 1.2rem;
+  border: 1px solid var(--line);
+  background: rgba(10, 11, 16, 0.78);
+  color: var(--text);
+  transition: transform 0.25s var(--out), background 0.25s, border-color 0.25s;
+}
+.mh-resume:focus {
+  transform: scale(1.03);
+  background: rgba(20, 22, 30, 0.72);
+  border-color: var(--focus);
+}
+.mh-kicker {
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.9rem;
+}
+.mh-title {
+  font-size: 3rem;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  text-wrap: balance;
+}
+.mh-logo {
+  max-height: 5rem;
+  max-width: 24rem;
+  object-fit: contain;
+  object-position: left;
+}
+.mh-sub {
+  color: var(--muted);
+  font-size: 1.15rem;
+}
+.mh-bar {
+  width: 100%;
+  height: 0.28rem;
+  border-radius: 1rem;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.mh-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.mh-play {
+  position: absolute;
+  right: 1.6rem;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.mh-play svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+.mh-doors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+.mh-door {
+  padding: 0.7rem 1.4rem;
+  border-radius: 99rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 600;
+  transition: transform 0.2s var(--out), background 0.2s, border-color 0.2s;
+}
+.mh-door:focus {
+  background: var(--text);
+  color: #0b0c10;
+  border-color: var(--text);
+  transform: scale(1.06);
+}
+/* The backdrop is only a mood here: darker and softer than on the detail pages. */
+body:has(.page.home.mini) #backdrop .shade {
+  background: linear-gradient(180deg, rgba(7, 8, 12, 0.55), rgba(7, 8, 12, 0.85));
+}
+#page[data-enter='yes'] .home.mini .mh-top,
+#page[data-enter='yes'] .home.mini .mh-resume,
+#page[data-enter='yes'] .home.mini .mh-door {
+  animation: rise 0.6s var(--out) both;
+}
+#page[data-enter='yes'] .home.mini .mh-resume {
+  animation-delay: 0.12s;
+}
+#page[data-enter='yes'] .home.mini .mh-door {
+  animation-delay: calc(0.24s + sibling-index() * 70ms);
+}
+
+/* ------------------------------------------------------------------ Startup intro: console-style boot */
+
+/* A band of light sweeps across the dark screen once, lighting the mark as it passes. */
+.splash-sweep {
+  position: absolute;
+  inset: -20% 0;
+  background: linear-gradient(100deg, transparent 35%, rgba(255, 190, 110, 0.16) 47%, rgba(255, 255, 255, 0.22) 50%, rgba(255, 190, 110, 0.16) 53%, transparent 65%);
+  transform: translateX(-100%);
+  animation: sweep 1.3s var(--ease) 0.15s both;
+}
+@keyframes sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+.intro-calm .splash-sweep {
+  display: none;
+}
+#splash {
+  overflow: hidden;
+}
+.splash-mark {
+  animation-delay: 0.35s;
+}
+
+/* Home has its own big clock. */
+body:has(.page.home.mini) #topbar #clock {
+  display: none;
+}
+
+/* Taps fire at once (no double-tap-zoom wait); scrolling regions set their own touch-action. */
+html,
+body {
+  touch-action: manipulation;
 }

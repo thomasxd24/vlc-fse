@@ -19,7 +19,6 @@ const S = {
   servers: [],
   transfers: [],
   apps: [],
-  tailscale: null,
   platform: 'win32',
   systemControls: false,
   fsePackage: false,
@@ -136,9 +135,19 @@ function placeholder(title, text = title) {
   return `<div class="placeholder" style="background:linear-gradient(135deg,hsl(${h1} 42% 30%),hsl(${(h1 + 40) % 360} 48% 12%))">${h(text)}</div>`;
 }
 
+/**
+ * Local artwork arrives as asset-protocol URLs of the full-size file. A webview decodes images at full pixel
+ * size, so cards and backdrops ask for a downscaled copy from the shell's `thumb` protocol instead.
+ */
+function thumb(src, width) {
+  const m = /^(?:http:\/\/asset\.localhost|asset:\/\/localhost)\/(.+)$/.exec(src || '');
+  if (!m) return src;
+  return `${src.startsWith('http') ? 'http://thumb.localhost' : 'thumb://localhost'}/${width}/${m[1]}`;
+}
+
 function img(src, title, text) {
   return src
-    ? `<img src="${h(src)}" alt="" loading="lazy" decoding="async" data-title="${h(title)}" data-text="${h(text ?? title)}">`
+    ? `<img src="${h(thumb(src, 640))}" alt="" loading="lazy" decoding="async" data-title="${h(title)}" data-text="${h(text ?? title)}">`
     : placeholder(title, text);
 }
 
@@ -289,6 +298,7 @@ const Sound = (() => {
     if (!enabled) return;
     try {
       ctx = ctx || new AudioContext();
+      if (ctx.state === 'suspended') ctx.resume();
       const t0 = ctx.currentTime;
       const o = ctx.createOscillator();
       const g = ctx.createGain();
@@ -351,12 +361,12 @@ const Backdrop = (() => {
       const probe = new Image();
       probe.onload = () => {
         if (currentUrl !== url) return;
-        nextLayer.style.backgroundImage = `url("${url}")`;
+        nextLayer.style.backgroundImage = `url("${thumb(url, 1600)}")`;
         nextLayer.classList.add('on');
         prevLayer.classList.remove('on');
         active = 1 - active;
       };
-      probe.src = url;
+      probe.src = thumb(url, 1600);
     };
     if (immediate) apply();
     else timer = setTimeout(apply, 220);
@@ -405,6 +415,7 @@ function go(r) {
 function switchTab(name) {
   if (stack.length === 1 && route().name === name) return;
   saveView();
+  Sound.select();
   // The icon pages (Search, Transfers, Settings) count as sitting after the tabs, as they do on screen.
   const order = [...TABS, ...TOOLS].map((tab) => tab.name);
   const before = order.indexOf(stack[0].name);
@@ -834,7 +845,22 @@ const LegionHid = (() => {
     return opened;
   }
 
+  // Tauri shell: the native side reads the HID interface and forwards each report as an event.
+  function startNative() {
+    api.onLegionReport((r) => {
+      opened = true;
+      onReport({ reportId: r.reportId, data: Uint8Array.from(r.bytes) });
+    });
+    api.onLegionState((s) => {
+      if (s.connected) return;
+      opened = false;
+      status = null;
+      emit();
+    });
+  }
+
   async function start() {
+    if (window.lounge?.kind === 'tauri') return startNative();
     if (!navigator.hid) return;
     navigator.hid.addEventListener('connect', () => scan());
     navigator.hid.addEventListener('disconnect', (e) => {
@@ -1041,6 +1067,8 @@ const Status = (() => {
     setInterval(pollWifi, 30000);
     renderPad();
     setInterval(renderPad, 3000);
+    // Legion controllers' battery/attach state comes through their vendor HID interface: WebHID where
+    // there is one, or the Tauri shell's native reader (WebView2 can't grant WebHID silently).
     if (S.platform === 'win32' || navigator.hid) LegionHid.start();
     window.addEventListener('online', pollWifi);
     window.addEventListener('offline', pollWifi);
@@ -1049,12 +1077,6 @@ const Status = (() => {
 })();
 
 // ============================================================================ Quick menu (☰)
-
-/** One line for Tailscale's state: "Connected", "Disconnected", "Signed out"… */
-function tsStateLabel(st) {
-  if (!st || !st.installed) return '';
-  return t(`ts.${st.state || 'unknown'}`);
-}
 
 const QuickMenu = (() => {
   const root = $('#quick-menu');
@@ -1103,7 +1125,6 @@ const QuickMenu = (() => {
           ${showPower ? `<button class="qm-btn focusable" data-qm="sleep" data-key="qm-sleep">${ICON.moon}<span>${h(t('qm.sleep'))}</span></button>` : ''}
           ${showPower ? `<button class="qm-btn focusable" data-qm="restart" data-key="qm-restart">${ICON.restart}<span>${h(t('qm.restart'))}</span></button>` : ''}
           ${showPower ? `<button class="qm-btn focusable" data-qm="shutdown" data-key="qm-shutdown">${ICON.power}<span>${h(t('qm.shutdown'))}</span></button>` : ''}
-          ${S.tailscaleInstalled ? `<button class="qm-btn qm-ts focusable" data-qm="tailscale" data-key="qm-tailscale">${ICON.vpn}<span>${h(t('ts.title'))}<small>${h(S.tailscale ? tsStateLabel(S.tailscale) : '')}</small></span></button>` : ''}
           <button class="qm-btn focusable" data-qm="stats" data-key="qm-stats">${ICON.chart}<span>${h(t('stats.title'))}</span></button>
           <button class="qm-btn focusable" data-qm="settings" data-key="qm-settings">${ICON.gamepad}<span>${h(t('tab.settings'))}</span></button>
           <button class="qm-btn danger focusable" data-qm="quit" data-key="qm-quit">${ICON.exit}<span>${h(t('qm.quit'))}</span></button>
@@ -1172,11 +1193,6 @@ const QuickMenu = (() => {
       switchTab('settings');
       return;
     }
-    if (action === 'tailscale') {
-      close();
-      tailscalePanel();
-      return;
-    }
     if (action === 'stats') {
       close();
       if (route().name !== 'stats') openStats();
@@ -1213,12 +1229,6 @@ const QuickMenu = (() => {
     Sound.open();
     paint();
     Hints.update();
-    if (S.tailscaleInstalled) {
-      api.tailscaleStatus().then((st) => {
-        S.tailscale = st;
-        if (open) paint();
-      });
-    }
     if (S.systemControls) {
       sys = await api.systemGet().catch(() => ({ supported: false }));
       if (open) paint();
