@@ -1,0 +1,20 @@
+//! Layers over the pages: quick menu, now playing, the running-game layer, updates, the boot intro,
+//! and sound / rumble feedback.
+
+use super::ctx::Ctx;
+
+pub mod feedback;
+pub mod gamelayer;
+pub mod intro;
+pub mod nowplaying;
+pub mod quickmenu;
+pub mod update;
+
+pub fn install(ctx: &Ctx) {
+    feedback::install(ctx);
+    gamelayer::install(ctx);
+    intro::install(ctx);
+    nowplaying::install(ctx);
+    quickmenu::install(ctx);
+    update::install(ctx);
+}

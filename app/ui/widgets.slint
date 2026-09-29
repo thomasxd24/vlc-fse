@@ -88,6 +88,8 @@ export component Btn inherits Rectangle {
     in property <bool> small;
     in property <bool> focused;
     in property <bool> enabled: true;
+    // Left-align the content (menu choices fill the dialog's width with their label at the left).
+    in property <bool> left;
     callback clicked();
     callback hovered();
     callback options();
@@ -110,7 +112,7 @@ export component Btn inherits Rectangle {
         padding-top: (small ? 0.6 : 0.95) * Theme.rem;
         padding-bottom: self.padding-top;
         spacing: 0.7 * Theme.rem;
-        alignment: center;
+        alignment: left ? start : center;
         if icon != "": Icon {
             name: icon;
             tint: ink;
@@ -322,6 +324,7 @@ export component CardTile inherits VerticalLayout {
     callback options();
     width: tile-width;
     spacing: 0.7 * Theme.rem;
+    alignment: start;
 
     art := Rectangle {
         height: root.tile-width * (card.wide ? 9 / 16 : 3 / 2);

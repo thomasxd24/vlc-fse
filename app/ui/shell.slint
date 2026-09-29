@@ -411,6 +411,7 @@ component ChooseView inherits DialogFrame {
             primary: c.primary;
             danger: c.danger;
             enabled: !c.disabled;
+            left: true;
             focused: root.top && i == root.cursor;
             hovered => { if (Input.mode == "mouse") { root.cursor = i; } }
             clicked => { root.cursor = i; Dialog.picked(spec.id, c.value); }
