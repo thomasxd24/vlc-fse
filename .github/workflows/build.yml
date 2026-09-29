@@ -48,11 +48,16 @@ jobs:
           set -o pipefail
           cargo test -p lounge-core 2>&1 | tee test-output.log
 
+      # `::error::` workflow commands become check-run annotations, which stay readable without
+      # signing in (unlike step logs, step summaries and artifacts, which are all gated).
       - name: Rust test failure summary
         if: failure()
         working-directory: src-tauri
         shell: bash
         run: |
+          grep -E "^test .* FAILED|panicked at|^ +lounge_core::[a-z_:0-9]+$" test-output.log | head -20 | while IFS= read -r line; do
+            echo "::error::${line:0:200}"
+          done
           {
             echo "### Rust test failures (last 150 lines)"
             echo '```'
