@@ -198,7 +198,7 @@ pub fn find_vlc(preferred: Option<&Path>, env: &VlcEnv) -> Option<PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn registry_default_value(key: &str) -> Option<PathBuf> {
-    let output = std::process::Command::new("reg").args(["query", key, "/ve"]).output().ok()?;
+    let output = crate::hidden_command("reg").args(["query", key, "/ve"]).output().ok()?;
     if !output.status.success() {
         return None;
     }

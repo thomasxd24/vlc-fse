@@ -298,7 +298,7 @@ fn walk_dir(dir: &Path, depth: u32, map: &mut HashMap<String, String>) {
 fn run_power_shell(script: &str, timeout: std::time::Duration) -> Result<String, String> {
     use base64::Engine as _;
     let encoded = base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>());
-    let mut child = std::process::Command::new("powershell.exe")
+    let mut child = crate::hidden_command("powershell.exe")
         .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encoded])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())

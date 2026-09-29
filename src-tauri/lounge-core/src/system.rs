@@ -48,7 +48,7 @@ pub fn wifi() -> Option<WifiStatus> {
 
 #[cfg(target_os = "windows")]
 fn wifi_impl() -> Option<WifiStatus> {
-    let output = Command::new("netsh").args(["wlan", "show", "interfaces"]).output().ok()?;
+    let output = crate::hidden_command("netsh").args(["wlan", "show", "interfaces"]).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -82,7 +82,7 @@ pub fn power(action: PowerAction, sleep: impl FnOnce() -> std::io::Result<()>) -
 
 #[cfg(target_os = "windows")]
 fn power_impl(flag: &str) -> std::io::Result<()> {
-    Command::new("shutdown").args([flag, "/t", "0"]).status().map(|_| ())
+    crate::hidden_command("shutdown").args([flag, "/t", "0"]).status().map(|_| ())
 }
 #[cfg(not(target_os = "windows"))]
 fn power_impl(_flag: &str) -> std::io::Result<()> {
@@ -121,7 +121,7 @@ pub fn has_battery() -> Option<bool> {
 
 #[cfg(target_os = "windows")]
 fn has_battery_impl() -> Option<bool> {
-    let output = Command::new("powershell.exe")
+    let output = crate::hidden_command("powershell.exe")
         .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "@(Get-CimInstance -ClassName Win32_Battery).Count"])
         .output()
         .ok()?;
@@ -316,7 +316,7 @@ impl SystemHelper {
             let utf16: Vec<u8> = HELPER_SCRIPT.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
             base64::engine::general_purpose::STANDARD.encode(utf16)
         };
-        let mut child = std::process::Command::new("powershell.exe")
+        let mut child = crate::hidden_command("powershell.exe")
             .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encoded])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

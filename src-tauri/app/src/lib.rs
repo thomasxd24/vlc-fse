@@ -70,17 +70,19 @@ fn default_settings() -> Map<String, Value> {
 // ---------------------------------------------------------------------------
 // Paths & URLs
 
-/// A local filesystem path as a `file://` URL, including the Windows drive-letter form.
+/// A local file as a URL the page can load. The page is served from `tauri.localhost` (WebView2) or
+/// `tauri://` (elsewhere), and the webview refuses `file://` from there, so local artwork goes through
+/// Tauri's asset protocol, exactly as the JS `convertFileSrc` builds it.
 fn file_url(p: &Path) -> String {
-    let s = p.to_string_lossy().replace('\\', "/");
-    if let Some(rest) = s.strip_prefix('/') {
-        if !rest.starts_with('/') && rest.as_bytes().get(1) == Some(&b':') {
-            // C:/... -> file:///C:/...
-            return format!("file:///{rest}");
+    let mut enc = String::new();
+    for b in p.to_string_lossy().replace('\\', "/").bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            enc.push(b as char);
+        } else {
+            enc.push_str(&format!("%{b:02X}"));
         }
-        return format!("file:///{rest}");
     }
-    format!("file:///{s}")
+    if cfg!(windows) { format!("http://asset.localhost/{enc}") } else { format!("asset://localhost/{enc}") }
 }
 
 fn file_url_opt(p: Option<&str>) -> Value {
@@ -785,7 +787,7 @@ fn icon_for(artwork_dir: &Path, exe: &str) -> Option<String> {
         exe.replace('\'', "''"),
         dest.to_string_lossy().replace('\'', "''")
     );
-    let ok = std::process::Command::new("powershell.exe")
+    let ok = lounge_core::hidden_command("powershell.exe")
         .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script])
         .output()
         .map(|o| o.status.success())
@@ -1253,7 +1255,7 @@ fn dpapi_unprotect(sealed_b64: &str) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn powershell_out(script: &str) -> Option<String> {
-    let out = std::process::Command::new("powershell.exe")
+    let out = lounge_core::hidden_command("powershell.exe")
         .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script])
         .output()
         .ok()?;
@@ -1740,7 +1742,7 @@ fn install_fse(st: &AppState, command: &str, args: &[String], status_file: &Path
     let fail = |error: Option<String>, error_key: &str| -> Value {
         json!({"ok": false, "errorKey": error_key, "vars": error.map(|m| json!({"message": m})).unwrap_or(Value::Null)})
     };
-    let out = std::process::Command::new(command)
+    let out = lounge_core::hidden_command(command)
         .args(args)
         .output();
     match out {
@@ -1802,7 +1804,7 @@ fn spawn_detached(command: &str, args: &[String]) -> std::io::Result<()> {
 fn open_url_in_shell(url: &str) -> Result<(), std::io::Error> {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn().map(|_| ())
+        lounge_core::hidden_command("cmd").args(["/C", "start", "", url]).spawn().map(|_| ())
     }
     #[cfg(target_os = "macos")]
     {

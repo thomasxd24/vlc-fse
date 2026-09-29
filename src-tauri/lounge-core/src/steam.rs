@@ -432,7 +432,7 @@ enum RegValue {
 
 #[cfg(target_os = "windows")]
 fn registry_query_value(key: &str, value: &str) -> Option<RegValue> {
-    let output = std::process::Command::new("reg").args(["query", key, "/v", value]).output().ok()?;
+    let output = crate::hidden_command("reg").args(["query", key, "/v", value]).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -536,7 +536,7 @@ pub fn launch_quietly(appid: &str, steam_path: Option<&Path>) -> std::io::Result
 
     let utf16le: Vec<u8> = quiet_script(QUIET_WINDOW_SECS).encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
-    let _ = Command::new("powershell.exe")
+    let _ = crate::hidden_command("powershell.exe")
         .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encoded])
         .stdin(Stdio::null())
         .stdout(Stdio::null())

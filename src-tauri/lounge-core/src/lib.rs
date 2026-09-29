@@ -24,3 +24,16 @@ pub mod updater;
 pub mod vdf;
 pub mod viewmodel;
 pub mod vlc;
+
+/// A command for a console helper (PowerShell, netsh, reg…) that won't flash a console window over the
+/// launcher. Off Windows it's a plain `Command`.
+pub fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
