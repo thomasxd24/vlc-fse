@@ -2305,7 +2305,13 @@ pub fn run() {
             }
 
             let fullscreen = app.state::<AppState>().settings.get("startFullscreen").and_then(|v| v.as_bool()).unwrap_or(true);
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()));
+            // Sound effects fire from controller input, which WebView2 doesn't count as a user gesture; without this
+            // its autoplay rule leaves the AudioContext suspended (Electron ran with the same switch). The other
+            // flag is wry's default, which setting this replaces.
+            #[cfg(windows)]
+            let builder = builder.additional_browser_args("--autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+            builder
                 .title("Lounge")
                 .inner_size(1600.0, 900.0)
                 .min_inner_size(960.0, 540.0)

@@ -151,7 +151,7 @@ let homeClockTimer = null;
 function homeClockText() {
   const now = new Date();
   return {
-    time: now.toLocaleTimeString(S.lang, { hour: '2-digit', minute: '2-digit' }),
+    time: now.toLocaleTimeString(S.lang, { hour: 'numeric', minute: '2-digit' }),
     date: now.toLocaleDateString(S.lang, { weekday: 'long', day: 'numeric', month: 'long' })
   };
 }

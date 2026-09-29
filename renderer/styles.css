@@ -3711,3 +3711,8 @@ body:has(.page.home.mini) #backdrop .shade {
 .splash-mark {
   animation-delay: 0.35s;
 }
+
+/* Home has its own big clock. */
+body:has(.page.home.mini) #topbar #clock {
+  visibility: hidden;
+}

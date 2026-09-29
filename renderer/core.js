@@ -289,6 +289,7 @@ const Sound = (() => {
     if (!enabled) return;
     try {
       ctx = ctx || new AudioContext();
+      if (ctx.state === 'suspended') ctx.resume();
       const t0 = ctx.currentTime;
       const o = ctx.createOscillator();
       const g = ctx.createGain();
@@ -405,6 +406,7 @@ function go(r) {
 function switchTab(name) {
   if (stack.length === 1 && route().name === name) return;
   saveView();
+  Sound.select();
   // The icon pages (Search, Transfers, Settings) count as sitting after the tabs, as they do on screen.
   const order = [...TABS, ...TOOLS].map((tab) => tab.name);
   const before = order.indexOf(stack[0].name);
