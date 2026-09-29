@@ -13,42 +13,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install JS dependencies
-        run: npm ci
-
-      - name: Renderer tests
-        run: node --test test/*.test.js
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
 
       # Captured so a failure's names and panics land in the run summary (readable without signing
       # in) and the full log ships as an artifact, instead of living only in the sign-in-gated log.
-      - name: Rust tests (lounge-core)
-        working-directory: src-tauri
+      - name: Rust tests
         shell: bash
         run: |
           set -o pipefail
-          cargo test -p lounge-core 2>&1 | tee test-output.log
+          cargo test -p lounge-core -p lounge 2>&1 | tee test-output.log
 
       # `::error::` workflow commands become check-run annotations, which stay readable without
       # signing in (unlike step logs, step summaries and artifacts, which are all gated).
       - name: Rust test failure summary
         if: failure()
-        working-directory: src-tauri
         shell: bash
         run: |
-          grep -E "^test .* FAILED|panicked at|^ +lounge_core::[a-z_:0-9]+$" test-output.log | head -20 | while IFS= read -r line; do
+          grep -E "^test .* FAILED|panicked at|^error(\[E[0-9]+\])?:|^ +(lounge_core|lounge)::[a-z_:0-9]+$" test-output.log | head -20 | while IFS= read -r line; do
             echo "::error::${line:0:200}"
           done
           {
@@ -63,13 +49,22 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-test-log
-          path: src-tauri/test-output.log
+          path: test-output.log
           if-no-files-found: ignore
           compression-level: 0
 
       - name: Clippy
-        run: cargo clippy -p lounge-core -p lounge-app --all-targets -- -D warnings
-        working-directory: src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy -p lounge-core -p lounge --all-targets -- -D warnings 2>&1 | tee clippy.log
+      - name: Clippy failure summary
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "^(error|warning)" -A3 clippy.log | grep -E "^(error|warning)|-->" | head -20 | while IFS= read -r line; do
+            echo "::error::${line:0:200}"
+          done
 
       # For a release tag like v1.2.0, stamp that version into the build so file names match the tag.
       - name: Set version from tag
@@ -78,41 +73,48 @@ jobs:
         run: |
           set -euo pipefail
           v="${GITHUB_REF_NAME#v}"
-          cd src-tauri
-          sed -i "s|^version = \".*\"|version = \"$v\"|" app/Cargo.toml
-          sed -i "s|\"version\": \".*\"|\"version\": \"$v\"|" app/tauri.conf.json
+          sed -i "0,/^version = \".*\"/s//version = \"$v\"/" app/Cargo.toml
 
-      # Produces target/release/lounge-app.exe (the app is self-contained: the renderer is embedded,
-      # and WebView2's loader is statically linked), plus the NSIS bundle under
-      # target/release/bundle/nsis/.
-      - name: Build Windows app (Tauri)
-        working-directory: src-tauri
-        run: npx -y @tauri-apps/cli@2 build --bundles nsis
-        env:
-          # Keep the NSIS build from trying to codesign.
-          TAURI_SIGNING_PRIVATE_KEY: ''
+      # target/release/lounge.exe is self-contained: the UI is compiled in and Skia is linked statically.
+      - name: Build Windows app
+        run: cargo build --release -p lounge
 
       - name: Stage dist layout
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (Get-Content src-tauri/app/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $version = (Select-String -Path app/Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          "LOUNGE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
           New-Item -ItemType Directory -Force -Path dist, dist/win-unpacked | Out-Null
-          Copy-Item src-tauri/target/release/lounge-app.exe dist/win-unpacked/Lounge.exe
-          Copy-Item src-tauri/target/release/bundle/nsis/*.exe "dist/Lounge-Setup-$version.exe"
+          Copy-Item target/release/lounge.exe dist/win-unpacked/Lounge.exe
           $stage = Join-Path $env:RUNNER_TEMP 'lounge-zip-stage'
           Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item dist/win-unpacked/Lounge.exe $stage
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath "dist/Lounge-$version-win-x64.zip"
           Write-Host "version: $version"
+
+      # Lounge-Setup-<version>.exe: the per-user installer the updater runs silently (build/nsis/lounge.nsi).
+      - name: Build installer (NSIS)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
+          if (-not $makensis) { $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe" }
+          if (-not (Test-Path $makensis)) { choco install nsis -y --no-progress; $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe" }
+          $v = $env:LOUNGE_VERSION
+          $parts = @((($v -replace '[-+].*$', '').Split('.')) | ForEach-Object { [int]$_ })
+          while ($parts.Count -lt 4) { $parts += 0 }
+          $v4 = $parts[0..3] -join '.'
+          & $makensis "/DVERSION=$v" "/DVERSION_4=$v4" "/DSRC=$PWD\dist\win-unpacked" "/DOUT=$PWD\dist\Lounge-Setup-$v.exe" build\nsis\lounge.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed ($LASTEXITCODE)" }
           Get-ChildItem dist
 
       # Produces dist/Lounge-FSE-<version>.zip: Lounge as an MSIX that Windows offers as a
       # full screen experience home app, with its installer.
       - name: Build full screen experience package
         shell: powershell
-        run: .\scripts\build-fse.ps1 -Version ((Get-Content src-tauri/app/tauri.conf.json -Raw | ConvertFrom-Json).version)
+        run: .\scripts\build-fse.ps1 -Version $env:LOUNGE_VERSION
 
       - name: Upload FSE package
         uses: actions/upload-artifact@v4
@@ -140,7 +142,7 @@ jobs:
 
   linux:
     # Test build for Linux (Arch/Omarchy and friends). Built on 22.04 so the binary's glibc floor is old
-    # enough for any current distro; at runtime it needs webkit2gtk-4.1 and gtk3 (Arch: `webkit2gtk-4.1`).
+    # enough for any current distro; at runtime it needs fontconfig, libxkbcommon(-x11) and gtk3 (file dialogs).
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -148,24 +150,38 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+          sudo apt-get install -y libfontconfig1-dev libfreetype-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb-xkb1 libgtk-3-dev libssl-dev xvfb
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
 
       - name: Build Linux app
-        working-directory: src-tauri
-        run: cargo build --release -p lounge-app
+        run: cargo build --release -p lounge
+
+      # Photographs every screen from the demo library, so each run's UI can be looked at without a device.
+      - name: UI screenshots (demo mode)
+        run: |
+          set -euo pipefail
+          mkdir -p snaps
+          export LOUNGE_BIN=target/release/lounge
+          scripts/snap.sh "go home; shot snaps/home.png; go games; shot snaps/games.png; go game g1; shot snaps/game.png; key Menu; shot snaps/options.png; key Escape; go movies; shot snaps/movies.png; go shows; shot snaps/shows.png; go apps; shot snaps/apps.png; go search; shot snaps/search.png; go settings; shot snaps/settings.png; go transfers; shot snaps/transfers.png"
+          scripts/snap.sh "go show sh0; shot snaps/show.png; event now-playing demo; shot snaps/now-playing.png" --resume show
+          scripts/snap.sh "go home; shot snaps/home-fr.png" --lang fr --resume show
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lounge-screenshots
+          path: snaps/*.png
+          if-no-files-found: warn
 
       - name: Package
         run: |
           set -euo pipefail
-          version=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' src-tauri/app/tauri.conf.json | head -1)
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' app/Cargo.toml | head -1)
           mkdir -p dist/stage
-          cp src-tauri/target/release/lounge-app dist/stage/lounge
+          cp target/release/lounge dist/stage/lounge
           tar -C dist/stage -czf "dist/Lounge-$version-linux-x64.tar.gz" lounge
           ls -la dist
 
