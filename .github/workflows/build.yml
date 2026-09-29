@@ -39,9 +39,35 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Captured so a failure's names and panics land in the run summary (readable without signing
+      # in) and the full log ships as an artifact, instead of living only in the sign-in-gated log.
       - name: Rust tests (lounge-core)
-        run: cargo test -p lounge-core
         working-directory: src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p lounge-core 2>&1 | tee test-output.log
+
+      - name: Rust test failure summary
+        if: failure()
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          {
+            echo "### Rust test failures (last 150 lines)"
+            echo '```'
+            tail -150 test-output.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Rust test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-log
+          path: src-tauri/test-output.log
+          if-no-files-found: ignore
+          compression-level: 0
 
       - name: Clippy
         run: cargo clippy -p lounge-core -p lounge-app --all-targets -- -D warnings
