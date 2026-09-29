@@ -16,19 +16,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      # The JS suite drives src/*.js (still in the tree while the Tauri build is proven out).
-      # test/remote.test.js needs ssh2's in-process SFTP server, so node_modules must exist.
-      # Real VLC, so test/vlc-real.test.js checks VLC accepts the exact command line Lounge
-      # launches it with.
-      - name: Install VLC
-        run: choco install vlc -y --no-progress
-
-      - name: Install JS dependencies
-        run: npm ci
-
-      - name: JS tests
+      - name: Renderer tests
         run: node --test test/*.test.js
 
       - uses: dtolnay/rust-toolchain@stable
@@ -142,6 +131,45 @@ jobs:
         with:
           name: Lounge-win-x64-installer
           path: dist/*.exe
+          if-no-files-found: error
+          compression-level: 0
+
+  linux:
+    # Test build for Linux (Arch/Omarchy and friends). Built on 22.04 so the binary's glibc floor is old
+    # enough for any current distro; at runtime it needs webkit2gtk-4.1 and gtk3 (Arch: `webkit2gtk-4.1`).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build Linux app
+        working-directory: src-tauri
+        run: cargo build --release -p lounge-app
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' src-tauri/app/tauri.conf.json | head -1)
+          mkdir -p dist/stage
+          cp src-tauri/target/release/lounge-app dist/stage/lounge
+          tar -C dist/stage -czf "dist/Lounge-$version-linux-x64.tar.gz" lounge
+          ls -la dist
+
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lounge-linux-x64
+          path: dist/Lounge-*-linux-x64.tar.gz
           if-no-files-found: error
           compression-level: 0
 

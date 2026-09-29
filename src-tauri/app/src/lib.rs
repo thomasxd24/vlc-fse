@@ -6,17 +6,14 @@
 //! VLC playback with progress/resume/watch-time, game launching with suspend/resume, TMDB and game
 //! enrichment in background threads, servers/remote browsing/transfers, the Start-menu apps list,
 //! Tailscale (status/connect/login with QR), the system helper (volume/brightness/sleep), the
-//! self-updater, and every settings side effect. `window.lounge` (what `preload.js`'s
-//! `contextBridge` exposes today) is recreated as an initialization script mapping each method to
-//! `window.__TAURI__.core.invoke(...)`.
+//! self-updater, and every settings side effect. `window.lounge` is created by an initialization
+//! script mapping each method to `window.__TAURI__.core.invoke(...)`.
 //!
-//! Known gaps, where Electron has no Tauri equivalent yet:
+//! Known gaps:
 //! - **WebHID device permissions** (the Legion Go controllers' battery/attach toasts): wry/WebView2
-//!   has no `setDevicePermissionHandler`, so `renderer/core.js` only starts its HID listener under
-//!   the Electron shell (it checks `window.lounge.kind`). Everything else about the controllers
-//!   (input, via the Gamepad API) works the same.
-//! - While a game runs the page is blanked and the window minimised (freeing GPU work); Electron
-//!   additionally unloads the document itself, so peak renderer memory is a little higher here.
+//!   has no device-permission handler, so `renderer/core.js` doesn't start its HID listener (it
+//!   checks `window.lounge.kind`). Input itself (via the Gamepad API) is unaffected.
+//! - While a game runs the page is blanked and the window minimised (freeing GPU work).
 
 use lounge_core::library;
 use lounge_core::remote::{self, RemoteClient, ServerSpec};

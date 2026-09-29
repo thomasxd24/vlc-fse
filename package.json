@@ -3,7 +3,6 @@
   "productName": "Lounge",
   "version": "3.0.0-alpha",
   "description": "Fullscreen game and media launcher for Windows handhelds and living-room PCs: Steam and your own games, films and TV in VLC.",
-  "main": "main.js",
   "author": "Thomas Tse",
   "license": "UNLICENSED",
   "repository": {
@@ -11,60 +10,7 @@
     "url": "git+https://github.com/thomasxd24/vlc-fse.git"
   },
   "scripts": {
-    "start": "electron .",
-    "test": "node --test test/*.test.js",
-    "dist": "electron-builder --win",
-    "dist:dir": "electron-builder --win --dir"
+    "test": "node --test test/*.test.js"
   },
-  "devDependencies": {
-    "electron": "^44.4.5",
-    "electron-builder": "^26.15.3"
-  },
-  "build": {
-    "appId": "com.foyer.launcher",
-    "productName": "Lounge",
-    "files": [
-      "main.js",
-      "preload.js",
-      "src/**",
-      "renderer/**",
-      "build/icon.png"
-    ],
-    "directories": {
-      "output": "dist",
-      "buildResources": "build"
-    },
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "build/icon.png",
-      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "Lounge",
-      "artifactName": "${productName}-Setup-${version}.${ext}"
-    },
-    "npmRebuild": false
-  },
-  "private": true,
-  "dependencies": {
-    "basic-ftp": "^6.2.1",
-    "qrcode": "^1.5.4",
-    "ssh2": "^1.17.0"
-  }
+  "private": true
 }

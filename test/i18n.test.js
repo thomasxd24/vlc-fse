@@ -16,7 +16,7 @@ test('English and French have the same keys', () => {
 });
 
 test('every translation key used in the code exists', () => {
-  const files = ['renderer/core.js', 'renderer/views.js', 'renderer/app.js', 'main.js'].map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8'));
+  const files = ['renderer/core.js', 'renderer/views.js', 'renderer/app.js', 'src-tauri/app/src/lib.rs'].map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8'));
   const used = new Set();
   for (const src of files) {
     for (const m of src.matchAll(/\bt\('([\w.]+)'/g)) used.add(m[1]);

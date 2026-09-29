@@ -129,28 +129,20 @@ The package is signed with a certificate made fresh for each build. Only its pub
 ## Development
 
 ```sh
-npm install
-npm start          # run the app
-npm test           # unit tests (parsers, Steam scanning, game info, i18n, VLC)
-npm run dist       # installer + zip into dist/ (on Windows)
+cd src-tauri
+cargo run -p lounge-app     # run the app (Windows: WebView2; Linux: webkit2gtk, for development)
+cargo test -p lounge-core   # Rust unit tests
+cd .. && npm test           # renderer tests (gamepad, i18n, stats); Node only, no dependencies
+npx -y @tauri-apps/cli@2 build --bundles nsis   # installer (run in src-tauri, on Windows)
 ```
 
 ```
-main.js             Electron main process: window, IPC, view model, VLC & game sessions, suspend while playing
-preload.js          The API exposed to the page
-src/steam.js        Finds Steam, its library folders, installed games, playtime and cached artwork
-src/vdf.js          Parser for Steam's .vdf/.acf files
-src/games.js        Launching and tracking games (Steam via RunningAppID, others by process)
-src/gameinfo.js     Steam store details, Steam CDN and SteamGridDB artwork, cached on disk
-src/system.js       Volume, brightness, Wi-Fi, power and process priority (Windows)
-src/updater.js      Checks GitHub Releases, downloads and verifies updates, hands off to the right installer
-src/library.js      Film & TV folder scanning; src/parse.js name parsing; src/metadata.js TMDB
-src/vlc.js          Finding and driving VLC
-renderer/           The interface: nav.js (controller/touch/keyboard), core.js, views.js, app.js, i18n.js
-build/fse/          MSIX manifest, assets and installer for the full screen experience package
-scripts/build-fse.ps1  Builds the FSE package (CI runs it on Windows)
+src-tauri/lounge-core/  Business logic: Steam scanning, games, library, VLC, metadata, system, updater, transfers, remote
+src-tauri/app/          The Tauri shell: window, commands, sessions, settings side effects
+renderer/               The interface: nav.js (controller/touch/keyboard), core.js, views.js, app.js, i18n.js
+build/fse/              MSIX manifest, assets and installer for the full screen experience package
+scripts/build-fse.ps1   Builds the FSE package (CI runs it on Windows)
 ```
 
-CI (`.github/workflows/build.yml`) runs on a Windows runner for every push. It runs the tests, including
-one against real VLC, then builds all three downloads. Pushing a tag like `v2.0.0` publishes a release with
+CI (`.github/workflows/build.yml`) runs on a Windows runner for every push. It runs the tests, then builds all three downloads. Pushing a tag like `v2.0.0` publishes a release with
 them attached.

@@ -2,7 +2,7 @@
 name = "lounge-core"
 version = "0.1.0"
 edition = "2021"
-description = "Ported business logic from src/*.js (Electron -> Tauri migration). Platform-agnostic; no Tauri or WebView dependency lives here."
+description = "Lounge business logic (ported from the old Electron app). Platform-agnostic; no Tauri or WebView dependency lives here."
 publish = false
 
 [dependencies]

@@ -1,4 +1,4 @@
-//! Ported business logic from `src/*.js`, module by module, as Lounge moves off Electron onto Tauri.
+//! Ported business logic from `src/*.js`, module by module, as Lounge moved off Electron onto Tauri.
 //!
 //! Each module here is a straight behavioural port of its `src/<name>.js` counterpart — same inputs,
 //! same outputs, no redesign — verified against a Rust translation of that file's existing test suite.
