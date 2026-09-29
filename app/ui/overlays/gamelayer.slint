@@ -1,0 +1,10 @@
+// STUB — to be replaced by the real overlay. Keep the exported names (GameLayer, GameLayerView): app.slint and Rust use them.
+import { Theme } from "../theme.slint";
+
+export global GameLayer {
+    in-out property <bool> open;
+}
+
+export component GameLayerView inherits Rectangle {
+    visible: GameLayer.open;
+}

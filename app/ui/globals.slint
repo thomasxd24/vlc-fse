@@ -1,0 +1,189 @@
+// Globals shared by every screen. Rust (app/src/ui/**) owns their data; Slint only reads it and calls
+// back. Page-specific state lives in each page's own global (pages/*.slint), which is why a page keeps
+// its focus and filters when you leave it and come back.
+
+import { Theme } from "theme.slint";
+
+// ---------------------------------------------------------------- Strings
+// `T.tr("tab.home")`, or with {placeholders}: `T.trv("pad.reconnected", ["name", pad-name])` — vars
+// alternate name, value; a var called `n` also picks the plural form. The dictionaries are
+// app/i18n/{en,fr}.json (the web renderer's i18n.js). Reading `rev` inside the functions is what makes
+// every string re-evaluate when the language changes.
+export global T {
+    in property <int> rev;
+    in property <string> lang: "en";
+    pure callback lookup(string, [string], int) -> string;
+    public pure function tr(key: string) -> string {
+        lookup(key, [], rev)
+    }
+    public pure function trv(key: string, vars: [string]) -> string {
+        lookup(key, vars, rev)
+    }
+}
+
+// ---------------------------------------------------------------- Artwork
+// Local images are decoded (and downscaled to the size they're drawn at) on worker threads, then cached.
+// `Art.get(path, width)` (width in logical px; Rust applies the scale factor) returns the image, or an empty one while it loads — `rev` bumps when a batch
+// lands, which re-evaluates every `Art.get` so it picks the new image up. `Art.ready(path, width)` says
+// whether it's loaded (for the shimmer / fade-in).
+export global Art {
+    in property <int> rev;
+    pure callback load(string, float, int) -> image;
+    pure callback loaded(string, float, int) -> bool;
+    public pure function get(path: string, width: length) -> image {
+        load(path, width / 1px, rev)
+    }
+    public pure function ready(path: string, width: length) -> bool {
+        path == "" ? false : loaded(path, width / 1px, rev)
+    }
+}
+
+// ---------------------------------------------------------------- Input
+export global Input {
+    // "pad" | "keyboard" | "mouse" | "touch" — drives hint glyphs and whether the pointer shows.
+    in-out property <string> mode: "keyboard";
+    // Set by Rust around key events it synthesises from the controller, so they don't flip mode.
+    in property <bool> synthetic;
+    in property <bool> pad-connected;
+    in property <string> pad-name;
+    in property <bool> sounds: true;
+    in property <bool> haptics: true;
+    // A navigation tick (move / select / back / error) for sounds and rumble.
+    callback feedback(string);
+}
+
+// ---------------------------------------------------------------- Routing
+export struct Route {
+    name: string,
+    id: string,
+}
+
+export global Nav {
+    in property <Route> route: { name: "home", id: "" };
+    // The top-level tab the current route belongs to (detail pages keep their tab's highlight).
+    in property <string> tab: "home";
+    // Detail pages show a back button instead of the tabs.
+    in property <bool> detail: false;
+    // Bumped when the UI is rebuilt after a game, so pages restore instead of animating in.
+    in property <bool> restoring: false;
+    // Which part of the screen has keyboard focus: "page" or "top" (the top bar).
+    in-out property <string> zone: "page";
+    // Bump to hand keyboard focus to the current page / the top bar (pages and the top bar watch these).
+    in-out property <int> page-focus-rev;
+    in-out property <int> top-focus-rev;
+    callback go(string, string);   // name, id
+    callback back();
+    callback switch-tab(string);
+    callback cycle-tab(int);       // LB / RB: -1, +1
+    callback page-key(string);     // unhandled global keys: "search", "menu", "view"
+    public function focus-top() {
+        zone = "top";
+        top-focus-rev += 1;
+    }
+    public function focus-page() {
+        zone = "page";
+        page-focus-rev += 1;
+    }
+}
+
+// ---------------------------------------------------------------- Button hints (bottom right)
+// button: "a" | "b" | "x" | "y" | "lb" | "rb" | "lt" | "rt" | "menu" | "view"
+export struct Hint {
+    button: string,
+    label: string,
+}
+
+export global Hints {
+    in-out property <[Hint]> items;
+    in-out property <bool> hidden;
+}
+
+// ---------------------------------------------------------------- Status (top bar, quick menu)
+export global Sys {
+    in property <string> clock;       // "4:55 PM" / "16:55"
+    in property <string> date;        // "Tuesday, September 29"
+    in property <bool> has-battery;
+    in property <int> battery;        // 0..100
+    in property <bool> charging;
+    in property <int> wifi: -1;       // signal 0..100, -1 = no wifi adapter / disconnected
+    in property <string> wifi-name;
+    in property <bool> busy;          // scanning / enriching (spinner beside the clock)
+    in property <string> busy-text;
+}
+
+// ---------------------------------------------------------------- App-wide facts
+export global App {
+    in property <string> version;
+    in property <string> platform: "win32";
+    in property <string> user;        // Steam persona or Windows user, for the greeting
+    in property <bool> first-run;     // no libraries and no games yet: the welcome page
+    in property <bool> suspended;     // a game is running and the UI is unloaded
+    in property <bool> has-servers;
+    in property <int> active-transfers;
+}
+
+// ---------------------------------------------------------------- Backdrop
+// The full-screen artwork behind pages; pages set `src` from what's focused.
+export global Backdrop {
+    in-out property <string> src;
+    in-out property <bool> dim;
+}
+
+// ---------------------------------------------------------------- Toasts
+export struct Toast {
+    id: int,
+    text: string,
+    kind: string,   // "info" | "error" | "success"
+}
+
+export global Toasts {
+    in property <[Toast]> items;
+}
+
+// ---------------------------------------------------------------- Dialogs
+// Menus and confirmations (the renderer's choose()) and text entry with the on-screen keyboard
+// (promptText()). Rust opens them (app/src/ui/dialogs.rs) and gets the answer back through `picked` /
+// `prompt-done`; several can stack (e.g. an options menu opening a confirmation).
+export struct Choice {
+    label: string,
+    value: string,
+    icon: string,      // an Icons name, or ""
+    detail: string,    // a second, muted line
+    primary: bool,
+    danger: bool,
+    checked: bool,     // shows a check mark (radio-style menus)
+    disabled: bool,
+}
+
+export struct ChooseSpec {
+    id: int,
+    title: string,
+    text: string,
+    choices: [Choice],
+    wide: bool,
+    focus: int,
+    art: string,       // optional artwork shown at the top (e.g. a game's cover in its options)
+}
+
+export struct PromptSpec {
+    id: int,           // 0 = no prompt open
+    title: string,
+    value: string,
+    placeholder: string,
+    ok: string,
+    secret: bool,
+    symbols: bool,
+}
+
+export global Dialog {
+    in property <[ChooseSpec]> stack;
+    in property <PromptSpec> prompt;
+    callback picked(int, string);            // id, value ("" = cancelled)
+    callback prompt-done(int, bool, string); // id, ok, value
+}
+
+// ---------------------------------------------------------------- String helpers Slint lacks
+export global Util {
+    pure callback drop-last(string) -> string;   // remove the last character
+    pure callback mask(string) -> string;        // one bullet per character
+}

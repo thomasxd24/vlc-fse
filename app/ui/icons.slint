@@ -1,0 +1,51 @@
+// Every icon in icons/*.svg by name, so Rust and data can refer to icons as strings.
+// Generated from the web renderer's ICON table; regenerate this list when adding an icon file.
+
+export global Icons {
+    public pure function named(name: string) -> image {
+        name == "wifi" ? @image-url("icons/wifi.svg") :
+        name == "wifi-off" ? @image-url("icons/wifi-off.svg") :
+        name == "apps" ? @image-url("icons/apps.svg") :
+        name == "back" ? @image-url("icons/back.svg") :
+        name == "chart" ? @image-url("icons/chart.svg") :
+        name == "check" ? @image-url("icons/check.svg") :
+        name == "desktop" ? @image-url("icons/desktop.svg") :
+        name == "download" ? @image-url("icons/download.svg") :
+        name == "edit" ? @image-url("icons/edit.svg") :
+        name == "exit" ? @image-url("icons/exit.svg") :
+        name == "file" ? @image-url("icons/file.svg") :
+        name == "folder" ? @image-url("icons/folder.svg") :
+        name == "forward" ? @image-url("icons/forward.svg") :
+        name == "gamepad" ? @image-url("icons/gamepad.svg") :
+        name == "gear" ? @image-url("icons/gear.svg") :
+        name == "hide" ? @image-url("icons/hide.svg") :
+        name == "image" ? @image-url("icons/image.svg") :
+        name == "link" ? @image-url("icons/link.svg") :
+        name == "menu" ? @image-url("icons/menu.svg") :
+        name == "moon" ? @image-url("icons/moon.svg") :
+        name == "more" ? @image-url("icons/more.svg") :
+        name == "mute" ? @image-url("icons/mute.svg") :
+        name == "next" ? @image-url("icons/next.svg") :
+        name == "pause" ? @image-url("icons/pause.svg") :
+        name == "play" ? @image-url("icons/play.svg") :
+        name == "plus" ? @image-url("icons/plus.svg") :
+        name == "power" ? @image-url("icons/power.svg") :
+        name == "refresh" ? @image-url("icons/refresh.svg") :
+        name == "restart" ? @image-url("icons/restart.svg") :
+        name == "rewind" ? @image-url("icons/rewind.svg") :
+        name == "search" ? @image-url("icons/search.svg") :
+        name == "server" ? @image-url("icons/server.svg") :
+        name == "show" ? @image-url("icons/show.svg") :
+        name == "star-on" ? @image-url("icons/star-on.svg") :
+        name == "star" ? @image-url("icons/star.svg") :
+        name == "steam" ? @image-url("icons/steam.svg") :
+        name == "stop" ? @image-url("icons/stop.svg") :
+        name == "subs" ? @image-url("icons/subs.svg") :
+        name == "sun" ? @image-url("icons/sun.svg") :
+        name == "trash" ? @image-url("icons/trash.svg") :
+        name == "volume" ? @image-url("icons/volume.svg") :
+        name == "vpn" ? @image-url("icons/vpn.svg") :
+        @image-url("icons/blank.svg")
+    }
+    out property <image> logo: @image-url("icons/logo-mark.svg");
+}

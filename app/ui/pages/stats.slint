@@ -1,0 +1,18 @@
+// STUB — to be replaced by the real screen. Keep the exported names (StatsPage, StatsView): app.slint and Rust use them.
+import { Theme } from "../theme.slint";
+import { Nav } from "../globals.slint";
+import { PageScope } from "../widgets.slint";
+
+export global StatsPage {
+    in-out property <int> focus;
+}
+
+export component StatsView inherits Rectangle {
+    PageScope {
+        key-pressed(e) => {
+            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            reject
+        }
+    }
+    Text { text: "StatsView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+}

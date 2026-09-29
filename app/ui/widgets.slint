@@ -1,0 +1,484 @@
+// Building blocks every screen uses. None of them own keyboard focus: screens track which item is
+// focused (an index in their global) and pass `focused` down, which keeps controller navigation
+// deterministic across rows, grids and lists. Pointer input still works on each widget directly:
+// hovering reports `hovered` (screens move focus there in mouse mode), clicking/tapping `clicked`,
+// right-click or a touch long-press `options`.
+
+import { Theme, Motion } from "theme.slint";
+import { Art, Input, Nav } from "globals.slint";
+import { Icons } from "icons.slint";
+import { Card } from "types.slint";
+
+export component Icon inherits Image {
+    in property <string> name;
+    in property <color> tint: Theme.text;
+    in property <length> size: 1.2 * Theme.rem;
+    width: size;
+    height: size;
+    source: Icons.named(name);
+    colorize: tint;
+    image-fit: contain;
+}
+
+// Pointer handling shared by focusable widgets: hover-to-focus in mouse mode, click, right-click and
+// long-press for options, and the mouse's back button.
+export component Pointer inherits TouchArea {
+    callback hovered();
+    callback options();
+    callback back();
+    mouse-cursor: Input.mode == "mouse" ? MouseCursor.pointer : MouseCursor.none;
+    private property <bool> long-fired;
+    changed has-hover => {
+        if (self.has-hover && Input.mode == "mouse") {
+            root.hovered();
+        }
+    }
+    moved => {
+        if (Input.mode != "mouse" && Input.mode != "touch") {
+            Input.mode = "mouse";
+        }
+        if (self.has-hover && Input.mode == "mouse") {
+            root.hovered();
+        }
+    }
+    pointer-event(ev) => {
+        if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.right) {
+            root.hovered();
+            root.options();
+        }
+        if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.back) {
+            root.back();
+        }
+        if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
+            long-fired = false;
+            long-timer.running = true;
+        }
+        if (ev.kind == PointerEventKind.up || ev.kind == PointerEventKind.cancel) {
+            long-timer.running = false;
+        }
+    }
+    long-timer := Timer {
+        interval: 550ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.pressed) {
+                long-fired = true;
+                root.hovered();
+                root.options();
+            }
+        }
+    }
+    // A long-press already opened options: swallow the click that follows the release.
+    public function consume-long-press() -> bool {
+        if (long-fired) {
+            long-fired = false;
+            return true;
+        }
+        return false;
+    }
+}
+
+// `.btn`: a rounded button with optional icon; primary is accent-filled; focus turns it white.
+export component Btn inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> primary;
+    in property <bool> danger;
+    in property <bool> small;
+    in property <bool> focused;
+    in property <bool> enabled: true;
+    callback clicked();
+    callback hovered();
+    callback options();
+
+    private property <color> ink: focused ? Theme.accent-ink : primary ? Theme.accent-ink : Theme.text;
+    border-radius: 0.6 * Theme.rem;
+    background: focused ? (danger ? Theme.danger : Theme.focus) : primary ? Theme.accent : Theme.surface-2;
+    opacity: enabled ? 1 : 0.45;
+    drop-shadow-blur: focused ? 2 * Theme.rem : 0;
+    drop-shadow-offset-y: focused ? 0.8 * Theme.rem : 0;
+    drop-shadow-color: #00000080;
+    transform-scale: focused ? Motion.btn-zoom : 1.0;
+    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    min-width: lay.preferred-width;
+    min-height: lay.preferred-height;
+
+    lay := HorizontalLayout {
+        padding-left: (small ? 1.1 : text == "" ? 1.1 : 1.7) * Theme.rem;
+        padding-right: self.padding-left;
+        padding-top: (small ? 0.6 : 0.95) * Theme.rem;
+        padding-bottom: self.padding-top;
+        spacing: 0.7 * Theme.rem;
+        alignment: center;
+        if icon != "": Icon {
+            name: icon;
+            tint: ink;
+            size: 1.2 * Theme.rem;
+            y: (parent.height - self.height) / 2;
+        }
+        if text != "": Text {
+            text: root.text;
+            color: ink;
+            font-size: (small ? 1.05 : 1.2) * Theme.rem;
+            font-weight: 650;
+            vertical-alignment: center;
+        }
+    }
+    ta := Pointer {
+        enabled: root.enabled;
+        hovered => { root.hovered(); }
+        options => { root.options(); }
+        clicked => {
+            if (!self.consume-long-press()) {
+                root.clicked();
+            }
+        }
+    }
+}
+
+// Round icon-only button (top bar tools, back, menu).
+export component IconBtn inherits Rectangle {
+    in property <string> icon;
+    in property <bool> focused;
+    in property <bool> active;
+    in property <length> size: 2.6 * Theme.rem;
+    callback clicked();
+    callback hovered();
+    width: size;
+    height: size;
+    border-radius: size / 2;
+    background: focused ? Theme.focus : active ? Theme.surface-2 : transparent;
+    transform-scale: focused ? Motion.btn-zoom : 1.0;
+    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    Icon {
+        name: icon;
+        size: root.size * 0.5;
+        tint: focused ? Theme.accent-ink : active ? Theme.text : Theme.muted;
+    }
+    Pointer {
+        hovered => { root.hovered(); }
+        clicked => { root.clicked(); }
+    }
+}
+
+// `.chip`: filter / sort pills in toolbars.
+export component Chip inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> on;
+    in property <bool> accent;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    private property <color> ink: focused || accent ? Theme.accent-ink : on ? Theme.text : Theme.muted;
+    border-radius: self.height / 2;
+    background: focused ? Theme.focus : accent ? Theme.accent : on ? Theme.surface-2 : Theme.surface;
+    border-width: on && !focused ? 1px : 0;
+    border-color: Theme.line;
+    transform-scale: focused ? Motion.btn-zoom : 1.0;
+    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    min-width: lay.preferred-width;
+    min-height: lay.preferred-height;
+    lay := HorizontalLayout {
+        padding-left: 1.1 * Theme.rem;
+        padding-right: 1.1 * Theme.rem;
+        padding-top: 0.5 * Theme.rem;
+        padding-bottom: 0.5 * Theme.rem;
+        spacing: 0.4 * Theme.rem;
+        alignment: center;
+        if icon != "": Icon {
+            name: icon;
+            tint: ink;
+            size: 1.05 * Theme.rem;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.text;
+            color: ink;
+            font-size: 1.05 * Theme.rem;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+    Pointer {
+        hovered => { root.hovered(); }
+        clicked => { root.clicked(); }
+    }
+}
+
+// A controller glyph (A, B, LB…) in pad mode, or the matching key cap otherwise ("Enter", "Esc"…),
+// as in the renderer's hint bar.
+export component Glyph inherits Rectangle {
+    in property <string> button;   // a b x y lb rb lt rt menu view
+    private property <bool> pad: Input.mode == "pad";
+    private property <string> label: pad
+        ? (button == "menu" ? "☰" : button == "view" ? "⧉" : button == "lb" ? "LB" : button == "rb" ? "RB" : button == "lt" ? "LT" : button == "rt" ? "RT" : button == "a" ? "A" : button == "b" ? "B" : button == "x" ? "X" : button == "y" ? "Y" : button)
+        : (button == "a" ? "Enter" : button == "b" ? "Esc" : button == "x" ? (Input.mode == "mouse" ? "Right-click" : "Menu") : button == "y" ? "F3" : button == "menu" ? "F1" : button == "lb" ? "⇧Tab" : button == "rb" ? "Tab" : button == "lt" ? "PgUp" : button == "rt" ? "PgDn" : button == "view" ? "F2" : button);
+    private property <bool> shoulder: button == "lb" || button == "rb" || button == "lt" || button == "rt";
+    height: 1.7 * Theme.rem;
+    width: max(pad ? (shoulder ? 2.2 : 1.7) * Theme.rem : 0, txt.preferred-width + (pad ? 0.7 : 1.0) * Theme.rem);
+    border-radius: pad ? (shoulder ? 0.45 * Theme.rem : self.height / 2) : 0.35 * Theme.rem;
+    background: !pad ? #ffffff0f
+        : button == "a" ? #6cc24a : button == "b" ? #e5534b : button == "x" ? #3b8eea : button == "y" ? #f2c230 : #d9dce3;
+    border-width: pad ? 0 : 1px;
+    border-color: Theme.line;
+    txt := Text {
+        text: label;
+        color: pad ? #0b0c10 : Theme.text;
+        font-size: (pad ? (shoulder ? 0.75 : button == "menu" ? 1.0 : 0.85) : 0.85) * Theme.rem;
+        font-weight: pad ? 800 : 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component Spinner inherits Rectangle {
+    in property <length> size: 1 * Theme.rem;
+    width: size;
+    height: size;
+    Path {
+        width: root.size;
+        height: root.size;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        stroke: Theme.accent;
+        stroke-width: 2px;
+        commands: "M 12 2 A 10 10 0 0 1 22 12";
+        transform-rotation: Motion.reduced ? 0deg : mod(animation-tick() / 900ms, 1) * 360deg;
+        transform-origin: { x: self.width / 2, y: self.height / 2 };
+    }
+    Rectangle {
+        border-radius: root.size / 2;
+        border-width: 2px;
+        border-color: Theme.line;
+    }
+}
+
+export component ProgressBar inherits Rectangle {
+    in property <float> value;
+    height: 0.3 * Theme.rem;
+    border-radius: self.height / 2;
+    background: #ffffff47;
+    clip: true;
+    Rectangle {
+        x: 0;
+        width: parent.width * max(0, min(1, root.value));
+        background: Theme.accent;
+    }
+}
+
+// Artwork with the renderer's behaviour: a tinted placeholder (with the title) when there's no image,
+// a loading shimmer, and a fade-in once decoded.
+export component Artwork inherits Rectangle {
+    in property <string> path;
+    in property <string> title;
+    in property <color> tint: #2a2f3a;
+    in property <bool> big-title;   // wide cards centre a large faded title
+    in property <ImageFit> fit: cover;
+    private property <bool> ready: Art.ready(path, self.width);
+    background: Theme.bg-2;
+    clip: true;
+    if path == "": Rectangle {
+        background: @linear-gradient(135deg, tint 0%, tint.darker(0.7) 100%);
+        Text {
+            x: big-title ? (parent.width - self.width) / 2 : 1 * Theme.rem;
+            y: big-title ? (parent.height - self.height) / 2 : parent.height - self.height - 1 * Theme.rem;
+            width: parent.width - 2 * Theme.rem;
+            text: root.title;
+            color: Theme.text;
+            opacity: big-title ? 0.7 : 1;
+            wrap: word-wrap;
+            horizontal-alignment: big-title ? center : left;
+            font-size: (big-title ? 2.6 : 1.3) * Theme.rem;
+            font-weight: 700;
+        }
+    }
+    if path != "" && !ready: Rectangle {
+        // Shimmer: a soft band sweeping across while the image decodes.
+        background: @linear-gradient(90deg, #ffffff00 0%, #ffffff10 50%, #ffffff00 100%);
+        x: Motion.reduced ? 0 : (mod(animation-tick() / 1400ms, 1) * 2 - 1) * parent.width;
+        width: parent.width;
+    }
+    img := Image {
+        width: parent.width;
+        height: parent.height;
+        source: Art.get(root.path, root.width);
+        image-fit: root.fit;
+        opacity: ready ? 1 : 0;
+        animate opacity { duration: Motion.slow; easing: Motion.ease; }
+    }
+    @children
+}
+
+// `.card`: poster (2:3) or wide (16:9) tile with its labels underneath.
+export component CardTile inherits VerticalLayout {
+    in property <Card> card;
+    in property <bool> focused;
+    in property <length> tile-width: (card.wide ? 22 : 12) * Theme.rem;
+    in property <bool> labels: true;
+    callback clicked();
+    callback hovered();
+    callback options();
+    width: tile-width;
+    spacing: 0.7 * Theme.rem;
+
+    art := Rectangle {
+        height: root.tile-width * (card.wide ? 9 / 16 : 3 / 2);
+        border-radius: Theme.radius;
+        transform-scale: focused ? Motion.card-zoom : 1.0;
+        transform-origin: { x: self.width / 2, y: self.height / 2 };
+        animate transform-scale { duration: Motion.normal; easing: Motion.ease; }
+        drop-shadow-blur: focused ? 3 * Theme.rem : 1.6 * Theme.rem;
+        drop-shadow-offset-y: focused ? 1.2 * Theme.rem : 0.6 * Theme.rem;
+        drop-shadow-color: focused ? #000000b3 : #00000073;
+        Artwork {
+            border-radius: Theme.radius;
+            path: card.art;
+            title: card.title;
+            tint: card.tint;
+            big-title: card.wide;
+            if card.logo != "": Image {
+                x: parent.width * 0.1;
+                y: parent.height * 0.2;
+                width: parent.width * 0.8;
+                height: parent.height * 0.6;
+                source: Art.get(card.logo, self.width);
+                image-fit: contain;
+            }
+            if card.progress >= 0: ProgressBar {
+                x: 0.7 * Theme.rem;
+                y: parent.height - self.height - 0.7 * Theme.rem;
+                width: parent.width - 1.4 * Theme.rem;
+                value: card.progress;
+            }
+            if card.watched: Rectangle {
+                x: parent.width - self.width - 0.6 * Theme.rem;
+                y: 0.6 * Theme.rem;
+                width: 1.7 * Theme.rem;
+                height: self.width;
+                border-radius: self.width / 2;
+                background: #00000099;
+                Text { text: "✓"; color: Theme.good; font-size: 1 * Theme.rem; font-weight: 800; }
+            }
+            if card.count != "": Rectangle {
+                x: parent.width - self.width - 0.6 * Theme.rem;
+                y: 0.6 * Theme.rem;
+                height: 1.7 * Theme.rem;
+                width: max(self.height, cnt.preferred-width + 1 * Theme.rem);
+                border-radius: self.height / 2;
+                background: Theme.accent;
+                cnt := Text { text: card.count; color: Theme.accent-ink; font-size: 0.9 * Theme.rem; font-weight: 800; }
+            }
+            if card.favorite: Rectangle {
+                x: 0.6 * Theme.rem;
+                y: 0.6 * Theme.rem;
+                width: 1.7 * Theme.rem;
+                height: self.width;
+                border-radius: self.width / 2;
+                background: #00000099;
+                Icon { name: "star-on"; tint: Theme.star; size: 1 * Theme.rem; }
+            }
+        }
+        // Focus ring (drawn outside the art, like the CSS box-shadow ring).
+        Rectangle {
+            x: -0.22 * Theme.rem;
+            y: -0.22 * Theme.rem;
+            width: parent.width + 0.44 * Theme.rem;
+            height: parent.height + 0.44 * Theme.rem;
+            border-radius: Theme.radius + 0.22 * Theme.rem;
+            border-width: 0.22 * Theme.rem;
+            border-color: Theme.focus;
+            opacity: focused ? 1 : 0;
+            animate opacity { duration: Motion.fast; }
+        }
+        Pointer {
+            hovered => { root.hovered(); }
+            options => { root.options(); }
+            clicked => {
+                if (!self.consume-long-press()) {
+                    root.clicked();
+                }
+            }
+        }
+    }
+    if labels: VerticalLayout {
+        spacing: 0;
+        Text {
+            text: card.title;
+            color: Theme.text;
+            opacity: focused ? 1 : 0.85;
+            font-size: 1.05 * Theme.rem;
+            font-weight: 600;
+            overflow: elide;
+        }
+        if card.subtitle != "": Text {
+            text: card.subtitle;
+            color: Theme.muted;
+            font-size: 0.95 * Theme.rem;
+            overflow: elide;
+        }
+    }
+}
+
+// A titled horizontal row of cards (`.row` + `.track`). The screen owns which card is focused; the row
+// scrolls to keep it in view, keeping the focused card near the left edge like the renderer's alignRow.
+export component CardRow inherits VerticalLayout {
+    in property <string> title;
+    in property <[Card]> cards;
+    in property <bool> active;          // this row holds the focus
+    in property <int> focused-index;
+    callback clicked(int);
+    callback hovered(int);
+    callback options(int);
+
+    private property <length> gap: 1.5 * Theme.rem;
+    // Keep the focused card in view: park it one gutter from the left once scrolling starts.
+    public function reveal() {
+        flick.content-x = -max(0, min(flick.content-width - flick.width, root.focused-index * (tile + gap)));
+    }
+    changed focused-index => { if (active) { reveal(); } }
+    changed active => { if (active) { reveal(); } }
+    private property <length> tile: (cards[0].wide ? 22 : 12) * Theme.rem;
+    spacing: 0.6 * Theme.rem;
+
+    if title != "": Text {
+        x: Theme.gutter;
+        text: root.title;
+        color: Theme.text;
+        font-size: 1.45 * Theme.rem;
+        font-weight: 650;
+    }
+    flick := Flickable {
+        height: row-lay.preferred-height + 2.4 * Theme.rem;   // room for the focus zoom and shadow
+        content-width: row-lay.preferred-width;
+        interactive: true;
+        animate content-x { duration: Motion.normal; easing: Motion.ease; }
+        row-lay := HorizontalLayout {
+            padding-left: Theme.gutter;
+            padding-right: Theme.gutter;
+            padding-top: 1.2 * Theme.rem;
+            spacing: gap;
+            alignment: start;
+            for c[i] in root.cards: CardTile {
+                card: c;
+                focused: root.active && i == root.focused-index;
+                clicked => { root.clicked(i); }
+                hovered => { root.hovered(i); }
+                options => { root.options(i); }
+            }
+        }
+    }
+}
+
+// Every screen's key handler. It takes keyboard focus when the screen appears (unless the top bar has
+// it) and whenever Nav.focus-page() is called; screens handle arrows / Enter / Menu and reject the rest.
+export component PageScope inherits FocusScope {
+    private property <int> rev: Nav.page-focus-rev;
+    changed rev => { self.focus(); }
+    init => {
+        if (Nav.zone == "page") {
+            self.focus();
+        }
+    }
+}

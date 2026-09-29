@@ -1,0 +1,10 @@
+// STUB — to be replaced by the real overlay. Keep the exported names (QuickMenu, QuickMenuView): app.slint and Rust use them.
+import { Theme } from "../theme.slint";
+
+export global QuickMenu {
+    in-out property <bool> open;
+}
+
+export component QuickMenuView inherits Rectangle {
+    visible: QuickMenu.open;
+}

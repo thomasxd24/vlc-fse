@@ -1,0 +1,10 @@
+// STUB — to be replaced by the real overlay. Keep the exported names (UpdateLayer, UpdateLayerView): app.slint and Rust use them.
+import { Theme } from "../theme.slint";
+
+export global UpdateLayer {
+    in-out property <bool> open;
+}
+
+export component UpdateLayerView inherits Rectangle {
+    visible: UpdateLayer.open;
+}

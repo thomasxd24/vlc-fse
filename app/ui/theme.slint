@@ -1,0 +1,57 @@
+// Design tokens, ported from the web renderer's `:root` in styles.css. Everything is sized in `rem`,
+// which follows the window width like the CSS did (`clamp(14px, 0.6vw + 8px, 44px) * --scale`), so the
+// layout reads the same on the Legion Go's 8.8" panel and scales up to a TV.
+
+export global Theme {
+    // Set by AppWindow from its width, and by Rust from settings.uiScale.
+    in-out property <length> vw: 1600px;
+    in-out property <length> vh: 900px;
+    in-out property <float> scale: 1.0;
+
+    out property <length> rem: max(14px, min(44px, root-vw * 0.006 + 8px)) * scale;
+    private property <length> root-vw: vw;
+
+    out property <color> bg: #07080c;
+    out property <color> bg-2: #0e1017;
+    out property <color> surface: #ffffff12;      // rgba(255,255,255,.07)
+    out property <color> surface-2: #ffffff1f;    // .12
+    out property <color> line: #ffffff24;         // .14
+    out property <color> text: #f3f4f7;
+    out property <color> muted: #a3a8b4;
+    out property <color> faint: #6c717d;
+    out property <color> body: #d4d7de;           // .overview
+    out property <color> accent: #ff8a1e;
+    out property <color> accent-ink: #1a0d00;
+    out property <color> good: #4ade80;
+    out property <color> danger: #ff5a5a;
+    out property <color> star: #ffc53d;
+    out property <color> focus: #ffffff;
+    out property <color> toast-bg: #1c2029;
+    out property <color> glass: #0a0b10b8;        // rgba(10,11,16,.72)
+
+    out property <length> radius: 0.7 * rem;
+    out property <length> gutter: 4.5 * rem;
+    // Pages start below the top bar (`.page { padding-top: 7rem }`).
+    out property <length> page-top: 7 * rem;
+
+    out property <string> font: "Segoe UI Variable Display";
+}
+
+// Motion: durations collapse to zero with Settings › Animations › Reduced (or Windows' reduce-motion).
+// Rust sets this one (Motion itself isn't exposed: easing properties can't cross to Rust).
+export global MotionPrefs {
+    in property <bool> reduced: false;
+}
+
+export global Motion {
+    out property <bool> reduced: MotionPrefs.reduced;
+    out property <duration> fast: reduced ? 0ms : 150ms;
+    out property <duration> normal: reduced ? 0ms : 250ms;
+    out property <duration> slow: reduced ? 0ms : 450ms;
+    out property <duration> fade: reduced ? 0ms : 900ms;
+    // The renderer's --ease: cubic-bezier(0.2, 0.8, 0.2, 1).
+    out property <easing> ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    // Focus scale-up on cards / buttons / chips.
+    out property <float> card-zoom: reduced ? 1.04 : 1.07;
+    out property <float> btn-zoom: 1.06;
+}

@@ -1,0 +1,10 @@
+// STUB — to be replaced by the real overlay. Keep the exported names (NowPlaying, NowPlayingView): app.slint and Rust use them.
+import { Theme } from "../theme.slint";
+
+export global NowPlaying {
+    in-out property <bool> open;
+}
+
+export component NowPlayingView inherits Rectangle {
+    visible: NowPlaying.open;
+}

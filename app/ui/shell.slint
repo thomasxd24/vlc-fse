@@ -1,0 +1,580 @@
+// The chrome around pages: backdrop, top bar, button hints, toasts, and the dialog layer (menus,
+// confirmations, text entry with the on-screen keyboard).
+
+import { Theme, Motion } from "theme.slint";
+import { T, Art, Input, Nav, Hints, Sys, App, Backdrop, Toasts, Dialog, Choice, ChooseSpec, PromptSpec, Hint, Util } from "globals.slint";
+import { Icons } from "icons.slint";
+import { Icon, IconBtn, Btn, Glyph, Spinner, Pointer } from "widgets.slint";
+
+// ---------------------------------------------------------------- Backdrop
+// Two layers cross-fade whenever `Backdrop.src` changes; a shade keeps text readable.
+export component BackdropView inherits Rectangle {
+    background: Theme.bg;
+    private property <string> src: Backdrop.src;
+    private property <string> a;
+    private property <string> b;
+    private property <bool> on-a: true;
+    init => { a = src; }
+    changed src => {
+        if (on-a) { b = src; on-a = false; } else { a = src; on-a = true; }
+    }
+    for layer in 2: Image {
+        width: parent.width;
+        height: parent.height;
+        source: Art.get(layer == 0 ? a : b, root.width);
+        image-fit: cover;
+        vertical-alignment: top;
+        opacity: (layer == 0) == on-a ? (Backdrop.dim ? 0.35 : 1) : 0;
+        animate opacity { duration: Motion.fade; easing: Motion.ease; }
+    }
+    // .shade: left and bottom fades to the background, with a faint warm glow top-right.
+    Rectangle {
+        background: @linear-gradient(90deg, Theme.bg 0%, #07080ceb 28%, #07080c73 62%, #07080c40 100%);
+    }
+    Rectangle {
+        background: @linear-gradient(0deg, Theme.bg 0%, #07080cd9 38%, #07080c00 75%);
+    }
+    Rectangle {
+        background: @radial-gradient(circle, #ff8a1e10 0%, #ff8a1e00 60%);
+        x: parent.width * 0.3;
+        y: -parent.height * 0.5;
+        width: parent.width;
+        height: parent.height;
+    }
+}
+
+// ---------------------------------------------------------------- Top bar
+struct TopItem {
+    name: string,
+    label: string,
+    icon: string,
+}
+
+export global TopBar {
+    // Index of the focused item while the top bar has focus: tabs first, then tools.
+    in-out property <int> focus;
+    // Tools beside the clock: Search, Transfers (when there's something), Settings.
+    out property <[TopItem]> tabs: [
+        { name: "home", label: T.tr("tab.home") },
+        { name: "games", label: T.tr("tab.games") },
+        { name: "movies", label: T.tr("tab.movies") },
+        { name: "shows", label: T.tr("tab.shows") },
+        { name: "apps", label: T.tr("tab.apps") },
+    ];
+    out property <[TopItem]> tools: App.has-servers || App.active-transfers > 0 || Nav.tab == "transfers"
+        ? [{ name: "search", icon: "search", label: T.tr("tab.search") }, { name: "transfers", icon: "download", label: T.tr("tab.transfers") }, { name: "settings", icon: "gear", label: T.tr("tab.settings") }]
+        : [{ name: "search", icon: "search", label: T.tr("tab.search") }, { name: "settings", icon: "gear", label: T.tr("tab.settings") }];
+    callback open-quick-menu();
+}
+
+export component TopBarView inherits Rectangle {
+    height: 5.5 * Theme.rem;
+    background: @linear-gradient(180deg, Nav.detail ? #07080c99 : #07080cd9 0%, #07080c00 100%);
+    private property <bool> has-focus: fs.has-focus;
+    private property <int> count: TopBar.tabs.length + TopBar.tools.length;
+    private property <int> rev: Nav.top-focus-rev;
+    changed rev => {
+        // Land on the active tab (or the first tool for tool pages).
+        TopBar.focus = Nav.detail ? 0 : max(0, self.index-of(Nav.tab));
+        fs.focus();
+    }
+    function index-of(name: string) -> int {
+        name == "home" ? 0 : name == "games" ? 1 : name == "movies" ? 2 : name == "shows" ? 3 : name == "apps" ? 4
+            : name == "search" ? 5 : name == "transfers" && TopBar.tools.length == 3 ? 6 : name == "settings" ? TopBar.tabs.length + TopBar.tools.length - 1 : 0
+    }
+    function activate(i: int) {
+        if (i < TopBar.tabs.length) {
+            Nav.switch-tab(TopBar.tabs[i].name);
+        } else {
+            Nav.switch-tab(TopBar.tools[i - TopBar.tabs.length].name);
+        }
+        Input.feedback("select");
+        Nav.focus-page();
+    }
+
+    fs := FocusScope {
+        enabled: !Nav.detail;
+        key-pressed(e) => {
+            if (e.text == Key.LeftArrow) {
+                if (TopBar.focus > 0) { TopBar.focus -= 1; Input.feedback("move"); }
+                return accept;
+            }
+            if (e.text == Key.RightArrow) {
+                if (TopBar.focus < count - 1) { TopBar.focus += 1; Input.feedback("move"); }
+                return accept;
+            }
+            if (e.text == Key.Return || e.text == " ") {
+                activate(TopBar.focus);
+                return accept;
+            }
+            if (e.text == Key.DownArrow || e.text == Key.Escape) {
+                Nav.focus-page();
+                return accept;
+            }
+            if (e.text == Key.UpArrow) {
+                return accept;
+            }
+            reject
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.gutter;
+        padding-right: Theme.gutter;
+        padding-top: 2 * Theme.rem;
+        padding-bottom: 1 * Theme.rem;
+        spacing: 1.8 * Theme.rem;
+        alignment: space-between;
+
+        HorizontalLayout {
+            spacing: 1.8 * Theme.rem;
+            if Nav.detail: IconBtn {
+                icon: "back";
+                clicked => { Nav.back(); }
+            }
+            if !Nav.detail: HorizontalLayout {
+                spacing: 0.7 * Theme.rem;
+                Image {
+                    source: Icons.logo;
+                    width: 2.4 * Theme.rem;
+                    height: 2.4 * Theme.rem;
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    text: "Lounge";
+                    color: Theme.text;
+                    font-size: 1.35 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: 0.02 * 1.35 * Theme.rem;
+                    vertical-alignment: center;
+                }
+            }
+            if !Nav.detail: HorizontalLayout {
+                spacing: 0.4 * Theme.rem;
+                for tab[i] in TopBar.tabs: Rectangle {
+                    private property <bool> focused: has-focus && TopBar.focus == i;
+                    private property <bool> active: Nav.tab == tab.name;
+                    border-radius: self.height / 2;
+                    background: focused ? Theme.focus : active ? Theme.surface : transparent;
+                    transform-scale: focused ? Motion.btn-zoom : 1.0;
+                    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+                    min-width: lbl.preferred-width + 2.6 * Theme.rem;
+                    height: lbl.preferred-height + 1.1 * Theme.rem;
+                    y: (parent.height - self.height) / 2;
+                    lbl := Text {
+                        text: tab.label;
+                        color: focused ? Theme.accent-ink : active ? Theme.text : Theme.muted;
+                        font-size: 1.15 * Theme.rem;
+                        font-weight: 600;
+                    }
+                    Pointer {
+                        hovered => { }
+                        clicked => { Nav.switch-tab(tab.name); Nav.focus-page(); }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 1.5 * Theme.rem;
+            alignment: end;
+            if Sys.busy: HorizontalLayout {
+                spacing: 0.6 * Theme.rem;
+                Spinner { y: (parent.height - self.height) / 2; }
+                Text { text: Sys.busy-text; color: Theme.muted; font-size: 1 * Theme.rem; vertical-alignment: center; }
+            }
+            HorizontalLayout {
+                spacing: 0.6 * Theme.rem;
+                for tool[i] in TopBar.tools: IconBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: tool.icon;
+                    focused: has-focus && TopBar.focus == TopBar.tabs.length + i;
+                    active: Nav.tab == tool.name;
+                    clicked => { Nav.switch-tab(tool.name); Nav.focus-page(); }
+                }
+            }
+            if Input.pad-connected: Icon {
+                name: "gamepad";
+                size: 1.6 * Theme.rem;
+                tint: Theme.muted;
+                y: (parent.height - self.height) / 2;
+            }
+            if Sys.wifi >= 0: Icon {
+                name: "wifi";
+                size: 1.5 * Theme.rem;
+                tint: Theme.text;
+                opacity: Sys.wifi > 60 ? 1 : Sys.wifi > 30 ? 0.8 : 0.6;
+                y: (parent.height - self.height) / 2;
+            }
+            if Sys.has-battery: HorizontalLayout {
+                spacing: 0.4 * Theme.rem;
+                Rectangle {
+                    width: 2 * Theme.rem;
+                    height: 1 * Theme.rem;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 0.2 * Theme.rem;
+                    border-width: 0.12 * Theme.rem;
+                    border-color: Sys.battery <= 15 && !Sys.charging ? Theme.danger : Theme.good;
+                    Rectangle {
+                        x: 0.2 * Theme.rem;
+                        width: (parent.width - 0.4 * Theme.rem) * Sys.battery / 100;
+                        height: parent.height - 0.4 * Theme.rem;
+                        border-radius: 0.1 * Theme.rem;
+                        background: Sys.battery <= 15 && !Sys.charging ? Theme.danger : Theme.good;
+                    }
+                }
+                Text {
+                    text: (Sys.charging ? "⚡" : "") + Sys.battery + "%";
+                    color: Sys.battery <= 15 && !Sys.charging ? Theme.danger : Theme.good;
+                    font-size: 1 * Theme.rem;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+            // Home shows its own big clock.
+            if Nav.route.name != "home": Text {
+                text: Sys.clock;
+                color: Theme.text;
+                font-size: 1.5 * Theme.rem;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            if Input.mode == "touch" || Input.mode == "mouse": IconBtn {
+                y: (parent.height - self.height) / 2;
+                icon: "menu";
+                clicked => { TopBar.open-quick-menu(); }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Hints
+export component HintBar inherits Rectangle {
+    visible: !Hints.hidden && Hints.items.length > 0 && Input.mode != "touch";
+    width: lay.preferred-width;
+    height: lay.preferred-height;
+    border-radius: self.height / 2;
+    background: Theme.glass;
+    border-width: 1px;
+    border-color: Theme.line;
+    lay := HorizontalLayout {
+        padding-left: 1 * Theme.rem;
+        padding-right: 1 * Theme.rem;
+        padding-top: 0.55 * Theme.rem;
+        padding-bottom: 0.55 * Theme.rem;
+        spacing: 1.3 * Theme.rem;
+        for h in Hints.items: HorizontalLayout {
+            spacing: 0.5 * Theme.rem;
+            Glyph { button: h.button; }
+            Text {
+                text: h.label;
+                color: Theme.muted;
+                font-size: 1 * Theme.rem;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Toasts
+export component ToastStack inherits VerticalLayout {
+    spacing: 0.6 * Theme.rem;
+    alignment: end;
+    for toast in Toasts.items: HorizontalLayout {
+        alignment: end;
+        Rectangle {
+            border-radius: 0.6 * Theme.rem;
+            background: Theme.toast-bg;
+            border-width: 1px;
+            border-color: Theme.line;
+            drop-shadow-blur: 3 * Theme.rem;
+            drop-shadow-offset-y: 1 * Theme.rem;
+            drop-shadow-color: #00000080;
+            max-width: 40 * Theme.rem;
+            HorizontalLayout {
+                padding: 1 * Theme.rem;
+                padding-left: 1.4 * Theme.rem;
+                padding-right: 1.4 * Theme.rem;
+                Text {
+                    text: toast.text;
+                    color: Theme.text;
+                    font-size: 1.15 * Theme.rem;
+                    wrap: word-wrap;
+                }
+            }
+            if toast.kind == "error": Rectangle {
+                x: 0;
+                width: 0.3 * Theme.rem;
+                border-top-left-radius: 0.6 * Theme.rem;
+                border-bottom-left-radius: 0.6 * Theme.rem;
+                background: Theme.danger;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Dialogs
+// The frame every modal uses: a dark scrim over the page and a centred card. Pages that need a custom
+// modal (edit game, artwork picker…) put their content inside a DialogFrame.
+export component DialogFrame inherits Rectangle {
+    in property <bool> wide;
+    in property <length> min-card-width: 34 * Theme.rem;
+    callback dismissed();
+    background: #030406b8;
+    // Clicking the scrim closes, like the renderer's modals.
+    TouchArea {
+        clicked => { root.dismissed(); }
+    }
+    card := Rectangle {
+        width: wide ? root.width * 0.92 : max(min-card-width, min(50 * Theme.rem, inner.preferred-width));
+        height: min(root.height * 0.88, inner.preferred-height);
+        border-radius: 1 * Theme.rem;
+        background: #151821;
+        border-width: 1px;
+        border-color: Theme.line;
+        drop-shadow-blur: 6 * Theme.rem;
+        drop-shadow-offset-y: 2 * Theme.rem;
+        drop-shadow-color: #00000099;
+        clip: true;
+        TouchArea { }   // clicks on the card don't reach the scrim
+        inner := VerticalLayout {
+            padding-top: 2.4 * Theme.rem;
+            padding-bottom: 2.4 * Theme.rem;
+            padding-left: 2.6 * Theme.rem;
+            padding-right: 2.6 * Theme.rem;
+            @children
+        }
+    }
+}
+
+// choose(): a title, optional text and a column of choices.
+component ChooseView inherits DialogFrame {
+    in property <ChooseSpec> spec;
+    in property <bool> top;   // only the topmost dialog takes input
+    in-out property <int> cursor: spec.focus;
+    wide: spec.wide;
+    dismissed => { Dialog.picked(spec.id, ""); }
+    init => { if (top) { fs.focus(); } }
+    changed top => { if (top) { fs.focus(); } }
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.UpArrow) {
+                if (cursor > 0) { cursor -= 1; Input.feedback("move"); }
+                return accept;
+            }
+            if (e.text == Key.DownArrow) {
+                if (cursor < spec.choices.length - 1) { cursor += 1; Input.feedback("move"); }
+                return accept;
+            }
+            if (e.text == Key.Return || e.text == " ") {
+                if (!spec.choices[cursor].disabled) {
+                    Input.feedback("select");
+                    Dialog.picked(spec.id, spec.choices[cursor].value);
+                }
+                return accept;
+            }
+            if (e.text == Key.Escape || e.text == Key.Backspace) {
+                Input.feedback("back");
+                Dialog.picked(spec.id, "");
+                return accept;
+            }
+            // Everything else (tabs, menu…) is swallowed while a dialog is open.
+            accept
+        }
+    }
+    VerticalLayout {
+        spacing: 0.6 * Theme.rem;
+        if spec.art != "": Image {
+            source: Art.get(spec.art, 12 * Theme.rem);
+            height: 10 * Theme.rem;
+            image-fit: contain;
+            horizontal-alignment: left;
+        }
+        Text {
+            text: spec.title;
+            color: Theme.text;
+            font-size: 2 * Theme.rem;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        if spec.text != "": Text {
+            text: spec.text;
+            color: Theme.muted;
+            font-size: 1.2 * Theme.rem;
+            wrap: word-wrap;
+        }
+        Rectangle { height: 0.6 * Theme.rem; }
+        for c[i] in spec.choices: Btn {
+            text: c.label;
+            icon: c.checked ? "check" : c.icon;
+            primary: c.primary;
+            danger: c.danger;
+            enabled: !c.disabled;
+            focused: root.top && i == root.cursor;
+            hovered => { if (Input.mode == "mouse") { root.cursor = i; } }
+            clicked => { root.cursor = i; Dialog.picked(spec.id, c.value); }
+        }
+    }
+}
+
+// promptText(): a field and the on-screen keyboard (letters, digits, optional symbols + Shift).
+component PromptView inherits DialogFrame {
+    in property <PromptSpec> spec;
+    in-out property <string> value: spec.value;
+    in-out property <int> cursor;
+    in-out property <bool> caps;
+    private property <[string]> letters: ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z","1","2","3","4","5","6","7","8","9","0"];
+    private property <[string]> symbols: [".","-","_","/","@",":","~","!","#","$","%","&","*","+","=","?"];
+    private property <int> n-keys: letters.length + (spec.symbols ? symbols.length : 0);
+    // Wide keys after the grid: [Shift], Space, Delete, Clear, OK — three columns each.
+    private property <[string]> wide-keys: spec.symbols ? ["shift", " ", "back", "clear", "ok"] : [" ", "back", "clear", "ok"];
+    private property <int> cols: 9;
+    private property <int> total: n-keys + wide-keys.length;
+    private property <length> key-w: 4.2 * Theme.rem;
+    private property <length> gap: 0.45 * Theme.rem;
+    min-card-width: cols * key-w + (cols - 1) * gap + 5.2 * Theme.rem;
+    dismissed => { Dialog.prompt-done(spec.id, false, ""); }
+    init => { fs.focus(); }
+
+    function key-label(k: string) -> string {
+        k == "shift" ? "⇧ " + T.tr("kb.shift") : k == " " ? T.tr("kb.space") : k == "back" ? T.tr("kb.delete") : k == "clear" ? T.tr("kb.clear") : k == "ok" ? (spec.ok != "" ? spec.ok : T.tr("common.ok")) : (caps ? k.to-uppercase() : spec.symbols ? k : k.to-uppercase())
+    }
+    function key-at(i: int) -> string {
+        i < letters.length ? letters[i] : i < n-keys ? symbols[i - letters.length] : wide-keys[i - n-keys]
+    }
+    function press(k: string) {
+        Input.feedback("select");
+        if (k == "ok") {
+            Dialog.prompt-done(spec.id, true, value);
+        } else if (k == "shift") {
+            caps = !caps;
+        } else if (k == "back") {
+            value = Util.drop-last(value);
+        } else if (k == "clear") {
+            value = "";
+        } else {
+            value += caps ? k.to-uppercase() : k;
+        }
+    }
+    // Grid geometry: key i's column and row; wide keys take three columns each.
+    function col-of(i: int) -> int { i < n-keys ? mod(i, cols) : mod(i - n-keys, 3) * 3 }
+    function row-of(i: int) -> int { i < n-keys ? floor(i / cols) : ceil(n-keys / cols) + floor((i - n-keys) / 3) }
+    function rows-of-keys() -> int { ceil(n-keys / cols) }
+    function move(dx: int, dy: int) {
+        if (dx != 0) {
+            // Stay on the same row.
+            if (cursor < n-keys) {
+                let nf = cursor + dx;
+                if (nf >= 0 && nf < n-keys && floor(nf / cols) == floor(cursor / cols)) { cursor = nf; }
+            } else {
+                let nf = cursor + dx;
+                if (nf >= n-keys && nf < total && floor((nf - n-keys) / 3) == floor((cursor - n-keys) / 3)) { cursor = nf; }
+            }
+        } else {
+            let r = row-of(cursor) + dy;
+            let c = col-of(cursor);
+            if (r < 0 || r >= rows-of-keys() + ceil(wide-keys.length / 3)) { return; }
+            if (r < rows-of-keys()) {
+                cursor = min(n-keys - 1, r * cols + c);
+            } else {
+                cursor = min(total - 1, n-keys + (r - rows-of-keys()) * 3 + min(2, floor(c / 3)));
+            }
+        }
+        Input.feedback("move");
+    }
+
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.LeftArrow) { move(-1, 0); return accept; }
+            if (e.text == Key.RightArrow) { move(1, 0); return accept; }
+            if (e.text == Key.UpArrow) { move(0, -1); return accept; }
+            if (e.text == Key.DownArrow) { move(0, 1); return accept; }
+            if (e.text == Key.Return) {
+                // Enter on the physical keyboard submits; A on the pad presses the focused key.
+                if (Input.synthetic) { press(key-at(cursor)); } else { Dialog.prompt-done(spec.id, true, value); }
+                return accept;
+            }
+            if (e.text == Key.Escape) { Dialog.prompt-done(spec.id, false, ""); return accept; }
+            if (e.text == Key.Backspace) { press("back"); return accept; }
+            if (e.text == Key.Tab || e.text == Key.Backtab || e.text == Key.F1 || e.text == Key.F3 || e.text == Key.Menu) { return accept; }
+            if (e.text != "" && !e.modifiers.control && !e.modifiers.alt && e.text.character-count == 1 && e.text >= " ") {
+                value += e.text;
+                return accept;
+            }
+            accept
+        }
+    }
+    VerticalLayout {
+        spacing: 1.1 * Theme.rem;
+        Text {
+            text: spec.title;
+            color: Theme.text;
+            font-size: 2 * Theme.rem;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        Rectangle {
+            border-radius: 0.6 * Theme.rem;
+            background: #00000059;
+            border-width: 0.18 * Theme.rem;
+            border-color: Theme.focus;
+            HorizontalLayout {
+                padding: 0.9 * Theme.rem;
+                padding-left: 1.2 * Theme.rem;
+                spacing: 0;
+                Text {
+                    text: value == "" ? spec.placeholder : spec.secret ? Util.mask(value) : value;
+                    color: value == "" ? Theme.faint : Theme.text;
+                    font-size: 1.4 * Theme.rem;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                Rectangle {
+                    width: 0.12 * Theme.rem;
+                    background: Theme.text;
+                    opacity: mod(animation-tick() / 1s, 1) < 0.5 ? 1 : 0;
+                }
+                Rectangle { }
+            }
+        }
+        // The key grid, positioned by hand (wide keys span three columns).
+        Rectangle {
+            height: (rows-of-keys() + ceil(wide-keys.length / 3)) * (key-w * 0.8 + gap) - gap;
+            for i in total: Rectangle {
+                private property <string> k: key-at(i);
+                private property <bool> is-wide: i >= n-keys;
+                private property <bool> focused: i == root.cursor;
+                x: col-of(i) * (key-w + gap);
+                y: row-of(i) * (key-w * 0.8 + gap);
+                width: is-wide ? 3 * key-w + 2 * gap : key-w;
+                height: key-w * 0.8;
+                border-radius: 0.45 * Theme.rem;
+                background: focused ? Theme.focus : k == "ok" ? Theme.accent : Theme.surface;
+                border-width: k == "shift" && caps ? 0.15 * Theme.rem : 0;
+                border-color: Theme.accent;
+                transform-scale: focused ? 1.1 : 1.0;
+                animate transform-scale, background { duration: Motion.fast; easing: Motion.ease; }
+                Text {
+                    text: key-label(k);
+                    color: focused || k == "ok" ? Theme.accent-ink : Theme.text;
+                    font-size: (is-wide ? 1.05 : 1.35) * Theme.rem;
+                    font-weight: 600;
+                }
+                TouchArea {
+                    clicked => { root.cursor = i; press(k); }
+                }
+            }
+        }
+    }
+}
+
+export component DialogLayer inherits Rectangle {
+    for spec[i] in Dialog.stack: ChooseView {
+        spec: spec;
+        top: i == Dialog.stack.length - 1 && Dialog.prompt.id == 0;
+    }
+    if Dialog.prompt.id != 0: PromptView {
+        spec: Dialog.prompt;
+    }
+}

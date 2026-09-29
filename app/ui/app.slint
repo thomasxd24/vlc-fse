@@ -1,7 +1,117 @@
+// The window: backdrop, the current page, top bar, hints, overlays, dialogs and toasts — and the
+// window-wide keys (LB/RB tabs, Back, Menu, Search) that pages leave unhandled.
+//
+// Every global Rust talks to has to be exported from here.
+
+import { Theme, Motion, MotionPrefs } from "theme.slint";
+import { T, Art, Input, Nav, Hints, Sys, App, Backdrop, Toasts, Dialog, Util, Route, Hint, Toast, Choice, ChooseSpec, PromptSpec } from "globals.slint";
+import { Icons } from "icons.slint";
+import { Card, CardRowData } from "types.slint";
+import { BackdropView, TopBar, TopBarView, HintBar, ToastStack, DialogLayer } from "shell.slint";
+
+import { Grids, GridView, GridData, GridChip, GridFocus } from "pages/grid.slint";
+import { HomePage, HomeView } from "pages/home.slint";
+import { WelcomePage, WelcomeView } from "pages/welcome.slint";
+import { GameDetail, GameDetailView } from "pages/game.slint";
+import { MovieDetail, MovieDetailView } from "pages/movie.slint";
+import { ShowDetail, ShowDetailView } from "pages/show.slint";
+import { SearchPage, SearchView } from "pages/search.slint";
+import { SettingsPage, SettingsView } from "pages/settings.slint";
+import { StatsPage, StatsView } from "pages/stats.slint";
+import { TransfersPage, TransfersView } from "pages/transfers.slint";
+import { RemotePage, RemoteView } from "pages/remote.slint";
+import { AppsPage, AppsView } from "pages/apps.slint";
+import { PadTestPage, PadTestView } from "pages/padtest.slint";
+
+import { QuickMenu, QuickMenuView } from "overlays/quickmenu.slint";
+import { NowPlaying, NowPlayingView } from "overlays/nowplaying.slint";
+import { GameLayer, GameLayerView } from "overlays/gamelayer.slint";
+import { UpdateLayer, UpdateLayerView } from "overlays/update.slint";
+import { Intro, IntroView } from "overlays/intro.slint";
+
+export { T, Art, Input, Nav, Hints, Sys, App, Backdrop, Toasts, Dialog, Util, Icons, TopBar, Theme, MotionPrefs }
+export { Grids, HomePage, WelcomePage, GameDetail, MovieDetail, ShowDetail, SearchPage, SettingsPage, StatsPage, TransfersPage, RemotePage, AppsPage, PadTestPage }
+export { QuickMenu, NowPlaying, GameLayer, UpdateLayer, Intro }
+
 export component AppWindow inherits Window {
     title: "Lounge";
-    background: #07080c;
+    background: Theme.bg;
     preferred-width: 1600px;
     preferred-height: 900px;
-    Text { text: "Lounge"; color: white; font-size: 48px; }
+    min-width: 960px;
+    min-height: 540px;
+    default-font-family: Theme.font;
+    default-font-size: 1 * Theme.rem;
+
+    init => { Theme.vw = self.width; Theme.vh = self.height; }
+    changed width => { Theme.vw = self.width; }
+    changed height => { Theme.vh = self.height; }
+
+    // Window-wide keys. Pages get key events first; whatever they reject bubbles up to here.
+    root-scope := FocusScope {
+        capture-key-pressed(e) => {
+            // Keys synthesised from the controller keep pad mode; anything else is a real keyboard.
+            if (!Input.synthetic && Input.mode != "keyboard") {
+                Input.mode = "keyboard";
+            }
+            reject
+        }
+        key-pressed(e) => {
+            if (App.suspended) { return accept; }
+            if (e.text == Key.Tab) { Nav.cycle-tab(1); return accept; }
+            if (e.text == Key.Backtab) { Nav.cycle-tab(-1); return accept; }
+            if (e.text == Key.Escape || e.text == Key.Backspace) { Input.feedback("back"); Nav.back(); return accept; }
+            if (e.text == Key.F1) { Nav.page-key("menu"); return accept; }
+            if (e.text == Key.F2) { Nav.page-key("view"); return accept; }
+            if (e.text == Key.F3) { Nav.page-key("search"); return accept; }
+            if (e.text == Key.F11) { Nav.page-key("fullscreen"); return accept; }
+            if (e.text == Key.UpArrow && Nav.zone == "page") { Nav.focus-top(); return accept; }
+            reject
+        }
+
+        if !App.suspended: Rectangle {
+            BackdropView { }
+
+            // The current page. Each is created when navigated to; its state lives in its global.
+            if Nav.route.name == "welcome": WelcomeView { }
+            if Nav.route.name == "home": HomeView { }
+            if Nav.route.name == "games": GridView { page: "games"; }
+            if Nav.route.name == "movies": GridView { page: "movies"; }
+            if Nav.route.name == "shows": GridView { page: "shows"; }
+            if Nav.route.name == "game": GameDetailView { }
+            if Nav.route.name == "movie": MovieDetailView { }
+            if Nav.route.name == "show": ShowDetailView { }
+            if Nav.route.name == "search": SearchView { }
+            if Nav.route.name == "settings": SettingsView { }
+            if Nav.route.name == "stats": StatsView { }
+            if Nav.route.name == "transfers": TransfersView { }
+            if Nav.route.name == "remote": RemoteView { }
+            if Nav.route.name == "apps": AppsView { }
+            if Nav.route.name == "padtest": PadTestView { }
+
+            TopBarView {
+                y: 0;
+                width: parent.width;
+            }
+
+            HintBar {
+                x: parent.width - self.width - Theme.gutter;
+                y: parent.height - self.height - 1.4 * Theme.rem;
+            }
+
+            NowPlayingView { }
+            GameLayerView { }
+            QuickMenuView { }
+            UpdateLayerView { }
+            DialogLayer { }
+
+            ToastStack {
+                x: parent.width - self.width - Theme.gutter;
+                y: parent.height - self.height - 5.5 * Theme.rem;
+                width: min(40 * Theme.rem, parent.width - 2 * Theme.gutter);
+            }
+
+            IntroView { }
+        }
+    }
 }

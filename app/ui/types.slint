@@ -1,0 +1,27 @@
+// Data shapes shared across screens. Rust builds these from the backend's JSON state
+// (app/src/ui/model.rs); screens with richer needs define their own structs next to their global.
+
+// One tile in a row or grid: a movie / show / game poster, an episode or Continue watching still, an app.
+export struct Card {
+    // What activating it does is decided by Rust from kind + id (see ui/actions.rs).
+    kind: string,        // "movie" | "show" | "game" | "episode" | "app" | "add"
+    id: string,
+    show-id: string,     // episodes: their show
+    title: string,
+    subtitle: string,    // second line under the art ("2 hours ago", "S01E04 · 22 min left")
+    art: string,         // image path ("" = placeholder)
+    logo: string,        // wide cards: a transparent logo drawn over the art, if any
+    tint: color,         // placeholder colour, from the title's hue
+    progress: float,     // 0..1 resume position; < 0 hides the bar
+    watched: bool,
+    favorite: bool,
+    count: string,       // accent badge (unwatched episodes, "NEW")
+    wide: bool,          // 16:9 instead of 2:3
+}
+
+export struct CardRowData {
+    key: string,
+    title: string,
+    cards: [Card],
+    wide: bool,
+}

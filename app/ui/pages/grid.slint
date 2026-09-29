@@ -1,0 +1,243 @@
+// Games, Movies and TV Shows: a title with a count, a toolbar of chips (actions, sort, filter) and a
+// poster grid. One component serves all three; Rust (app/src/ui/pages/grid.rs) fills a GridData per page.
+//
+// This is also the reference for how screens work:
+// - The screen's data and focus live in a global (here `Grids`), so they survive leaving and returning.
+// - A PageScope takes keyboard focus; the screen moves its own focus index on arrows and scrolls to it.
+// - Up from the top row hands focus to the top bar (Nav.focus-top()); unhandled keys are rejected so the
+//   window's handler can do LB/RB, Back, Menu and Search.
+// - Pointer: hovering moves focus (mouse mode), clicking activates, right-click / long-press = options.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav, Hints, Backdrop } from "../globals.slint";
+import { Card } from "../types.slint";
+import { CardTile, Chip, PageScope, Icon } from "../widgets.slint";
+
+export struct GridChip {
+    label: string,
+    icon: string,
+    value: string,     // "sort:az", "filter:steam", "act:add-game"…
+    on: bool,
+    accent: bool,
+    sep-before: bool,  // a thin separator before this chip
+}
+
+export struct GridData {
+    title: string,
+    count: string,     // "6 of 6"
+    chips: [GridChip],
+    cards: [Card],
+    empty: string,     // shown when there are no cards
+}
+
+export struct GridFocus {
+    zone: int,         // 0 = toolbar, 1 = grid
+    chip: int,
+    card: int,
+}
+
+export global Grids {
+    in property <GridData> games;
+    in property <GridData> movies;
+    in property <GridData> shows;
+    in-out property <GridFocus> games-focus: { zone: 1 };
+    in-out property <GridFocus> movies-focus: { zone: 1 };
+    in-out property <GridFocus> shows-focus: { zone: 1 };
+    callback chip(string, string);       // page, chip value
+    callback open(string, int);          // page, card index
+    callback options(string, int);       // page, card index
+    callback focused(string, int);       // page, card index (backdrop follows focus)
+}
+
+// A toolbar of chips with thin separators between groups (`.chip-sep`). Slint has no flex-wrap, so
+// instead of wrapping onto a second line the bar scrolls sideways to follow focus.
+export component ChipBar inherits Flickable {
+    in property <[GridChip]> chips;
+    in property <int> focus-index;
+    callback clicked(int);
+    callback hovered(int);
+    height: lay.preferred-height;
+    content-width: lay.preferred-width;
+    animate content-x { duration: Motion.normal; easing: Motion.ease; }
+    function reveal(x: length, w: length) {
+        if (x + self.content-x < Theme.gutter) {
+            self.content-x = min(0, -(x - Theme.gutter));
+        }
+        if (x + w + self.content-x > self.width - Theme.gutter) {
+            self.content-x = -(x + w - self.width + Theme.gutter);
+        }
+    }
+    lay := HorizontalLayout {
+        padding-left: Theme.gutter;
+        padding-right: Theme.gutter;
+        padding-top: 0.3 * Theme.rem;
+        padding-bottom: 0.8 * Theme.rem;
+        spacing: 0.6 * Theme.rem;
+        alignment: start;
+        for c[i] in root.chips: HorizontalLayout {
+            spacing: 0.6 * Theme.rem;
+            if c.sep-before: Rectangle {
+                width: 1px;
+                background: Theme.line;
+            }
+            chip := Chip {
+                text: c.label;
+                icon: c.icon;
+                on: c.on;
+                accent: c.accent;
+                focused: i == root.focus-index;
+                clicked => { root.clicked(i); }
+                hovered => { root.hovered(i); }
+                changed focused => {
+                    if (self.focused) {
+                        root.reveal(parent.x + self.x, self.width);
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component GridView inherits Rectangle {
+    in property <string> page;           // "games" | "movies" | "shows"
+    private property <GridData> data: page == "games" ? Grids.games : page == "movies" ? Grids.movies : Grids.shows;
+    in-out property <GridFocus> pos: page == "games" ? Grids.games-focus : page == "movies" ? Grids.movies-focus : Grids.shows-focus;
+
+    // Columns: `repeat(auto-fill, minmax(11.5rem, 1fr))` with 1.5rem gaps.
+    private property <length> gap-x: 1.5 * Theme.rem;
+    private property <length> gap-y: 2 * Theme.rem;
+    private property <length> inner: self.width - 2 * Theme.gutter;
+    private property <int> cols: max(1, floor((inner + gap-x) / (11.5 * Theme.rem + gap-x)));
+    private property <length> tile: (inner - (cols - 1) * gap-x) / cols;
+    private property <length> tile-h: tile * 1.5 + 3.4 * Theme.rem;   // art + labels
+    private property <int> n: data.cards.length;
+
+    function store(f: GridFocus) {
+        if (page == "games") { Grids.games-focus = f; }
+        if (page == "movies") { Grids.movies-focus = f; }
+        if (page == "shows") { Grids.shows-focus = f; }
+        if (f.zone == 1) { Grids.focused(page, f.card); }
+        self.reveal();
+    }
+    function set-card(i: int) {
+        store({ zone: 1, chip: pos.chip, card: i });
+    }
+    function set-chip(i: int) {
+        store({ zone: 0, chip: i, card: pos.card });
+    }
+    // Scroll so the focused row is visible, keeping some room under the top bar.
+    function reveal() {
+        if (pos.zone == 0) {
+            flick.content-y = 0;
+        } else {
+            let row = floor(pos.card / cols);
+            let top = grid.y + row * (tile-h + gap-y);
+            if (top + flick.content-y < 8 * Theme.rem) {
+                flick.content-y = min(0, -(top - 8 * Theme.rem));
+            }
+            if (top + tile-h + flick.content-y > flick.height - 3 * Theme.rem) {
+                flick.content-y = -(top + tile-h - flick.height + 3 * Theme.rem);
+            }
+        }
+    }
+    init => {
+        Hints.items = [{ button: "a", label: T.tr("hint.select") }, { button: "x", label: T.tr("hint.options") }, { button: "b", label: T.tr("hint.back") }, { button: "menu", label: T.tr("hint.menu") }];
+        if (pos.card >= n) { set-card(max(0, n - 1)); }
+        if (n == 0 && pos.zone == 1) { set-chip(0); }
+        if (pos.zone == 1) { Grids.focused(page, pos.card); }
+        reveal();
+    }
+
+    scope := PageScope {
+        key-pressed(e) => {
+            if (pos.zone == 0) {
+                if (e.text == Key.LeftArrow) { if (pos.chip > 0) { set-chip(pos.chip - 1); Input.feedback("move"); } return accept; }
+                if (e.text == Key.RightArrow) { if (pos.chip < data.chips.length - 1) { set-chip(pos.chip + 1); Input.feedback("move"); } return accept; }
+                if (e.text == Key.UpArrow) { Nav.focus-top(); Input.feedback("move"); return accept; }
+                if (e.text == Key.DownArrow) { if (n > 0) { set-card(min(pos.card, n - 1)); Input.feedback("move"); } return accept; }
+                if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); Grids.chip(page, data.chips[pos.chip].value); return accept; }
+                return reject;
+            }
+            if (e.text == Key.LeftArrow) { if (mod(pos.card, cols) > 0) { set-card(pos.card - 1); Input.feedback("move"); } return accept; }
+            if (e.text == Key.RightArrow) { if (mod(pos.card, cols) < cols - 1 && pos.card < n - 1) { set-card(pos.card + 1); Input.feedback("move"); } return accept; }
+            if (e.text == Key.UpArrow) {
+                if (pos.card >= cols) { set-card(pos.card - cols); } else { set-chip(pos.chip); }
+                Input.feedback("move");
+                return accept;
+            }
+            if (e.text == Key.DownArrow) {
+                if (pos.card + cols < n) { set-card(pos.card + cols); Input.feedback("move"); }
+                else if (floor(pos.card / cols) < floor((n - 1) / cols)) { set-card(n - 1); Input.feedback("move"); }
+                return accept;
+            }
+            // LT / RT: a page of rows at a time.
+            if (e.text == Key.PageDown) { set-card(min(n - 1, pos.card + cols * 3)); return accept; }
+            if (e.text == Key.PageUp) { set-card(max(0, pos.card - cols * 3)); return accept; }
+            if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); Grids.open(page, pos.card); return accept; }
+            if (e.text == Key.Menu) { Grids.options(page, pos.card); return accept; }
+            reject
+        }
+    }
+
+    flick := Flickable {
+        content-width: self.width;
+        content-height: body.preferred-height;
+        animate content-y { duration: Motion.normal; easing: Motion.ease; }
+        body := VerticalLayout {
+            padding-top: Theme.page-top;
+            padding-bottom: 4 * Theme.rem;
+            // .page-head
+            HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 1 * Theme.rem;
+                padding-bottom: 1.2 * Theme.rem;
+                spacing: 2 * Theme.rem;
+                alignment: start;
+                Text {
+                    text: data.title;
+                    color: Theme.text;
+                    font-size: 3 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: -0.02 * 3 * Theme.rem;
+                }
+                Text {
+                    text: data.count;
+                    color: Theme.muted;
+                    font-size: 1.2 * Theme.rem;
+                    vertical-alignment: bottom;
+                    // Sit on the title's baseline, like `padding-bottom: .5rem` did.
+                    height: 3 * Theme.rem * 1.1;
+                }
+            }
+            // .toolbar: one line of chips that scrolls sideways to keep the focused chip in view.
+            ChipBar {
+                chips: data.chips;
+                focus-index: scope.has-focus && pos.zone == 0 ? pos.chip : -1;
+                clicked(i) => { set-chip(i); Grids.chip(page, data.chips[i].value); }
+                hovered(i) => { if (Input.mode == "mouse") { set-chip(i); } }
+            }
+            if n == 0: Text {
+                x: Theme.gutter;
+                text: data.empty != "" ? data.empty : T.tr("grid.empty");
+                color: Theme.muted;
+                font-size: 1.2 * Theme.rem;
+                wrap: word-wrap;
+            }
+            grid := Rectangle {
+                height: n == 0 ? 0 : ceil(n / cols) * (tile-h + gap-y) + 1 * Theme.rem;
+                for c[i] in data.cards: CardTile {
+                    x: Theme.gutter + mod(i, cols) * (tile + gap-x);
+                    y: 1 * Theme.rem + floor(i / cols) * (tile-h + gap-y);
+                    tile-width: tile;
+                    card: c;
+                    focused: scope.has-focus && pos.zone == 1 && pos.card == i;
+                    hovered => { if (Input.mode == "mouse") { set-card(i); } }
+                    clicked => { set-card(i); Grids.open(page, i); }
+                    options => { set-card(i); Grids.options(page, i); }
+                }
+            }
+        }
+    }
+}
+
