@@ -3536,3 +3536,178 @@ body.detail #tools {
 .home .row[data-row='cn'] .card.wide {
   width: 19rem;
 }
+
+
+/* ------------------------------------------------------------------ Home: minimal launcher */
+
+.page.home.mini {
+  display: flex;
+  flex-direction: column;
+  padding: 7rem var(--gutter) 3.5rem;
+  overflow: hidden;
+}
+.mh-top {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.mh-clock {
+  font-size: 7.5rem;
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.mh-date {
+  font-size: 1.5rem;
+  color: var(--muted);
+}
+.mh-greet {
+  margin-top: 0.8rem;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+}
+.mh-main {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 2.4rem;
+}
+.mh-resume {
+  position: relative;
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+  text-align: left;
+  min-width: 26rem;
+  max-width: 44rem;
+  padding: 1.6rem 5.5rem 1.6rem 1.8rem;
+  border-radius: 1.2rem;
+  border: 1px solid var(--line);
+  background: rgba(10, 11, 16, 0.55);
+  backdrop-filter: blur(18px);
+  color: var(--text);
+  transition: transform 0.25s var(--out), background 0.25s, border-color 0.25s;
+}
+.mh-resume:focus {
+  transform: scale(1.03);
+  background: rgba(20, 22, 30, 0.72);
+  border-color: var(--focus);
+}
+.mh-kicker {
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.9rem;
+}
+.mh-title {
+  font-size: 3rem;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  text-wrap: balance;
+}
+.mh-logo {
+  max-height: 5rem;
+  max-width: 24rem;
+  object-fit: contain;
+  object-position: left;
+}
+.mh-sub {
+  color: var(--muted);
+  font-size: 1.15rem;
+}
+.mh-bar {
+  width: 100%;
+  height: 0.28rem;
+  border-radius: 1rem;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.mh-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.mh-play {
+  position: absolute;
+  right: 1.6rem;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.mh-play svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+.mh-doors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+.mh-door {
+  padding: 0.7rem 1.4rem;
+  border-radius: 99rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 600;
+  transition: transform 0.2s var(--out), background 0.2s, border-color 0.2s;
+}
+.mh-door:focus {
+  background: var(--text);
+  color: #0b0c10;
+  border-color: var(--text);
+  transform: scale(1.06);
+}
+/* The backdrop is only a mood here: darker and softer than on the detail pages. */
+body:has(.page.home.mini) #backdrop .shade {
+  background: linear-gradient(180deg, rgba(7, 8, 12, 0.55), rgba(7, 8, 12, 0.85));
+}
+#page[data-enter='yes'] .home.mini .mh-top,
+#page[data-enter='yes'] .home.mini .mh-resume,
+#page[data-enter='yes'] .home.mini .mh-door {
+  animation: rise 0.6s var(--out) both;
+}
+#page[data-enter='yes'] .home.mini .mh-resume {
+  animation-delay: 0.12s;
+}
+#page[data-enter='yes'] .home.mini .mh-door {
+  animation-delay: calc(0.24s + sibling-index() * 70ms);
+}
+
+/* ------------------------------------------------------------------ Startup intro: console-style boot */
+
+/* A band of light sweeps across the dark screen once, lighting the mark as it passes. */
+.splash-sweep {
+  position: absolute;
+  inset: -20% 0;
+  background: linear-gradient(100deg, transparent 35%, rgba(255, 190, 110, 0.16) 47%, rgba(255, 255, 255, 0.22) 50%, rgba(255, 190, 110, 0.16) 53%, transparent 65%);
+  transform: translateX(-100%);
+  animation: sweep 1.3s var(--ease) 0.15s both;
+}
+@keyframes sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+.intro-calm .splash-sweep {
+  display: none;
+}
+#splash {
+  overflow: hidden;
+}
+.splash-mark {
+  animation-delay: 0.35s;
+}

@@ -2,7 +2,7 @@
 
 /* global api, S, idx, prefs, savePrefs, applyState, t, h, img, fmtTime, ICON, Nav, Sound, Backdrop, $, page, stack, route, go,
    switchTab, back, render, TABS, choose, openModal, closeModal, modals, promptText, toast, Hints, Status, QuickMenu,
-   renderStatus, renderNowPlaying, renderGameLayer, renderResults, selectSeason, paintHero */
+   renderStatus, renderNowPlaying, renderGameLayer, renderResults, selectSeason */
 
 // ============================================================================ Playback
 
@@ -1182,7 +1182,7 @@ function onState(next) {
  * loads underneath, then the splash lifts and the top bar and first rows come in. At least INTRO_MS long so it
  * reads as intended, never longer than the page takes to be ready.
  */
-const INTRO_MS = 1300;
+const INTRO_MS = 2000;
 function endIntro({ play }) {
   const splash = $('#splash');
   document.body.classList.remove('booting');

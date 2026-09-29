@@ -49,41 +49,6 @@ function hueOf(s) {
   return x % 360;
 }
 
-/** Wide card for "Jump back in": background art with the game's logo on top. */
-function gameWideCard(g, keyPrefix) {
-  const bg = g.hero || g.header || g.poster;
-  const logo = g.logo ? `<img class="card-logo logo-img" src="${h(g.logo)}" alt="">` : `<div class="card-logo-text">${h(g.title)}</div>`;
-  return `
-    <button class="card wide focusable" data-key="${keyPrefix}-${g.id}" data-hero="game:${g.id}" data-opts="game:${g.id}" data-act="play-game" data-id="${g.id}" data-hint="hint.play">
-      <div class="art">${bg ? img(bg, g.title, '') : placeholder(g.title, '')}<div class="art-shade"></div>${logo}</div>
-      <div class="label">${h(g.title)}</div>
-      <div class="sublabel">${h([fmtAgo(g.lastPlayed), fmtPlaytime(g.playtime)].filter(Boolean).join(' · '))}</div>
-    </button>`;
-}
-
-function continueCard(c) {
-  if (c.kind === 'movie') {
-    const m = idx.movies.get(c.id);
-    if (!m) return '';
-    return `
-      <button class="card wide focusable" data-key="cw-${m.id}" data-hero="movie:${m.id}" data-opts="movie:${m.id}" data-act="play-movie" data-id="${m.id}" data-hint="hint.play">
-        <div class="art">${img(m.backdrop || m.poster, m.title)}<div class="progress"><i style="width:${pct(m.progress)}%"></i></div></div>
-        <div class="label">${h(m.title)}</div>
-        <div class="sublabel">${h(remaining(m.progress) || t('media.resume'))}</div>
-      </button>`;
-  }
-  const e = idx.episodes.get(c.id);
-  if (!e) return '';
-  const pr = e.progress;
-  const bar = pr.resumable ? `<div class="progress"><i style="width:${pct(pr)}%"></i></div>` : '';
-  return `
-    <button class="card wide focusable" data-key="cw-${e.id}" data-hero="episode:${e.id}" data-opts="episode:${e.show.id}:${e.id}" data-act="play-episode" data-show="${e.show.id}" data-id="${e.id}" data-hint="hint.play">
-      <div class="art">${img(e.thumb || e.show.backdrop || e.show.poster, e.show.title, e.show.title)}${bar}</div>
-      <div class="label">${h(e.show.title)}</div>
-      <div class="sublabel">${h(epCode(e))}${e.title ? ' · ' + h(e.title) : ''}${pr.resumable ? ' · ' + h(remaining(pr)) : ''}</div>
-    </button>`;
-}
-
 function episodeCard(e, show) {
   const pr = e.progress;
   const bar = pr.resumable ? `<div class="progress"><i style="width:${pct(pr)}%"></i></div>` : '';
@@ -97,26 +62,6 @@ function episodeCard(e, show) {
       <div class="sublabel">${h(meta || (pr.resumable ? remaining(pr) : ''))}</div>
       <div class="ep-overview">${h(e.overview)}</div>
     </button>`;
-}
-
-/**
- * A horizontal row of cards. `opts.total` shows a count next to the title; `opts.seeAll` ({tab, pref, value})
- * ends the row with a card that opens that tab already sorted/filtered.
- */
-function row(title, cards, key, opts = {}) {
-  if (!cards.length) return '';
-  const count = opts.total ? `<span class="row-count">${opts.total}</span>` : '';
-  const kicker = opts.kicker ? `<span class="row-kicker">${h(opts.kicker)}</span>` : '';
-  const seeAll = opts.seeAll
-    ? `<button class="card see-all focusable ${opts.wide ? 'wide' : ''}" data-act="see-all" data-tab="${opts.seeAll.tab}" data-pref="${opts.seeAll.pref || ''}" data-value="${opts.seeAll.value || ''}" data-key="${key}-all">
-         <div class="art"><span class="see-all-inner">${ICON.more}<span>${h(t('home.seeAll'))}</span></span></div>
-       </button>`
-    : '';
-  return `
-    <section class="row ${opts.tiles ? 'tiles' : ''} ${opts.small ? 'small' : ''}" data-nav-group data-row="${key}">
-      <h2>${kicker}${h(title)}${count}</h2>
-      <div class="track" data-scroll="${key}">${cards.join('')}${seeAll}</div>
-    </section>`;
 }
 
 function metaLine(item) {
@@ -171,6 +116,47 @@ function greeting() {
   return name ? t(`greet.${part}Name`, { name }) : t(`greet.${part}`);
 }
 
+/** The one thing Home offers to pick up: the most recently played game or watched item. */
+function resumeTarget() {
+  const L = S.library;
+  const played = visibleItems(L.games).filter((g) => g.lastPlayed).map((g) => ({ at: g.lastPlayed, game: g }));
+  const watching = L.continueWatching.map((c) => ({ at: c.at || 0, c }));
+  for (const x of [...played, ...watching].sort((p, q) => q.at - p.at)) {
+    if (x.game) {
+      const g = x.game;
+      return {
+        attrs: `data-opts="game:${g.id}" data-act="play-game" data-id="${g.id}"`,
+        title: g.title,
+        logo: g.logo,
+        sub: [fmtAgo(g.lastPlayed), fmtPlaytime(g.playtime)].filter(Boolean).join(' · '),
+        bg: g.hero || g.header || g.poster
+      };
+    }
+    const c = x.c;
+    if (c.kind === 'movie') {
+      const m = idx.movies.get(c.id);
+      if (m) return { attrs: `data-opts="movie:${m.id}" data-act="play-movie" data-id="${m.id}"`, title: m.title, sub: remaining(m.progress) || t('media.resume'), progress: m.progress, bg: m.backdrop || m.poster };
+    } else {
+      const e = idx.episodes.get(c.id);
+      if (e) {
+        const sub = `${epCode(e)}${e.title ? ' · ' + e.title : ''}${e.progress.resumable ? ' · ' + remaining(e.progress) : ''}`;
+        return { attrs: `data-opts="episode:${e.show.id}:${e.id}" data-act="play-episode" data-show="${e.show.id}" data-id="${e.id}"`, title: e.show.title, sub, progress: e.progress.resumable ? e.progress : null, bg: e.show.backdrop || e.thumb || e.show.poster };
+      }
+    }
+  }
+  return null;
+}
+
+let homeClockTimer = null;
+function homeClockText() {
+  const now = new Date();
+  return {
+    time: now.toLocaleTimeString(S.lang, { hour: '2-digit', minute: '2-digit' }),
+    date: now.toLocaleDateString(S.lang, { weekday: 'long', day: 'numeric', month: 'long' })
+  };
+}
+
+// Minimal launcher: the time, one thing to pick back up, and a few doors into the rest.
 VIEWS.home = {
   render(r) {
     const L = S.library;
@@ -182,303 +168,50 @@ VIEWS.home = {
       return VIEWS.welcome.render();
     }
     r.welcome = false;
-    const played = games.filter((g) => g.lastPlayed).map((g) => ({ at: g.lastPlayed, html: () => gameWideCard(g, 'cn') }));
-    const watching = L.continueWatching.map((c) => ({ at: c.at || 0, html: () => continueCard(c) }));
-    // One "Continue" row: the games you played and what you were watching, most recent first.
-    const cont = [...played, ...watching]
-      .sort((a, b) => b.at - a.at)
-      .slice(0, 16)
-      .map((x) => x.html())
-      .filter(Boolean);
-    const added = [...games, ...movies, ...shows].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)).slice(0, 20);
-    const favorites = [...games, ...movies, ...shows].filter((x) => x.favorite).sort((a, b) => a.title.localeCompare(b.title));
-    const apps = (S.apps || [])
-      .filter((a) => !a.hidden && a.lastLaunched)
-      .sort((a, b) => b.lastLaunched - a.lastLaunched)
-      .slice(0, 10);
-    const unwatched = movies.filter((m) => !m.progress.watched && !m.progress.resumable);
-    const sections = [
-      row(t('home.continue'), cont, 'cn', { wide: true }),
-      row(t('home.glance'), glanceCards(), 'gl', { tiles: true }),
-      row(t('home.recentlyAdded'), added.map((x) => posterCard(x, 'ra')), 'ra'),
-      row(t('home.favorites'), favorites.map((x) => posterCard(x, 'fv')), 'fv', { total: favorites.length }),
-      row(t('home.apps'), apps.map((a) => appTile(a, 'ha')), 'ha', { seeAll: { tab: 'apps' }, small: true }),
-      row(t('home.unwatchedMovies'), unwatched.slice(0, 16).map((m) => posterCard(m, 'um')), 'um', { total: unwatched.length, seeAll: unwatched.length > 16 ? { tab: 'movies', pref: 'movieFilter', value: 'unwatched' } : null })
-    ];
-    // The greeting heads whichever row comes first.
-    const first = sections.findIndex(Boolean);
-    if (first >= 0) sections[first] = sections[first].replace('<h2>', `<h2><span class="row-kicker">${h(greeting())}</span>`);
-    const rows = sections.join('');
-    const empty = !rows.trim() ? `<div class="page-head"><div class="empty-hint">${h(t('status.scanning'))}</div></div>` : '';
+    const target = resumeTarget();
+    r.bg = target ? target.bg : null;
+    const clock = homeClockText();
+    const resume = target
+      ? `<button class="mh-resume focusable" data-key="mh-resume" data-autofocus data-hint="hint.play" ${target.attrs}>
+           <span class="mh-kicker">${h(t('media.resume'))}</span>
+           ${target.logo ? `<img class="mh-logo logo-img" src="${h(target.logo)}" alt="${h(target.title)}">` : `<span class="mh-title">${h(target.title)}</span>`}
+           <span class="mh-sub">${h(target.sub)}</span>
+           ${target.progress ? `<span class="mh-bar"><i style="width:${pct(target.progress)}%"></i></span>` : ''}
+           <span class="mh-play">${ICON.play}</span>
+         </button>`
+      : '';
+    const doors = [
+      games.length && ['games', t('tab.games')],
+      movies.length && ['movies', t('tab.movies')],
+      shows.length && ['shows', t('tab.shows')],
+      (S.apps || []).length && ['apps', t('tab.apps')]
+    ].filter(Boolean);
+    const shortcuts = doors
+      .map(([tab, label], i) => `<button class="mh-door focusable" data-act="tab" data-tab="${tab}" data-key="mh-${tab}" ${!target && i === 0 ? 'data-autofocus' : ''}>${h(label)}</button>`)
+      .join('');
     return `
-      <div class="page home">
-        <section class="hero" id="hero" data-nav-group></section>
-        <div class="rows" data-scroll="home">${rows}${empty}</div>
+      <div class="page home mini">
+        <div class="mh-top">
+          <div class="mh-clock" id="mh-clock">${h(clock.time)}</div>
+          <div class="mh-date" id="mh-date">${h(clock.date)}</div>
+          <div class="mh-greet">${h(greeting())}</div>
+        </div>
+        <div class="mh-main" data-nav-group>${resume}</div>
+        <nav class="mh-doors" data-nav-group>${shortcuts}</nav>
       </div>`;
   },
-  mount() {
-    // Start on the first card (the banner shows it); the banner's buttons are one press Up.
-    const first = page.querySelector('.rows .card');
-    if (first) first.setAttribute('data-autofocus', '');
-    alignedRow = null;
-    if ($('#hero')) heroFromFocus();
-    Spotlight.arm();
-    if (!statsData) loadStats().then(fillGlance, () => null);
-  },
-  onFocus(r, target) {
-    heroFromFocus();
-    alignRow(target);
+  mount(r) {
+    clearInterval(homeClockTimer);
+    homeClockTimer = setInterval(() => {
+      const el = document.getElementById('mh-clock');
+      if (!el) return clearInterval(homeClockTimer);
+      const c = homeClockText();
+      el.textContent = c.time;
+      document.getElementById('mh-date').textContent = c.date;
+    }, 15000);
+    Backdrop.set(r.bg || null, { immediate: true });
   }
 };
-
-/** Keep the row you're on in the same place under the banner, so moving up/down never jumps around. */
-let alignedRow = null;
-function alignRow(target) {
-  const rowEl = target.closest && target.closest('.row');
-  const rows = rowEl && rowEl.closest('.rows');
-  if (!rows || rowEl === alignedRow) return;
-  alignedRow = rowEl;
-  // After Nav's own scrollIntoView, so ours wins.
-  requestAnimationFrame(() => {
-    const top = rowEl.offsetTop;
-    rows.scrollTo({ top: Math.max(0, top), behavior: reducedMotion() ? 'auto' : 'smooth' });
-  });
-}
-
-function heroFromFocus() {
-  const hero = $('#hero');
-  const a = document.activeElement;
-  if (!hero || !a) return;
-  const key = a.dataset && a.dataset.hero;
-  if (!key) {
-    // Focus on the banner's own buttons keeps what it shows.
-    if (!hero.dataset.item) {
-      const first = page.querySelector('[data-hero]');
-      if (first) paintHero(first.dataset.hero);
-    }
-    return;
-  }
-  Spotlight.stop();
-  paintHero(key);
-}
-
-// ---- At a glance: small dashboard tiles (the week's playtime, Tailscale, transfers) ----
-
-/** The last 7 days as tiny stacked bars (games and watching, the Playtime page's colours) plus totals. */
-function weekTileBody() {
-  if (!statsData) return `<div class="gl-body"><div class="gl-big">…</div></div>`;
-  const agg = Stats.aggregate(statsData, 'week', Date.now());
-  const max = Math.max(60, agg.max);
-  const bars = agg.buckets
-    .map((b) => `<i title="${h(bucketLabel(b))}"><b class="g" style="height:${(b.game / max) * 100}%"></b><b class="w" style="height:${(b.watch / max) * 100}%"></b></i>`)
-    .join('');
-  const total = agg.totals.game + agg.totals.watch;
-  return `
-    <div class="gl-body">
-      <div class="gl-big">${h(fmtMinutes(total))}</div>
-      <div class="gl-sub"><span class="dot g"></span>${h(fmtMinutes(agg.totals.game))} <span class="dot w"></span>${h(fmtMinutes(agg.totals.watch))}</div>
-    </div>
-    <div class="gl-bars" aria-hidden="true">${bars}</div>`;
-}
-
-function glanceCards() {
-  const tile = (key, act, icon, title, body, extra = '') =>
-    `<button class="card tile focusable" data-key="gl-${key}" data-act="${act}" ${extra}><div class="art"><div class="gl-head">${icon}<span>${h(title)}</span></div>${body}</div></button>`;
-  const out = [tile('week', 'open-stats', ICON.chart, t('stats.week'), weekTileBody(), 'data-glance="week"')];
-  if (S.tailscaleInstalled) {
-    const st = S.tailscale;
-    const on = st && st.state === 'connected';
-    const detail = on ? t('ts.devices', { n: st.peersOnline || 0 }) + (st.exitNode ? ` · ${t('ts.viaExit', { name: st.exitNode.name })}` : '') : '';
-    out.push(tile('ts', 'ts-panel', ICON.vpn, t('ts.title'), `<div class="gl-body"><div class="gl-big ${on ? 'ok' : ''}">${h(st ? tsStateLabel(st) : '…')}</div><div class="gl-sub">${h(detail)}</div></div>`));
-  }
-  const jobs = (S.transfers || []).filter((j) => j.status === 'running' || j.status === 'queued');
-  if (jobs.length) {
-    const done = jobs.reduce((n, j) => n + (j.bytesDone || 0), 0);
-    const all = jobs.reduce((n, j) => n + (j.bytesTotal || 0), 0);
-    const p = all ? Math.round((done / all) * 100) : 0;
-    out.push(
-      tile(
-        'xfer',
-        'see-all',
-        ICON.download,
-        t('tab.transfers'),
-        `<div class="gl-body"><div class="gl-big">${p}%</div><div class="gl-sub">${h(jobs[0].title)}</div></div><div class="progress"><i style="width:${p}%"></i></div>`,
-        'data-tab="transfers"'
-      )
-    );
-  }
-  return out;
-}
-
-/** Stats arrive after Home is drawn: fill the week tile in place, without moving focus. */
-function fillGlance() {
-  const el = page.querySelector('[data-glance="week"] .art');
-  if (!el) return;
-  el.querySelectorAll('.gl-body, .gl-bars').forEach((x) => x.remove());
-  el.insertAdjacentHTML('beforeend', weekTileBody());
-}
-
-/** The banner's buttons for an item: the main action (play/resume) and its details page. */
-function heroActions(type, id) {
-  const btn = (act, attrs, icon, label, primary) =>
-    `<button class="btn ${primary ? 'primary' : ''} focusable" data-act="${act}" ${attrs} ${primary ? 'data-nav-default' : ''} data-key="hero-${primary ? 'play' : 'info'}">${icon}${h(label)}</button>`;
-  if (type === 'game') return btn('play-game', `data-id="${id}"`, ICON.play, t('game.play'), true) + btn('open-game', `data-id="${id}"`, ICON.more, t('opt.details'));
-  if (type === 'movie') {
-    const m = idx.movies.get(id);
-    const label = m.progress.resumable ? t('media.resumeFrom', { time: fmtTime(m.progress.time) }) : t('media.play');
-    return btn('play-movie', `data-id="${id}" data-mode="${m.progress.resumable ? 'resume' : 'start'}"`, ICON.play, label, true) + btn('open-movie', `data-id="${id}"`, ICON.more, t('opt.details'));
-  }
-  if (type === 'show') {
-    const s = idx.shows.get(id);
-    const next = s.nextUp ? idx.episodes.get(s.nextUp) : null;
-    const main = next ? btn('play-episode', `data-show="${s.id}" data-id="${next.id}"`, ICON.play, next.progress.resumable ? t('show.resumeEp', { ep: epCode(next) }) : t('show.playEp', { ep: epCode(next) }), true) : '';
-    return main + btn('open-show', `data-id="${id}"`, ICON.more, t('opt.details'), !main);
-  }
-  if (type === 'episode') {
-    const e = idx.episodes.get(id);
-    return (
-      btn('play-episode', `data-show="${e.show.id}" data-id="${e.id}"`, ICON.play, e.progress.resumable ? t('media.resumeFrom', { time: fmtTime(e.progress.time) }) : t('media.play'), true) +
-      btn('open-show', `data-id="${e.show.id}"`, ICON.more, t('opt.goToShow'))
-    );
-  }
-  return '';
-}
-
-function paintHero(key, { spotlight = false } = {}) {
-  const hero = $('#hero');
-  if (!hero || hero.dataset.item === key) return;
-  const [type, id] = key.split(':');
-  let kicker = '';
-  let title = '';
-  let logo = null;
-  let meta = '';
-  let overview = '';
-  let bg = null;
-  let progress = null;
-  if (type === 'movie') {
-    const m = idx.movies.get(id);
-    if (!m) return;
-    kicker = m.progress.resumable ? `${t('media.resume')} · ${remaining(m.progress)}` : t('kind.movie');
-    title = m.title;
-    meta = metaLine(m);
-    overview = m.overview;
-    bg = m.backdrop || m.poster;
-    if (m.progress.resumable) progress = m.progress;
-  } else if (type === 'show') {
-    const s = idx.shows.get(id);
-    if (!s) return;
-    kicker = t('kind.show');
-    title = s.title;
-    meta = metaLine(s);
-    overview = s.overview;
-    bg = s.backdrop || s.poster;
-  } else if (type === 'episode') {
-    const e = idx.episodes.get(id);
-    if (!e) return;
-    kicker = `${e.show.title} · ${epCode(e)}`;
-    title = e.title || e.show.title;
-    meta = `<div class="meta">${e.runtime ? `<span>${fmtRuntime(e.runtime)}</span>` : ''}<span>${h(e.progress.resumable ? remaining(e.progress) : t('media.upNext'))}</span></div>`;
-    overview = e.overview || e.show.overview;
-    bg = e.show.backdrop || e.thumb || e.show.poster;
-    if (e.progress.resumable) progress = e.progress;
-  } else if (type === 'game') {
-    const g = idx.games.get(id);
-    if (!g) return;
-    kicker = g.genres.slice(0, 2).join(' · ') || t('kind.game');
-    title = g.title;
-    logo = g.logo;
-    meta = gameMetaLine(g);
-    overview = g.overview;
-    bg = g.hero || g.header || g.poster;
-  } else return;
-  hero.dataset.item = key;
-  hero.classList.remove('swap');
-  void hero.offsetWidth; // restart the crossfade
-  hero.classList.add('swap');
-  hero.classList.toggle('spotlight', spotlight);
-  if (!spotlight) parallaxFrom(document.activeElement);
-  // Keep focus if it was on the banner's buttons (a spotlight change re-renders them).
-  const refocus = hero.contains(document.activeElement) ? document.activeElement.dataset.key : null;
-  hero.innerHTML = `
-    <div class="kicker">${spotlight ? `<span class="spot-dot"></span>${h(t('home.spotlight'))} · ` : ''}${h(kicker)}</div>
-    ${logo ? `<img class="hero-logo logo-img" src="${h(logo)}" alt="${h(title)}">` : `<h1>${h(title)}</h1>`}
-    ${meta}
-    ${overview ? `<p class="overview">${h(overview)}</p>` : ''}
-    ${progress ? `<div class="hero-progress"><div class="bar"><i style="width:${pct(progress)}%"></i></div><span>${h(t('media.timeOf', { time: fmtTime(progress.time), total: fmtTime(progress.length) }))}</span></div>` : ''}
-    <div class="actions hero-actions">${heroActions(type, id)}</div>`;
-  if (refocus) {
-    const el = hero.querySelector(`[data-key="${refocus}"]`) || hero.querySelector('.btn');
-    if (el) Nav.focus(el, { scroll: false });
-  }
-  Backdrop.set(bg);
-}
-
-/**
- * Spotlight: after a while without input on Home, the banner slowly cycles through your recent games and
- * shows (the TV-launcher "attract" loop). Any input snaps it back to what's selected.
- */
-const Spotlight = (() => {
-  const IDLE_MS = 45000;
-  const EVERY_MS = 11000;
-  let idleTimer = null;
-  let cycleTimer = null;
-  let index = 0;
-  let running = false;
-
-  function items() {
-    return [...page.querySelectorAll('.rows [data-row="cn"] [data-hero], .rows [data-row="fv"] [data-hero], .rows [data-row="ra"] [data-hero]')]
-      .map((el) => el.dataset.hero)
-      .filter((k, i, all) => all.indexOf(k) === i)
-      .slice(0, 10);
-  }
-
-  function next() {
-    const list = items();
-    const hero = $('#hero');
-    if (list.length < 2 || !hero || route().name !== 'home' || document.hidden || modals.length || S.game || S.nowPlaying) return;
-    index = (index + 1) % list.length;
-    if (list[index] === hero.dataset.item) index = (index + 1) % list.length;
-    paintHero(list[index], { spotlight: true });
-  }
-
-  function start() {
-    if (running || reducedMotion()) return;
-    running = true;
-    index = Math.max(0, items().indexOf(($('#hero') || {}).dataset?.item));
-    next();
-    cycleTimer = setInterval(next, EVERY_MS);
-  }
-
-  function stop() {
-    clearInterval(cycleTimer);
-    const was = running;
-    running = false;
-    if (was) {
-      // Back to whatever is actually selected.
-      const hero = $('#hero');
-      const a = document.activeElement;
-      if (hero) {
-        delete hero.dataset.item;
-        const key = a && a.dataset && a.dataset.hero;
-        paintHero(key || (page.querySelector('[data-hero]') || {}).dataset?.hero || '');
-      }
-    }
-  }
-
-  function arm() {
-    clearTimeout(idleTimer);
-    if (route().name === 'home') idleTimer = setTimeout(start, IDLE_MS);
-  }
-
-  const wake = () => {
-    if (running) stop();
-    arm();
-  };
-  for (const ev of ['keydown', 'pointerdown', 'wheel', 'touchstart']) document.addEventListener(ev, wake, { passive: true, capture: true });
-  Nav.onMove(wake);
-  Nav.onAction(wake);
-  return { arm, stop, isRunning: () => running };
-})();
 
 // ============================================================================ Grids
 
