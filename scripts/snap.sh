@@ -5,7 +5,8 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 script="$1"; shift
-bin="${CARGO_TARGET_DIR:-$here/target}/debug/lounge"
+# LOUNGE_BIN: a private copy of the binary (several worktrees can share one cargo target dir).
+bin="${LOUNGE_BIN:-${CARGO_TARGET_DIR:-$here/target}/debug/lounge}"
 export LD_LIBRARY_PATH="$HOME/.local/lounge-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export SLINT_BACKEND="${SLINT_BACKEND:-winit-skia-software}"
 cd "$here"

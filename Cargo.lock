@@ -2896,6 +2896,7 @@ name = "lounge"
 version = "3.0.0-alpha"
 dependencies = [
  "base64 0.23.1",
+ "chrono",
  "dirs",
  "gilrs",
  "hidapi",
@@ -4652,6 +4653,7 @@ dependencies = [
  "const-field-offset",
  "i-slint-backend-linuxkms",
  "i-slint-backend-selector",
+ "i-slint-backend-winit",
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
