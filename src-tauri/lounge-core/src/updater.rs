@@ -328,6 +328,11 @@ impl Updater {
         }
     }
 
+    /// Force a status (the JS version's `set({ status: 'installing' })` from installUpdate's FSE flow).
+    pub fn set_status(&self, status: Status) {
+        self.mutate(|s| s.status = status);
+    }
+
     #[cfg(test)]
     fn with_bases(mut self, api_base: impl Into<String>, web_base: impl Into<String>) -> Self {
         self.api_base = api_base.into();

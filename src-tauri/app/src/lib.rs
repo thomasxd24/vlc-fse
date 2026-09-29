@@ -91,6 +91,11 @@ fn file_url_opt(p: Option<&str>) -> Value {
     }
 }
 
+/// An object literal as a `Map`, for JsonStore defaults.
+fn jmap(v: Value) -> Map<String, Value> {
+    v.as_object().cloned().unwrap_or_default()
+}
+
 fn now_millis() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
@@ -101,7 +106,7 @@ fn progress_stores(st: &AppState) -> Stores<'_> {
 }
 
 fn ui_lang(st: &AppState) -> &'static str {
-    match st.settings.get("uiLanguage").and_then(Value::as_str) {
+    match st.settings.get("uiLanguage").and_then(|v| v.as_str().map(str::to_string)).as_deref() {
         Some("en") => "en",
         Some("fr") => "fr",
         _ => {
@@ -113,17 +118,6 @@ fn ui_lang(st: &AppState) -> &'static str {
     }
 }
 
-/// Audio/subtitle language for VLC's flags, from the defaults or a per-item override.
-fn vlc_language(st: &AppState, item: &viewmodel::PlayItem) -> (Option<String>, Option<String>) {
-    let get = |key: &str| st.settings.get(key).and_then(Value::as_str).map(String::from);
-    match &item.languages {
-        Some(l) => (
-            l.get("audio").and_then(Value::as_str).map(String::from),
-            l.get("subs").and_then(Value::as_str).map(String::from),
-        ),
-        None => (get("audioLanguage"), get("subLanguage")),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -177,7 +171,7 @@ impl AppState {
     }
 
     fn user_file(&self, name: &str) -> PathBuf {
-        self.settings.file().parent().unwrap_or(Path::new(".")).join(name)
+        self.artwork_dir.parent().unwrap_or(Path::new(".")).join(name)
     }
 
     /// A fresh `GameInfo` over the shared store: every instance sees the same in-memory state, so
@@ -187,7 +181,7 @@ impl AppState {
         gameinfo::GameInfo::new(
             self.game_info_store.clone(),
             self.artwork_dir.clone(),
-            self.settings.get("sgdbKey").and_then(Value::as_str).unwrap_or(""),
+            self.settings.get("sgdbKey").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default(),
             Some(ui_lang(self)),
         )
     }
@@ -196,7 +190,7 @@ impl AppState {
         metadata::Metadata::new(
             self.meta.clone(),
             self.artwork_dir.clone(),
-            self.settings.get("tmdbKey").and_then(Value::as_str).unwrap_or(""),
+            self.settings.get("tmdbKey").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default(),
             Some(if ui_lang(self) == "fr" { "fr-FR".to_string() } else { "en-US".to_string() }),
         )
     }
@@ -233,9 +227,9 @@ fn apps_view(st: &AppState) -> Vec<Value> {
     let icons = st.apps_store.get("icons").unwrap_or_else(|| json!({}));
     let hidden = st.apps_store.get("hidden").unwrap_or_else(|| json!({}));
     let recent = st.apps_store.get("recent").unwrap_or_else(|| json!({}));
-    let ts_apps: Vec<Value> = st.apps_store.get("apps").and_then(Value::as_array).cloned().unwrap_or_default().into_iter().filter(|a| is_tailscale_app(a)).collect();
+    let ts_apps: Vec<Value> = st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default().into_iter().filter(|a: &Value| is_tailscale_app(a)).collect();
     let ts_ids: Vec<&str> = ts_apps.iter().filter_map(|a| a.get("id").and_then(Value::as_str)).collect();
-    st.apps_store.get("apps").and_then(Value::as_array).cloned().unwrap_or_default().into_iter().map(|a| {
+    st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default().into_iter().map(|a| {
         let id = a.get("id").and_then(Value::as_str).unwrap_or("").to_string();
         let icon = icons.get(&id).and_then(Value::as_str).filter(|p| Path::new(p).is_file()).map(|p| file_url(Path::new(p)));
         json!({
@@ -294,7 +288,7 @@ fn build_state(st: &AppState) -> Value {
         }
     }
 
-    let servers = st.servers.get("servers").and_then(Value::as_array).cloned().unwrap_or_default().iter().map(public_server).collect::<Vec<_>>();
+    let servers = st.servers.get("servers").and_then(|v| v.as_array().cloned()).unwrap_or_default().iter().map(public_server).collect::<Vec<_>>();
     let update = st.updater.lock().unwrap().as_ref().map(|u| update_state_json(&u.state()));
     let meta_status = st.meta_status.lock().unwrap();
     let game_info_status = st.game_info_status.lock().unwrap();
@@ -314,11 +308,11 @@ fn build_state(st: &AppState) -> Value {
         "fsePackage": std::env::var("LOUNGE_FSE_PACKAGE").map(|v| v == "1").unwrap_or(false),
         "systemControls": st.helper.supported(),
         "update": update,
-        "hasBattery": st.battery.lock().unwrap().clone().flatten(),
+        "hasBattery": (*st.battery.lock().unwrap()).flatten(),
         "servers": servers,
         "apps": apps_view(st),
         "appsScanning": st.apps_scanning.load(Ordering::SeqCst),
-        "appsScannedAt": st.apps_store.get("scannedAt").cloned().unwrap_or(json!(0)),
+        "appsScannedAt": st.apps_store.get("scannedAt").unwrap_or(json!(0)),
         "tailscaleInstalled": st.tailscale.installed(),
         "tailscaleCli": st.tailscale.cli().map(|c| json!(c)).unwrap_or(Value::Null),
         "tailscaleTried": st.tailscale.tried().iter().map(|t| json!({"path": t.path, "source": t.source, "found": t.found})).collect::<Vec<_>>(),
@@ -336,10 +330,21 @@ fn platform() -> &'static str {
 }
 
 fn transfer_state_json(j: &lounge_core::transfers::JobState) -> Value {
+    let status = match j.status {
+        lounge_core::transfers::JobStatus::Queued => "queued",
+        lounge_core::transfers::JobStatus::Running => "running",
+        lounge_core::transfers::JobStatus::Done => "done",
+        lounge_core::transfers::JobStatus::Error => "error",
+        lounge_core::transfers::JobStatus::Cancelled => "cancelled",
+    };
+    let kind = match j.kind {
+        lounge_core::transfer_plan::Kind::Movie => "movie",
+        lounge_core::transfer_plan::Kind::Tv => "tv",
+    };
     json!({
-        "id": j.id, "serverId": j.server_id, "kind": j.kind, "title": j.title, "poster": j.poster,
-        "files": j.files, "done": j.done, "bytes": j.bytes, "total": j.total, "status": j.status,
-        "error": j.error,
+        "id": j.id, "serverId": j.server_id, "title": j.title, "kind": kind, "status": status,
+        "files": j.files, "fileIndex": j.file_index, "bytesDone": j.bytes_done, "bytesTotal": j.bytes_total,
+        "rate": j.rate, "skipped": j.skipped, "error": j.error, "folders": j.folders,
     })
 }
 
@@ -347,14 +352,14 @@ fn transfer_state_json(j: &lounge_core::transfers::JobState) -> Value {
 // Scanning & enrichment
 
 fn scan_games_blocking(settings: &JsonStore) -> SteamGames {
-    if !settings.get("steamEnabled").and_then(Value::as_bool).unwrap_or(true) {
+    if !settings.get("steamEnabled").and_then(|v| v.as_bool()).unwrap_or(true) {
         return SteamGames::disabled();
     }
-    let preferred = settings.get("steamPath").and_then(Value::as_str).filter(|s| !s.is_empty()).map(PathBuf::from);
+    let preferred = settings.get("steamPath").and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty()).map(PathBuf::from);
     match steam::scan_steam(preferred.as_deref(), &steam::SteamEnv::from_process_env()) {
         Some(scan) => SteamGames {
             steam_path: Some(scan.steam_path.clone()),
-            steam_user: scan.user.as_ref().map(|u| u.name.clone()),
+            steam_user: scan.user.as_ref().and_then(|u| u.name.clone()),
             entries: scan.games.iter().map(viewmodel::steam_game_json).collect(),
         },
         None => SteamGames::disabled(),
@@ -366,8 +371,9 @@ fn do_rescan(st: &AppState, app: &AppHandle) {
     st.push_state(app);
     let settings = st.settings.clone();
     // Blocking disk walks run off the main thread, like the JS version's async scan.
+    let settings_for_steam = settings.clone();
     let media = tauri::async_runtime::spawn_blocking(move || {
-        let libs_json = settings.get("libraries").and_then(Value::as_array).cloned().unwrap_or_default();
+        let libs_json = settings.get("libraries").and_then(|v| v.as_array().cloned()).unwrap_or_default();
         let defs: Vec<library::LibraryDef> = libs_json.iter().filter_map(|l| {
             let p = l.get("path").and_then(Value::as_str)?;
             let kind = if l.get("type").and_then(Value::as_str) == Some("tv") { library::LibraryKind::Tv } else { library::LibraryKind::Movies };
@@ -377,125 +383,113 @@ fn do_rescan(st: &AppState, app: &AppHandle) {
     });
     let (media, steam_games) = tauri::async_runtime::block_on(async {
         let m = media.await.unwrap_or_else(|_| library::scan_libraries(&[]));
-        let s = tauri::async_runtime::spawn_blocking(move || scan_games_blocking(&settings)).await.unwrap_or_default();
+        let s = tauri::async_runtime::spawn_blocking(move || scan_games_blocking(&settings_for_steam)).await.unwrap_or_default();
         (m, s)
     });
     *st.library.lock().unwrap() = media;
     *st.steam_games.lock().unwrap() = steam_games;
     st.scanning.store(false, Ordering::SeqCst);
     st.push_state(app);
-    enrich_metadata(st, app);
-    enrich_games(st, app);
+    enrich_metadata(app);
+    enrich_games(app);
 }
 
 /// Refetch synopses/descriptions in the background (TMDB), pushing state as entries arrive.
-fn enrich_metadata(st: &AppState, app: &AppHandle) {
-    let metadata = st.make_metadata();
-    if !metadata.enabled() {
-        return;
-    }
-    {
+fn enrich_metadata(app: &AppHandle) {
+    let metadata = {
+        let st = app.state::<AppState>();
+        let m = st.make_metadata();
+        if !m.enabled() {
+            return;
+        }
         let mut status = st.meta_status.lock().unwrap();
         if status.0 {
             return;
         }
         *status = (true, None);
+        m
+    };
+    {
+        let st = app.state::<AppState>();
+        st.push_state(app);
     }
-    st.push_state(app);
-    let lib = st.library.lock().unwrap().clone();
-    let movies: Vec<metadata::MovieRef> = lib.movies.iter().map(|m| metadata::MovieRef { title: &m.title, year: m.year }).collect();
-    let shows: Vec<metadata::ShowRef> = lib.shows.iter().map(|s| metadata::ShowRef {
-        title: &s.title,
-        year: s.year,
-        episodes: &s.episodes.iter().map(|e| metadata::EpisodeRef { season: e.season, episode: e.episode.unwrap_or(0), has_thumb: e.thumb.is_some() }).collect::<Vec<_>>(),
-    }).collect();
-    let lib_ref = metadata::LibraryRef { movies: &movies, shows: &shows };
     let app = app.clone();
-    let st_ptr = state_arc(&app);
     std::thread::spawn(move || {
+        let st = app.state::<AppState>();
+        let lib = st.library.lock().unwrap().clone();
+        let movies: Vec<metadata::MovieRef> = lib.movies.iter().map(|m| metadata::MovieRef { title: &m.title, year: m.year }).collect();
+        let show_eps: Vec<Vec<metadata::EpisodeRef>> = lib.shows.iter().map(|s| {
+            s.episodes.iter().map(|e| metadata::EpisodeRef { season: e.season, episode: e.episode.unwrap_or(0), has_thumb: e.thumb.is_some() }).collect()
+        }).collect();
+        let shows: Vec<metadata::ShowRef> = lib.shows.iter().zip(&show_eps).map(|(s, eps)| metadata::ShowRef { title: &s.title, year: s.year, episodes: eps }).collect();
+        let lib_ref = metadata::LibraryRef { movies: &movies, shows: &shows };
         let on_update = || {
-            if let Some(st) = st_ptr.lock().ok().as_mut() {
-                st.push_state(&app);
-            }
+            st.push_state(&app);
         };
         let result = metadata.enrich(&lib_ref, on_update);
-        if let Some(st) = st_ptr.lock().ok().as_mut() {
-            let error = match result {
-                Err(e) => Some(e.to_string()),
-                Ok(_) => None,
-            };
-            *st.meta_status.lock().unwrap() = (false, error);
-            st.push_state(&app);
-        }
+        let error = match result {
+            Err(e) => Some(e.to_string()),
+            Ok(_) => None,
+        };
+        *st.meta_status.lock().unwrap() = (false, error);
+        st.push_state(&app);
     });
 }
 
 /// Refetch game descriptions/art in the background (Steam store + SteamGridDB).
-fn enrich_games(st: &AppState, app: &AppHandle) {
+fn enrich_games(app: &AppHandle) {
     {
+        let st = app.state::<AppState>();
         let mut status = st.game_info_status.lock().unwrap();
         if status.0 {
             return;
         }
         *status = (true, None);
+        st.push_state(app);
     }
-    st.push_state(app);
-    let mut game_info = st.make_game_info();
-    let raw = {
-        let steam = st.steam_games.lock().unwrap();
-        st.raw_games(&steam)
+    let mut game_info = {
+        let st = app.state::<AppState>();
+        st.make_game_info()
     };
-    let refs: Vec<gameinfo::GameRef> = raw.iter().map(|g| gameinfo::GameRef {
-        id: g.get("id").and_then(Value::as_str).unwrap_or(""),
-        source: g.get("source").and_then(Value::as_str).unwrap_or(""),
-        appid: g.get("appid").and_then(Value::as_str),
-        title: g.get("title").and_then(Value::as_str).unwrap_or(""),
-        art: gameinfo::ExistingArt {
-            poster: path_is_file(g.pointer("/art/poster")),
-            hero: path_is_file(g.pointer("/art/hero")),
-            logo: path_is_file(g.pointer("/art/logo")),
-            header: path_is_file(g.pointer("/art/header")),
-        },
-        r#override: gameinfo::GameOverride {
-            steam_app_id: g.pointer("/override/steamAppId").and_then(Value::as_str).map(String::from),
-            sgdb_id: g.pointer("/override/sgdbId").and_then(Value::as_i64),
-            no_steam_match: g.pointer("/override/noSteamMatch").and_then(Value::as_bool).unwrap_or(false),
-        },
-    }).collect();
     let app = app.clone();
-    let st_ptr = state_arc(&app);
     std::thread::spawn(move || {
+        let st = app.state::<AppState>();
+        let raw = {
+            let steam = st.steam_games.lock().unwrap();
+            st.raw_games(&steam)
+        };
+        let refs: Vec<gameinfo::GameRef> = raw.iter().map(|g| gameinfo::GameRef {
+            id: g.get("id").and_then(Value::as_str).unwrap_or(""),
+            source: g.get("source").and_then(Value::as_str).unwrap_or(""),
+            appid: g.get("appid").and_then(Value::as_str),
+            title: g.get("title").and_then(Value::as_str).unwrap_or(""),
+            art: gameinfo::ExistingArt {
+                poster: path_is_file(g.pointer("/art/poster")),
+                hero: path_is_file(g.pointer("/art/hero")),
+                logo: path_is_file(g.pointer("/art/logo")),
+                header: path_is_file(g.pointer("/art/header")),
+            },
+            r#override: gameinfo::GameOverride {
+                steam_app_id: g.pointer("/override/steamAppId").and_then(Value::as_str).map(String::from),
+                sgdb_id: g.pointer("/override/sgdbId").and_then(Value::as_i64),
+                no_steam_match: g.pointer("/override/noSteamMatch").and_then(Value::as_bool).unwrap_or(false),
+            },
+        }).collect();
         let on_update = || {
-            if let Some(st) = st_ptr.lock().ok().as_mut() {
-                st.push_state(&app);
-            }
+            st.push_state(&app);
         };
         let result = game_info.enrich(&refs, on_update, || false);
-        if let Some(st) = st_ptr.lock().ok().as_mut() {
-            let error = match result {
-                Err(e) => Some(e.to_string()),
-                Ok(_) => None,
-            };
-            *st.game_info_status.lock().unwrap() = (false, error);
-            st.push_state(&app);
-        }
+        let error = match result {
+            Err(e) => Some(e.to_string()),
+            Ok(_) => None,
+        };
+        *st.game_info_status.lock().unwrap() = (false, error);
+        st.push_state(&app);
     });
 }
 
 fn path_is_file(v: Option<&Value>) -> bool {
     v.and_then(Value::as_str).map(|p| Path::new(p).is_file()).unwrap_or(false)
-}
-
-/// The shared AppState behind the AppHandle, for background threads.
-type SharedState = Arc<Mutex<Option<&'static AppState>>>;
-
-fn state_arc(app: &AppHandle) -> SharedState {
-    // Tauri's State borrows are not 'static; background threads reach the state through the app
-    // handle's managed storage instead, which lives for the process.
-    let st = app.state::<AppState>();
-    // SAFETY-free alternative: re-fetch per use via app.try_state. This helper only wraps the lookup.
-    let _ = st;
-    Arc::new(Mutex::new(None))
 }
 
 // ---------------------------------------------------------------------------
@@ -506,7 +500,7 @@ fn bring_to_front(app: &AppHandle) {
         let _ = win.unminimize();
         let _ = win.show();
         let _ = win.set_focus();
-        let fs = app.state::<AppState>().settings.get("startFullscreen").and_then(Value::as_bool).unwrap_or(true);
+        let fs = app.state::<AppState>().settings.get("startFullscreen").and_then(|v| v.as_bool()).unwrap_or(true);
         let _ = win.set_fullscreen(fs);
     }
 }
@@ -569,31 +563,40 @@ fn play(app: AppHandle, st: State<AppState>, req: Value) -> Value {
         }
     }
     let vlc_path = vlc::find_vlc(
-        st.settings.get("vlcPath").and_then(Value::as_str).filter(|s| !s.is_empty()).map(Path::new),
+        st.settings.get("vlcPath").and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty()).map(PathBuf::from).as_deref(),
         &vlc::VlcEnv::from_process_env(),
     );
     let Some(vlc_path) = vlc_path else { return json!({"ok": false, "errorKey": "err.vlcNotFound"}) };
-    let job = viewmodel::build_queue(&st.library.lock().unwrap(), &st.stores(), &req, st.settings.get("autoplayNext").and_then(Value::as_bool).unwrap_or(true));
+    let job = viewmodel::build_queue(&st.library.lock().unwrap(), &st.stores(), &req, st.settings.get("autoplayNext").and_then(|v| v.as_bool()).unwrap_or(true));
     let Ok((title, queue)) = job else { return json!({"ok": false, "errorKey": "err.notFound"}) };
 
-    let items: Vec<vlc::QueueItem> = queue.iter().map(|i| vlc::QueueItem { path: &i.path, start_time: i.start_time, languages: None }).collect();
-    let opts = vlc::SessionOptions {
-        fullscreen: st.settings.get("vlcFullscreen").and_then(Value::as_bool).unwrap_or(true),
-        audio_language: None,
-        sub_language: None,
-        extra_args: split_args(&st.settings.get("vlcExtraArgs").and_then(Value::as_str).unwrap_or("")),
+    // Per-item resume positions and language overrides; the Settings defaults ride in as global
+    // options, which the per-item ones then override (the JS version's same ordering trick).
+    let extra_args = split_args(&st.settings.get("vlcExtraArgs").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default());
+    let mut items: Vec<vlc::QueueItem> = queue.iter().map(|i| vlc::QueueItem {
+        path: &i.path,
+        start_time: i.start_time,
+        languages: i.languages.as_ref().map(|l| vlc::Languages {
+            audio: l.get("audio").and_then(Value::as_str),
+            subs: l.get("subs").and_then(Value::as_str),
+        }),
+    }).collect();
+    let port = match vlc::free_port_pub() {
+        Ok(p) => p,
+        Err(e) => { toast(&st, &app, "err.vlcStart", json!({"message": e.to_string()}), "error"); return json!({"ok": false}); }
     };
-    // Global language defaults go in as extra args so per-item options can still win.
-    let mut opts = opts;
-    let mut extra: Vec<String> = Vec::new();
-    let audio = st.settings.get("audioLanguage").and_then(Value::as_str).map(String::from);
-    let subs = st.settings.get("subLanguage").and_then(Value::as_str).map(String::from);
-    let defaults = vlc::language_args(&vlc::Languages { audio: audio.as_deref(), subs: subs.as_deref() }, "--");
-    extra.extend(defaults);
-    extra.extend(opts.extra_args.clone());
-    opts.extra_args = extra;
-
-    let started = vlc::VlcSession::spawn(&vlc_path, &queue.iter().map(|i| i.path.clone()).collect::<Vec<_>>(), &opts);
+    let password = vlc::random_password_pub();
+    let audio_lang = st.settings.get("audioLanguage").and_then(|v| v.as_str().map(str::to_string));
+    let sub_lang = st.settings.get("subLanguage").and_then(|v| v.as_str().map(str::to_string));
+    let opts = vlc::BuildArgsOptions {
+        port,
+        password: &password,
+        fullscreen: st.settings.get("vlcFullscreen").and_then(|v| v.as_bool()).unwrap_or(true),
+        languages: vlc::Languages { audio: audio_lang.as_deref(), subs: sub_lang.as_deref() },
+        extra_args: &extra_args.iter().map(String::as_str).collect::<Vec<_>>(),
+    };
+    let _ = &mut items;
+    let started = vlc::VlcSession::spawn(&vlc_path, &items, &opts);
     let session = match started {
         Ok(s) => s,
         Err(e) => {
@@ -650,7 +653,7 @@ fn np_command(st: State<AppState>, name: String) {
     let Some((cmd, args)) = commands.iter().find(|(n, _)| *n == name) else { return };
     let play = st.play.lock().unwrap();
     let Some(ps) = play.as_ref() else { return };
-    let status = ps.session.command(args[0], args.get(1).copied());
+    let status = ps.session.command(cmd, args.get(1).copied());
     if let Some(s) = status {
         let mut np = st.now_playing.lock().unwrap();
         if let Some(np) = np.as_mut() {
@@ -714,17 +717,17 @@ fn play_game(app: AppHandle, st: State<AppState>, id: String) -> Value {
         return json!({"ok": false, "errorKey": "err.exeMissing"});
     }
 
-    let quiet_steam = st.settings.get("quietSteam").and_then(Value::as_bool).unwrap_or(true);
+    let quiet_steam = st.settings.get("quietSteam").and_then(|v| v.as_bool()).unwrap_or(true);
     let steam_path = st.steam_games.lock().unwrap().steam_path.clone();
     let deps = games::GameDeps {
-        open_external: Box::new(move |url| open_url_in_shell(url)),
+        open_external: Box::new(move |url| { let _ = open_url_in_shell(url); }),
         open_path: Box::new(|p| {
             open_path_in_shell(Path::new(p)).err().map(|e| e.to_string())
         }),
         launch_steam: if quiet_steam {
-            Box::new(move |appid| steam::launch_quietly(appid, steam_path.as_deref()).unwrap_or(false))
+            Some(Box::new(move |appid| steam::launch_quietly(appid, steam_path.as_deref()).unwrap_or(false)))
         } else {
-            games::LaunchSteam::default_placeholder()
+            None
         },
         running_app_id: Box::new(steam::running_app_id),
         tuning: games::Tuning::default(),
@@ -742,30 +745,32 @@ fn play_game(app: AppHandle, st: State<AppState>, id: String) -> Value {
 }
 
 #[tauri::command]
-fn end_game(app: AppHandle, st: State<AppState>) {
-    let session = st.game_session.lock().unwrap().clone();
-    if let Some(s) = session {
-        let untracked = st.game.lock().unwrap().as_ref().and_then(|g| g.get("phase").and_then(Value::as_str)) == Some("untracked");
-        if untracked {
-            // Already counted as a launch; the exit event was swallowed. We couldn't watch the game
-            // itself, so count the time until the user said they were done.
-            let started_at = st.game.lock().unwrap().as_ref().and_then(|g| g.get("startedAt").and_then(Value::as_i64)).unwrap_or(0);
-            let game_id = st.game.lock().unwrap().as_ref().and_then(|g| g.get("id").and_then(Value::as_str)).unwrap_or("").to_string();
-            record_play(&st, &game_id, now_millis() - started_at);
-            *st.game_session.lock().unwrap() = None;
-            *st.game.lock().unwrap() = None;
-            let _ = app.emit("game", Value::Null);
-            st.push_state(&app);
-        } else {
-            s.stop_tracking();
-        }
+fn back_to_game(app: AppHandle, st: State<AppState>) {
+    if st.game_session.lock().unwrap().is_some() {
+        suspend_ui(&app);
     }
 }
 
 #[tauri::command]
-fn back_to_game(app: AppHandle, st: State<AppState>) {
-    if st.game_session.lock().unwrap().is_some() {
-        suspend_ui(&app);
+fn end_game(app: AppHandle, st: State<AppState>) {
+    let untracked = st.game.lock().unwrap().as_ref().and_then(|g| g.get("phase").and_then(Value::as_str)) == Some("untracked");
+    if untracked {
+        // Already counted as a launch; the exit event was swallowed. We couldn't watch the game
+        // itself, so count the time until the user said they were done.
+        let (game_id, started_at) = {
+            let g = st.game.lock().unwrap();
+            (
+                g.as_ref().and_then(|g| g.get("id").and_then(Value::as_str)).unwrap_or("").to_string(),
+                g.as_ref().and_then(|g| g.get("startedAt").and_then(Value::as_i64)).unwrap_or(0),
+            )
+        };
+        record_play(&st, &game_id, now_millis() - started_at);
+        *st.game_session.lock().unwrap() = None;
+        *st.game.lock().unwrap() = None;
+        let _ = app.emit("game", Value::Null);
+        st.push_state(&app);
+    } else if let Some(s) = st.game_session.lock().unwrap().as_ref() {
+        s.stop_tracking();
     }
 }
 
@@ -775,7 +780,7 @@ fn record_play(st: &AppState, id: &str, played_ms: i64) {
         let entry = m.entry(id.to_string()).or_insert_with(|| json!({"playtime": 0, "lastPlayed": 0}));
         entry["lastPlayed"] = json!(now_millis());
         let prev = entry["playtime"].as_i64().unwrap_or(0);
-        entry["playtime"] = json!(prev + (played_ms / 60000) as i64);
+        entry["playtime"] = json!(prev + (played_ms / 60000));
     });
     viewmodel::log_session(&st.stores(), "game", id, now_millis() - played_ms, played_ms as f64 / 60000.0);
 }
@@ -784,12 +789,9 @@ fn record_play(st: &AppState, id: &str, played_ms: i64) {
 /// Electron way; here a one-shot PowerShell `ExtractAssociatedIcon` call does the same job).
 #[cfg(target_os = "windows")]
 fn icon_for(artwork_dir: &Path, exe: &str) -> Option<String> {
-    let hash = {
-        use sha1_like::Digest as _;
-        let mut h = sha1_like::Sha1::new();
-        h.update(exe.to_lowercase());
-        base64::engine::general_purpose::URL_SAFE.encode(h.finalize())[..40].to_string()
-    };
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(exe.to_lowercase());
+    let hash: String = b64.chars().rev().take(40).collect::<Vec<_>>().into_iter().rev().collect();
     let _ = std::fs::create_dir_all(artwork_dir);
     let dest = artwork_dir.join(format!("icon-{hash}.png"));
     let script = format!(
@@ -817,7 +819,7 @@ fn add_game(app: AppHandle, st: State<AppState>) -> Value {
     let Some(picked) = picked else { return json!({"ok": false}) };
     let Some(exe) = picked.into_path().ok().map(|p| p.to_string_lossy().into_owned()) else { return json!({"ok": false}) };
 
-    let manual = st.games_store.get("manual").and_then(Value::as_array).cloned().unwrap_or_default();
+    let manual = st.games_store.get("manual").and_then(|v| v.as_array().cloned()).unwrap_or_default();
     if manual.iter().any(|g| g.get("exe").and_then(Value::as_str).map(|e| e.to_lowercase() == exe.to_lowercase()).unwrap_or(false)) {
         return json!({"ok": false, "errorKey": "err.gameExists"});
     }
@@ -838,14 +840,14 @@ fn add_game(app: AppHandle, st: State<AppState>) -> Value {
         }
     });
     st.push_state(&app);
-    enrich_games(&st, &app);
+    enrich_games(&app);
     json!({"ok": true, "id": id})
 }
 
 #[tauri::command]
 fn edit_game(app: AppHandle, st: State<AppState>, id: String, patch: Value) {
     let mut o = st.games_store.get("overrides").and_then(|v| v.get(&id).cloned()).unwrap_or_else(|| json!({}));
-    let manual_index = st.games_store.get("manual").and_then(Value::as_array).cloned().unwrap_or_default().iter().position(|g| g.get("id").and_then(Value::as_str) == Some(id.as_str()));
+    let manual_index = st.games_store.get("manual").and_then(|v| v.as_array().cloned()).unwrap_or_default().iter().position(|g| g.get("id").and_then(Value::as_str) == Some(id.as_str()));
     let mut refetch = false;
     if let Some(title) = patch.get("title") {
         let t = title.as_str().unwrap_or("").trim().to_string();
@@ -926,7 +928,7 @@ fn edit_game(app: AppHandle, st: State<AppState>, id: String, patch: Value) {
     });
     if refetch {
         st.make_game_info().forget(&id);
-        enrich_games(&st, &app);
+        enrich_games(&app);
     }
     st.push_state(&app);
 }
@@ -979,7 +981,7 @@ fn sgdb_images(app: AppHandle, st: State<AppState>, kind: String, id: String) ->
     // Thumbnails are remote; download them so the page (which only shows local files) can display them.
     let mut out = Vec::new();
     for i in imgs.into_iter().take(12) {
-        if let Some(thumb) = game_info.download_to_cache(&i.thumb) {
+        if let Some(thumb) = game_info.download(&i.thumb) {
             out.push(json!({"url": i.url, "thumb": file_url(Path::new(&thumb))}));
         }
     }
@@ -990,8 +992,10 @@ fn sgdb_images(app: AppHandle, st: State<AppState>, kind: String, id: String) ->
 #[tauri::command]
 fn set_game_art(app: AppHandle, st: State<AppState>, id: String, kind: String, url: String) -> Value {
     let game_info = st.make_game_info();
-    let Some(p) = game_info.download_to_cache(&url) else { return json!({"ok": false}) };
-    edit_game(app.clone(), st_state(&app), id, json!({"art": {kind: p}}));
+    let Some(p) = game_info.download(&url) else { return json!({"ok": false}) };
+    let mut art = Map::new();
+    art.insert(kind, json!(p));
+    edit_game(app, st, id, json!({"art": Value::Object(art)}));
     json!({"ok": true})
 }
 
@@ -1003,15 +1007,15 @@ fn screenshot(st: State<AppState>, url: String) -> Value {
         return Value::Null;
     }
     let game_info = st.make_game_info();
-    match game_info.download_to_cache(&url) {
-        Some(p) => file_url_opt(Some(&p)),
+    match game_info.download(&url) {
+        Some(p) => file_url_opt(p.to_str()),
         None => Value::Null,
     }
 }
 
 fn regex_lite_steam_cdn(url: &str) -> bool {
-    let rest = url.strip_prefix("https://")?;
-    let (host, _) = rest.split_once('/')?;
+    let Some(rest) = url.strip_prefix("https://") else { return false };
+    let Some((host, _)) = rest.split_once('/') else { return false };
     let host = host.to_lowercase();
     let ok_tld = host.ends_with(".com") || host.ends_with(".net");
     ok_tld && ["steamstatic", "steampowered", "akamaihd"].iter().any(|d| host.contains(d))
@@ -1038,10 +1042,7 @@ fn show_game_folder(app: AppHandle, st: State<AppState>, id: String) {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, st: State<AppState>, patch: Map<String, Value>) -> Value {
-    let before: Vec<(String, Value)> = default_settings().keys().map(|k| {
-        let k = k.clone();
-        (k.clone(), st.settings.get(&k).unwrap_or(Value::Null))
-    }).collect();
+    let before: Map<String, Value> = default_settings().keys().map(|k| (k.clone(), st.settings.get(k).unwrap_or(Value::Null))).collect();
     let prev_lang = ui_lang(&st);
     let allowed = default_settings();
     for (k, v) in patch {
@@ -1049,15 +1050,14 @@ fn save_settings(app: AppHandle, st: State<AppState>, patch: Map<String, Value>)
             st.settings.set(k, v);
         }
     }
-    let changed = |k: &str| before.iter().find(|(key, _)| key == k).map(|(_, v)| Some(v.clone())).unwrap_or(None) != st.settings.get(k).map(Some).unwrap_or(None);
-    let changed = moved(changed);
+    let changed = |k: &str| before.get(k) != st.settings.get(k).as_ref();
 
-    if let Some(v) = before.iter().find(|(k, _)| k == "startFullscreen").map(|(_, v)| v.clone()) {
-        let _ = v;
-    }
-    if let Some(fs) = st.settings.get("startFullscreen").and_then(Value::as_bool) {
-        if let Some(win) = app.get_webview_window("main") {
-            let _ = win.set_fullscreen(fs);
+    // Live fullscreen follows the checkbox, like the JS version's setFullScreen here.
+    if let Some(win) = app.get_webview_window("main") {
+        if changed("startFullscreen") {
+            if let Some(fs) = st.settings.get("startFullscreen").and_then(|v| v.as_bool()) {
+                let _ = win.set_fullscreen(fs);
+            }
         }
     }
     let lang_changed = ui_lang(&st) != prev_lang;
@@ -1075,7 +1075,7 @@ fn save_settings(app: AppHandle, st: State<AppState>, patch: Map<String, Value>)
         }
     }
     if changed("sgdbKey") || lang_changed {
-        enrich_games(&st, &app);
+        enrich_games(&app);
     }
     if changed("libraries") || changed("steamEnabled") || changed("steamPath") {
         let app2 = app.clone();
@@ -1084,7 +1084,7 @@ fn save_settings(app: AppHandle, st: State<AppState>, patch: Map<String, Value>)
             do_rescan(&st, &app2);
         });
     } else if changed("tmdbKey") || lang_changed {
-        enrich_metadata(&st, &app);
+        enrich_metadata(&app);
     }
     st.push_state(&app);
     let mut settings_map = default_settings();
@@ -1094,11 +1094,6 @@ fn save_settings(app: AppHandle, st: State<AppState>, patch: Map<String, Value>)
         }
     }
     Value::Object(settings_map)
-}
-
-/// Helper so the `changed` closure above can be called repeatedly ( FnMut borrow gymnastics).
-fn moved<F: Fn(&str) -> bool>(f: F) -> impl Fn(&str) -> bool + Clone {
-    move |k| f(k)
 }
 
 #[tauri::command]
@@ -1122,7 +1117,7 @@ fn pick_key_file(app: AppHandle) -> Option<String> {
 #[tauri::command]
 fn detect_vlc(st: State<AppState>) -> Option<String> {
     vlc::find_vlc(
-        st.settings.get("vlcPath").and_then(Value::as_str).filter(|s| !s.is_empty()).map(Path::new),
+        st.settings.get("vlcPath").and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty()).map(PathBuf::from).as_deref(),
         &vlc::VlcEnv::from_process_env(),
     ).map(|p| p.to_string_lossy().into_owned())
 }
@@ -1131,8 +1126,8 @@ fn detect_vlc(st: State<AppState>) -> Option<String> {
 fn clear_metadata(app: AppHandle, st: State<AppState>) {
     st.meta.set("entries", json!({}));
     st.game_info_store.set("games", json!({}));
-    enrich_metadata(&st, &app);
-    enrich_games(&st, &app);
+    enrich_metadata(&app);
+    enrich_games(&app);
 }
 
 #[tauri::command]
@@ -1175,7 +1170,7 @@ fn system_set(st: State<AppState>, key: String, value: Value) -> Option<Value> {
 }
 
 #[tauri::command]
-fn wifi(st: State<AppState>) -> Value {
+fn wifi(_st: State<AppState>) -> Value {
     match system::wifi() {
         Some(w) => json!({"connected": w.connected, "ssid": w.ssid, "signal": w.signal}),
         None => Value::Null,
@@ -1199,7 +1194,7 @@ fn power(app: AppHandle, st: State<AppState>, action: String) -> Option<Value> {
         "restart" => system::PowerAction::Restart,
         _ => system::PowerAction::Shutdown,
     };
-    let helper_call = || st.helper.call("sleep", Value::Null).map(|_| ()).map_err(|e| std::io::Error::other(e));
+    let helper_call = || st.helper.call("sleep", Value::Null).map(|_| ()).map_err(std::io::Error::other);
     system::power(parsed, helper_call).ok().map(|_| Value::Null)
 }
 
@@ -1302,7 +1297,7 @@ fn connect_server(st: &AppState, app: &AppHandle, id: &str) -> Result<Arc<dyn Re
                 }
             }
         });
-        if let Some(st) = app_state(&app) {
+        if let Some(st) = app.try_state::<AppState>() {
             st.push_state(&app);
         }
     };
@@ -1386,38 +1381,131 @@ fn remote_list(app: AppHandle, st: State<AppState>, server_id: String, path: Opt
 
 #[tauri::command]
 fn remote_plan(app: AppHandle, st: State<AppState>, req: Value) -> Value {
-    // Decide film vs show, destination layout, subtitle matching: all pure (transfer_plan.rs).
+    let outcome = plan_remote(&st, &app, &req);
+    match outcome {
+        Ok(plan) => json!({
+            "ok": true,
+            "kind": plan.kind_str,
+            "root": plan.root,
+            "roots": plan.roots,
+            "files": plan.files,
+            "videos": plan.videos,
+            "totalSize": plan.total_size,
+            "folders": plan.folders,
+        }),
+        Err(code) => json!({"ok": false, "error": code}),
+    }
+}
+
+/// What a remote selection would become on disk: which library it belongs in and where each file
+/// lands (`planRemote` in main.js — a folder is walked whole; a single video brings the subtitles
+/// sitting next to it).
+struct Planned {
+    kind_str: &'static str,
+    root: Value,
+    roots: Value,
+    files: usize,
+    videos: usize,
+    total_size: u64,
+    folders: Vec<String>,
+    plan: lounge_core::transfer_plan::Plan,
+}
+
+fn plan_remote(st: &AppState, app: &AppHandle, req: &Value) -> Result<Planned, String> {
+    use lounge_core::transfer_plan::{self, PlanOptions, RemoteFile, Selection};
+    use lounge_core::parse;
     let server_id = req.get("serverId").and_then(Value::as_str).unwrap_or("").to_string();
-    let base = req.get("base").and_then(Value::as_str).unwrap_or("/");
-    let client = match connect_server(&st, &app, &server_id) {
-        Ok(c) => c,
-        Err(e) => return json!({"error": e.code}),
+    let start = req.get("path").and_then(Value::as_str).unwrap_or("/").to_string();
+    let is_dir = req.get("isDir").and_then(Value::as_bool).unwrap_or(false);
+    let kind_req = req.get("kind").and_then(Value::as_str);
+    let _ = kind_req;
+
+    let client = connect_server(st, app, &server_id).map_err(|e| e.code)?;
+    let name = start.rsplit('/').find(|s| !s.is_empty()).unwrap_or("").to_string();
+    let files: Vec<RemoteFile> = if is_dir {
+        client.walk(&start).map_err(|e| e.code)?.into_iter().map(|w| RemoteFile { remote: w.remote, rel: w.rel, size: w.size }).collect()
+    } else {
+        // A single video brings the subtitles sitting next to it.
+        let dir = &start[..start.len().saturating_sub(name.len())];
+        let dir = dir.trim_end_matches('/');
+        let dir = if dir.is_empty() { "/" } else { dir };
+        let siblings = client.list(dir).unwrap_or_default();
+        let me = siblings.iter().find(|e| e.name == name).map(|e| e.size).unwrap_or(0);
+        let mut files = vec![RemoteFile { remote: start.clone(), rel: name.clone(), size: me }];
+        if parse::is_video_file(&name) {
+            let base = parse::strip_extension(&name).to_lowercase();
+            for e in &siblings {
+                if !e.is_dir && e.name != name && e.name.to_lowercase().starts_with(&base) && is_sub_name(&e.name) {
+                    files.push(RemoteFile { remote: format!("{}/{}", dir.trim_end_matches('/'), e.name), rel: e.name.clone(), size: e.size });
+                }
+            }
+        }
+        files
     };
-    let start = req.get("path").and_then(Value::as_str).unwrap_or("/");
-    let files = match client.walk(start) {
-        Ok(w) => w,
-        Err(e) => return json!({"error": e.code}),
+    drop(client);
+
+    let selection = Selection { name: &name, is_dir, parent: None };
+    // Kind first, against throwaway roots, then the real plan against the user's matching library.
+    let probe = transfer_plan::plan_transfer(&selection, &files, &PlanOptions { kind: None, movie_root: Some(Path::new("/")), tv_root: Some(Path::new("/")), existing_show_dirs: &[] });
+    let kind_str = match probe.kind {
+        transfer_plan::Kind::Movie => "movie",
+        transfer_plan::Kind::Tv => "tv",
     };
-    let libs = st.settings.get("libraries").and_then(Value::as_array).cloned().unwrap_or_default();
-    let movies_roots: Vec<String> = libs.iter().filter(|l| l.get("type").and_then(Value::as_str) != Some("tv")).filter_map(|l| l.get("path").and_then(Value::as_str).map(String::from)).collect();
-    let tv_roots: Vec<String> = libs.iter().filter(|l| l.get("type").and_then(Value::as_str) == Some("tv")).filter_map(|l| l.get("path").and_then(Value::as_str).map(String::from)).collect();
-    let plan = lounge_core::transfer_plan::plan(&files, &movies_roots, &tv_roots, base);
-    json!(plan)
+    let libs = st.settings.get("libraries").and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let wanted = if kind_str == "tv" { "tv" } else { "movies" };
+    let mut roots: Vec<String> = libs.iter().filter(|l| l.get("type").and_then(Value::as_str) == Some(wanted)).filter_map(|l| l.get("path").and_then(Value::as_str).map(String::from)).collect();
+    if let Some(preferred) = req.get("library").and_then(Value::as_str).filter(|p| roots.iter().any(|r| r == p)) {
+        roots.retain(|r| r != preferred);
+        roots.insert(0, preferred.to_string());
+    }
+    let Some(root) = roots.first().cloned() else {
+        return Ok(Planned { kind_str, root: Value::Null, roots: json!(roots), files: 0, videos: 0, total_size: 0, folders: vec![], plan: probe });
+    };
+    let existing: Vec<String> = std::fs::read_dir(&root).map(|rd| {
+        rd.filter_map(|e| e.ok()).filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false)).map(|e| e.file_name().to_string_lossy().into_owned()).collect()
+    }).unwrap_or_default();
+    let opts = PlanOptions {
+        kind: Some(probe.kind),
+        movie_root: if kind_str == "movie" { Some(Path::new(&root)) } else { None },
+        tv_root: if kind_str == "tv" { Some(Path::new(&root)) } else { None },
+        existing_show_dirs: &existing,
+    };
+    let plan = transfer_plan::plan_transfer(&selection, &files, &opts);
+    Ok(Planned {
+        kind_str,
+        root: json!(root),
+        roots: json!(roots),
+        files: plan.items.len(),
+        videos: plan.items.iter().filter(|i| parse::is_video_file(&i.rel)).count(),
+        total_size: plan.total_size,
+        folders: plan.folders.iter().map(|f| f.to_string_lossy().into_owned()).collect(),
+        plan,
+    })
+}
+
+fn is_sub_name(name: &str) -> bool {
+    const SUBS: [&str; 9] = [".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup", ".sami", ".smi"];
+    let lower = name.to_lowercase();
+    SUBS.iter().any(|ext| lower.ends_with(ext))
 }
 
 #[tauri::command]
 fn remote_download(app: AppHandle, st: State<AppState>, req: Value) -> Value {
-    let server_id = req.get("serverId").and_then(Value::as_str).unwrap_or("").to_string();
-    let spec = AddSpec {
-        server_id,
-        kind: req.get("kind").and_then(Value::as_str).unwrap_or("movie").to_string(),
-        title: req.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
-        poster: req.get("poster").and_then(Value::as_str).unwrap_or("").to_string(),
-        files: req.get("files").and_then(Value::as_array).cloned().unwrap_or_default(),
+    let planned = match plan_remote(&st, &app, &req) {
+        Ok(p) => p,
+        Err(code) => return json!({"ok": false, "error": code}),
     };
-    let id = st.transfers.add(spec);
+    if planned.plan.root.is_none() {
+        return json!({"ok": false, "errorKey": if planned.kind_str == "tv" { "err.remote.noTvLibrary" } else { "err.remote.noMovieLibrary" }});
+    }
+    if planned.plan.items.is_empty() {
+        return json!({"ok": false, "errorKey": "err.remote.nothing"});
+    }
+    let name = req.get("path").and_then(Value::as_str).unwrap_or("").rsplit('/').find(|s| !s.is_empty()).unwrap_or("").to_string();
+    let title = if req.get("isDir").and_then(Value::as_bool).unwrap_or(false) { name } else { lounge_core::parse::strip_extension(&name).to_string() };
+    let id = st.transfers.add(AddSpec { server_id: req.get("serverId").and_then(Value::as_str).unwrap_or("").to_string(), title, plan: planned.plan });
     st.push_state(&app);
-    json!({"id": id})
+    json!({"ok": true, "id": id})
 }
 
 #[tauri::command]
@@ -1508,7 +1596,7 @@ fn app_icon(artwork_dir: &Path, a: &apps::AppEntry) -> Option<String> {
 
 #[tauri::command]
 fn launch_app(app: AppHandle, st: State<AppState>, id: String) -> Value {
-    let a = st.apps_store.get("apps").and_then(Value::as_array).cloned().unwrap_or_default().into_iter().find(|a| a.get("id").and_then(Value::as_str) == Some(id.as_str()));
+    let a = st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default().into_iter().find(|a| a.get("id").and_then(Value::as_str) == Some(id.as_str()));
     let Some(a) = a else { return json!({"ok": false, "errorKey": "err.notFound"}) };
     if let Err(e) = apps::launch_app(a.get("appId").and_then(Value::as_str).unwrap_or("")) {
         return json!({"ok": false, "errorKey": "err.appLaunch", "vars": {"message": e}});
@@ -1547,7 +1635,7 @@ fn hide_app(app: AppHandle, st: State<AppState>, id: String, hidden: bool) {
 
 fn locate_tailscale(st: &AppState, app: &AppHandle) {
     let mut hints: Vec<String> = Vec::new();
-    for a in st.apps_store.get("apps").and_then(Value::as_array).cloned().unwrap_or_default() {
+    for a in st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default() {
         if is_tailscale_app(&a) {
             if let Some(exe) = a.get("exe").and_then(Value::as_str) {
                 if let Some(dir) = Path::new(exe).parent() {
@@ -1592,7 +1680,7 @@ fn tailscale_action(app: AppHandle, st: State<AppState>, action: String, node: O
 }
 
 #[tauri::command]
-fn tailscale_login(app: AppHandle, st: State<AppState>) -> Value {
+fn tailscale_login(_app: AppHandle, st: State<AppState>) -> Value {
     if !st.tailscale.installed() {
         return json!({"ok": false, "errorKey": "err.tsMissing"});
     }
@@ -1624,9 +1712,7 @@ fn qr_data_url(url: &str) -> Value {
         Ok(c) => c,
         Err(_) => return Value::Null,
     };
-    let image = code.render::<qrcode::render::UnicodeColor<_>>().quiet_zone(true).build();
-    let _ = image;
-    let svg = code.render::<qrcode::render::SVGColor>().quiet_zone(true).build();
+    let svg = code.render::<qrcode::render::svg::Color>().quiet_zone(true).build();
     json!(format!("data:image/svg+xml;base64,{}", base64::engine::general_purpose::STANDARD.encode(svg)))
 }
 
@@ -1637,7 +1723,7 @@ fn tailscale_cancel_login(st: State<AppState>) {
 
 #[tauri::command]
 fn tailscale_open_app(app: AppHandle, st: State<AppState>) -> Value {
-    let a = st.apps_store.get("apps").and_then(Value::as_array).cloned().unwrap_or_default().into_iter().find(is_tailscale_app);
+    let a = st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default().into_iter().find(is_tailscale_app);
     match a {
         Some(a) => launch_app(app, st, a.get("id").and_then(Value::as_str).unwrap_or("").to_string()),
         None => json!({"ok": false, "errorKey": "err.tsMissing"}),
@@ -1658,6 +1744,7 @@ fn setup_updater(st: &AppState, app: &AppHandle) {
             packaged: !cfg!(debug_assertions),
             windows_store: std::env::var("LOUNGE_FSE_PACKAGE").map(|v| v == "1").unwrap_or(false),
             exe_path: &std::env::current_exe().unwrap_or_default(),
+            is_windows: cfg!(target_os = "windows"),
         })
     });
     let dir = st.user_file("updates");
@@ -1679,7 +1766,7 @@ fn setup_updater(st: &AppState, app: &AppHandle) {
         loop {
             {
                 let st = app2.state::<AppState>();
-                let auto = st.settings.get("autoCheckUpdates").and_then(Value::as_bool).unwrap_or(true);
+                let auto = st.settings.get("autoCheckUpdates").and_then(|v| v.as_bool()).unwrap_or(true);
                 let in_game = st.game_session.lock().unwrap().is_some();
                 let downloading = st.updater.lock().unwrap().as_ref().map(|u| u.state().status == updater::Status::Downloading).unwrap_or(false);
                 if auto && !in_game && !downloading {
@@ -1698,16 +1785,15 @@ fn setup_updater(st: &AppState, app: &AppHandle) {
 }
 
 #[tauri::command]
-fn check_update(app: AppHandle, st: State<AppState>) -> Value {
+fn check_update(_app: AppHandle, st: State<AppState>) -> Value {
     let updater = st.updater.lock().unwrap().clone();
     let Some(u) = updater else { return Value::Null };
-    let app2 = app.clone();
+    let state = update_state_json(&u.state());
     // The network check runs in the background; the UI hears the result via the update event.
     tauri::async_runtime::spawn_blocking(move || {
         u.check();
-        let _ = app2;
     });
-    update_state_json(&u.state())
+    state
 }
 
 #[tauri::command]
@@ -1740,7 +1826,7 @@ fn install_update(app: AppHandle, st: State<AppState>) -> Value {
         }
         Ok((command, args, status)) => {
             if let Some(status_file) = status {
-                return install_fse(st, &command, &args, &status_file);
+                return install_fse(&st, &command, &args, &status_file);
             }
             if let Some(p) = st.play.lock().unwrap().as_ref() {
                 p.session.kill();
@@ -2012,7 +2098,7 @@ fn poll_events(app: &AppHandle) {
                     }
                 }
                 let _ = app.emit("game", st.game.lock().unwrap().clone());
-                let free = st.settings.get("freeWhilePlaying").and_then(Value::as_bool).unwrap_or(true);
+                let free = st.settings.get("freeWhilePlaying").and_then(|v| v.as_bool()).unwrap_or(true);
                 if free {
                     let app2 = app.clone();
                     std::thread::spawn(move || {
@@ -2027,17 +2113,14 @@ fn poll_events(app: &AppHandle) {
                     let steam = st.steam_games.lock().unwrap();
                     steam.entries.iter().any(|g| g.get("id").and_then(Value::as_str) == Some(game_id.as_str()))
                 };
-                match reason {
-                    games::ExitReason::Stub => {
-                        // The exe was a launcher that handed off to the real game: stay out of the way
-                        // until the user comes back to Lounge and says they're done.
-                        let mut game = st.game.lock().unwrap();
-                        if let Some(g) = game.as_mut() {
-                            g["phase"] = json!("untracked");
-                        }
-                        continue;
+                if reason == games::ExitReason::Stub {
+                    // The exe was a launcher that handed off to the real game: stay out of the way
+                    // until the user comes back to Lounge and says they're done.
+                    let mut game = st.game.lock().unwrap();
+                    if let Some(g) = game.as_mut() {
+                        g["phase"] = json!("untracked");
                     }
-                    _ => {}
+                    continue;
                 }
                 *st.game_session.lock().unwrap() = None;
                 *st.game.lock().unwrap() = None;
@@ -2046,13 +2129,11 @@ fn poll_events(app: &AppHandle) {
                 }
                 resume_ui(app);
                 let _ = app.emit("game", Value::Null);
-                match reason {
-                    games::ExitReason::Error => toast(&st, app, "err.gameStart", json!({"message": error.unwrap_or_default()}), "error"),
-                    games::ExitReason::Timeout => {
-                        let title = st.games_store.get("manual").and_then(Value::as_array).cloned().unwrap_or_default().iter().find(|g| g.get("id").and_then(Value::as_str) == Some(game_id.as_str())).and_then(|g| g.get("title").cloned()).unwrap_or(json!(""));
-                        toast(&st, app, "err.gameTimeout", json!({"title": title}), "error")
-                    }
-                    _ => {}
+                if reason == games::ExitReason::Error {
+                    toast(&st, app, "err.gameStart", json!({"message": error.unwrap_or_default()}), "error");
+                } else if reason == games::ExitReason::Timeout {
+                    let title = st.games_store.get("manual").and_then(|v| v.as_array().cloned()).unwrap_or_default().iter().find(|g| g.get("id").and_then(Value::as_str) == Some(game_id.as_str())).and_then(|g| g.get("title").cloned()).unwrap_or(json!(""));
+                    toast(&st, app, "err.gameTimeout", json!({"title": title}), "error");
                 }
                 // Steam updates its own playtime when a game closes; pick that up.
                 if steam_source {
@@ -2090,20 +2171,19 @@ fn poll_events(app: &AppHandle) {
 // ---------------------------------------------------------------------------
 // Wiring
 
-fn app_state(app: &AppHandle) -> Option<()> {
-    // Placeholder: background threads reach state via `app.state::<AppState>()` directly.
-    None
-}
-
-fn st_state(app: &AppHandle) -> State<'static, AppState> {
-    // Tauri's State<'_, T> can't be constructed outside a command; commands that need to hand one to
-    // another command instead re-dispatch through the app handle. (Unused placeholder; see set_game_art.)
-    unreachable!("st_state is only called on paths where a State is already available")
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .on_window_event(|window, event| {
+            // Focus events: switching back to Lounge while a game runs brings the UI back.
+            if let tauri::WindowEvent::Focused(true) = event {
+                let app = window.app_handle();
+                let st = app.state::<AppState>();
+                if st.suspended.load(Ordering::SeqCst) {
+                    resume_ui(app);
+                }
+            }
+        })
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // A second launch focuses/resumes the existing window, like Electron's second-instance.
             let st = app.state::<AppState>();
@@ -2135,32 +2215,18 @@ pub fn run() {
             std::fs::create_dir_all(dir.join("artwork"))?;
             let settings = JsonStore::new(dir.join("settings.json"), default_settings());
             let stores = (
-                JsonStore::new(dir.join("progress.json"), Map::from([("items".to_string(), json!({}))])),
-                JsonStore::new(dir.join("metadata.json"), Map::from([("entries".to_string(), json!({}))])),
-                JsonStore::new(dir.join("games.json"), Map::from([
-                    ("manual".to_string(), json!([])),
-                    ("overrides".to_string(), json!({})),
-                    ("stats".to_string(), json!({})),
-                ])),
-                JsonStore::new(dir.join("gameinfo.json"), Map::from([("games".to_string(), json!({}))])),
-                JsonStore::new(dir.join("prefs.json"), Map::from([
-                    ("favorites".to_string(), json!({})),
-                    ("hidden".to_string(), json!({})),
-                    ("languages".to_string(), json!({})),
-                ])),
-                JsonStore::new(dir.join("stats.json"), Map::from([("sessions".to_string(), json!([]))])),
-                JsonStore::new(dir.join("servers.json"), Map::from([("servers".to_string(), json!([]))])),
-                JsonStore::new(dir.join("apps.json"), Map::from([
-                    ("apps".to_string(), json!([])),
-                    ("icons".to_string(), json!({})),
-                    ("hidden".to_string(), json!({})),
-                    ("recent".to_string(), json!({})),
-                    ("scannedAt".to_string(), json!(0)),
-                ])),
+                JsonStore::new(dir.join("progress.json"), jmap(json!({"items": {}}))),
+                JsonStore::new(dir.join("metadata.json"), jmap(json!({"entries": {}}))),
+                JsonStore::new(dir.join("games.json"), jmap(json!({"manual": [], "overrides": {}, "stats": {}}))),
+                JsonStore::new(dir.join("gameinfo.json"), jmap(json!({"games": {}}))),
+                JsonStore::new(dir.join("prefs.json"), jmap(json!({"favorites": {}, "hidden": {}, "languages": {}}))),
+                JsonStore::new(dir.join("stats.json"), jmap(json!({"sessions": []}))),
+                JsonStore::new(dir.join("servers.json"), jmap(json!({"servers": []}))),
+                JsonStore::new(dir.join("apps.json"), jmap(json!({"apps": [], "icons": {}, "hidden": {}, "recent": {}, "scannedAt": 0}))),
             );
 
             // The initial library comes from a scan, like the JS version's did-finish-load rescan.
-            let libs_json = settings.get("libraries").and_then(Value::as_array).cloned().unwrap_or_default();
+            let libs_json = settings.get("libraries").and_then(|v| v.as_array().cloned()).unwrap_or_default();
             let defs: Vec<library::LibraryDef> = libs_json.iter().filter_map(|l| {
                 let p = l.get("path").and_then(Value::as_str)?;
                 let kind = if l.get("type").and_then(Value::as_str) == Some("tv") { library::LibraryKind::Tv } else { library::LibraryKind::Movies };
@@ -2180,7 +2246,7 @@ pub fn run() {
             };
             let app_handle2 = app.handle().clone();
             let transfers = Arc::new(TransferQueue::new(connect, move |_event| {
-                if let Ok(st) = app_handle2.try_state::<AppState>() {
+                if let Some(st) = app_handle2.try_state::<AppState>() { { let _ = &st; }
                     let _ = app_handle2.emit("transfers", st.transfers.state().iter().map(transfer_state_json).collect::<Vec<_>>());
                 }
             }));
@@ -2227,20 +2293,7 @@ pub fn run() {
                 });
             }
 
-            setup_updater(&app.state::<AppState>(), &app.handle());
-
-            // Focus events: switching back to Lounge while a game runs brings the UI back.
-            {
-                let app2 = app.handle().clone();
-                app.on_window_event(move |_window, event| {
-                    if let tauri::WindowEvent::Focused(true) = event {
-                        let st = app2.state::<AppState>();
-                        if st.suspended.load(Ordering::SeqCst) {
-                            resume_ui(&app2);
-                        }
-                    }
-                });
-            }
+            setup_updater(&app.state::<AppState>(), app.handle());
 
             // The event router (VLC/game/login events at ~10 Hz).
             {
@@ -2251,7 +2304,7 @@ pub fn run() {
                 });
             }
 
-            let fullscreen = app.state::<AppState>().settings.get("startFullscreen").and_then(Value::as_bool).unwrap_or(true);
+            let fullscreen = app.state::<AppState>().settings.get("startFullscreen").and_then(|v| v.as_bool()).unwrap_or(true);
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Lounge")
                 .inner_size(1600.0, 900.0)
@@ -2395,9 +2448,7 @@ fn rescan(app: AppHandle, st: State<AppState>) -> Value {
     build_state(&st)
 }
 
+#[tauri::command]
 fn get_state(st: State<AppState>) -> Value {
     build_state(&st)
 }
-
-// get_state must be registered; the macro above references it. (Kept next to rescan for symmetry.)
-use get_state as _get_state;

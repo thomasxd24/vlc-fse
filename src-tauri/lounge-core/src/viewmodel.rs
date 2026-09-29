@@ -627,12 +627,16 @@ pub struct PlayItem {
     pub item_id: Option<String>,
 }
 
+/// Why a play request can't build a queue: the film, show or episode id isn't in the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotFound;
+
 /// What *play* hands to [`crate::vlc`]: a display title plus the queue. A film plays alone; picking
 /// an episode queues the rest of the series (when autoplay is on), each labelled `Show · S01E02`.
-pub fn build_queue(lib: &LibraryScan, stores: &Stores, req: &Value, autoplay_next: bool) -> Result<(String, Vec<PlayItem>), ()> {
+pub fn build_queue(lib: &LibraryScan, stores: &Stores, req: &Value, autoplay_next: bool) -> Result<(String, Vec<PlayItem>), NotFound> {
     let id = req.get("id").and_then(Value::as_str).unwrap_or("");
     if req.get("kind").and_then(Value::as_str) == Some("movie") {
-        let Some(m) = lib.movies.iter().find(|m| m.id == id) else { return Err(()) };
+        let Some(m) = lib.movies.iter().find(|m| m.id == id) else { return Err(NotFound) };
         let pr = progress_for(stores, &m.path);
         let start = if req.get("resume").and_then(Value::as_bool).unwrap_or(false) && resumable(&pr) {
             Some(num(pr.get("time")))
@@ -644,8 +648,8 @@ pub fn build_queue(lib: &LibraryScan, stores: &Stores, req: &Value, autoplay_nex
         return Ok((m.title.clone(), vec![PlayItem { path: m.path.to_string_lossy().into_owned(), start_time: start, languages: lang, label: None, item_id: Some(m.id.clone()) }]));
     }
     let show_id = req.get("showId").and_then(Value::as_str).unwrap_or("");
-    let Some(show) = lib.shows.iter().find(|s| s.id == show_id) else { return Err(()) };
-    let Some(idx) = show.episodes.iter().position(|e| e.id == id) else { return Err(()) };
+    let Some(show) = lib.shows.iter().find(|s| s.id == show_id) else { return Err(NotFound) };
+    let Some(idx) = show.episodes.iter().position(|e| e.id == id) else { return Err(NotFound) };
     let first = &show.episodes[idx];
     let pr = progress_for(stores, &first.path);
     let rest: &[crate::library::Episode] = if autoplay_next { &show.episodes[idx + 1..] } else { &[] };

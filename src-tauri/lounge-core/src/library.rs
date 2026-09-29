@@ -386,6 +386,7 @@ pub struct LibraryDef<'a> {
     pub kind: LibraryKind,
 }
 
+#[derive(Clone)]
 pub struct LibraryScan {
     pub movies: Vec<Movie>,
     pub shows: Vec<Show>,

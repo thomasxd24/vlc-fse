@@ -243,7 +243,7 @@ impl GameInfo {
     }
 
     /// Download `url` once into the image cache and return the local path (or `None`).
-    fn download(&self, url: &str) -> Option<PathBuf> {
+    pub fn download(&self, url: &str) -> Option<PathBuf> {
         if url.is_empty() {
             return None;
         }

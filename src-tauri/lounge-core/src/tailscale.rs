@@ -570,6 +570,21 @@ impl Tailscale {
         handle
     }
 
+    /// The running sign-in attempt, if any (its outcome is polled by the shell's event router).
+    pub fn pending_login(&self) -> Option<std::sync::Arc<LoginHandle>> {
+        self.inner.lock().unwrap().login.clone()
+    }
+
+    /// Drop the finished attempt so the next `start_login` starts fresh.
+    pub fn clear_login_handle(&self, handle: &std::sync::Arc<LoginHandle>) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(current) = &inner.login {
+            if std::sync::Arc::ptr_eq(current, handle) {
+                inner.login = None;
+            }
+        }
+    }
+
     /// Stop an in-flight sign-in attempt. The attempt's watcher observes the kill and resolves.
     pub fn cancel_login(&self) {
         let child = self.inner.lock().unwrap().login.take();
