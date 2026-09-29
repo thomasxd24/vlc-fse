@@ -1,40 +1,14 @@
-//! Downscaled copies of local artwork, served on `thumb://` (`http://thumb.localhost/` on Windows).
-//! A webview decodes an image at its full pixel size (width x height x 4 bytes), so a 1080p Steam hero
-//! shown on a 300px card still costs ~8 MB of RAM; a card needs a few dozen KB. Resized JPEGs are cached
-//! on disk, keyed by path, modification time and width.
+//! Downscaled copies of local artwork for the UI's cards. A decoded image costs width x height x 4 bytes
+//! of RAM, so a 1080p Steam hero shown on a 300px card still costs ~8 MB; a card needs a few dozen KB.
+//! Resized JPEGs are cached on disk (see `Backend::thumbs_dir`), keyed by path, modification time and
+//! width.
+
+// Called by the UI wiring, which lands separately.
+#![allow(dead_code)]
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-
-const EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "bmp"];
-
-/// `/<width>/<percent-encoded path>` -> (width, path).
-pub fn parse_request(url_path: &str) -> Option<(u32, PathBuf)> {
-    let rest = url_path.strip_prefix('/')?;
-    let (w, enc) = rest.split_once('/')?;
-    let width: u32 = w.parse().ok().filter(|w| (16..=4096).contains(w))?;
-    let path = PathBuf::from(percent_decode(enc)?);
-    let ext = path.extension()?.to_string_lossy().to_lowercase();
-    EXTENSIONS.contains(&ext.as_str()).then_some((width, path))
-}
-
-fn percent_decode(s: &str) -> Option<String> {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' {
-            let hex = s.get(i + 1..i + 3)?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
-            i += 3;
-        } else {
-            out.push(b[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).ok()
-}
 
 fn cache_file(cache: &Path, src: &Path, width: u32) -> Option<PathBuf> {
     let modified = std::fs::metadata(src).ok()?.modified().ok()?;
@@ -62,16 +36,6 @@ pub fn thumbnail(cache: &Path, src: &Path, width: u32) -> Result<Vec<u8>, String
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_encoded_windows_paths_and_rejects_the_rest() {
-        let (w, p) = parse_request("/480/C%3A%2FUsers%2Fme%2Fart%20work.png").unwrap();
-        assert_eq!((w, p), (480, PathBuf::from("C:/Users/me/art work.png")));
-        assert!(parse_request("/480/C%3A%2Fsecrets.txt").is_none(), "only images");
-        assert!(parse_request("/99999/a.png").is_none());
-        assert!(parse_request("/abc/a.png").is_none());
-        assert!(parse_request("/480/%zz.png").is_none());
-    }
 
     #[test]
     fn shrinks_wide_images_and_caches_the_result() {

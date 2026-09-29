@@ -3,6 +3,8 @@
 mod backend;
 #[allow(dead_code)]
 mod demo;
+mod legion_hid;
+mod thumbs;
 
 slint::include_modules!();
 
