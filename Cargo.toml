@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["lounge-core", "app"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

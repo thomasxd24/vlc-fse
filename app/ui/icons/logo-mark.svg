@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="124 80 268 334">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd58a"/>
+      <stop offset="1" stop-color="#ff7a12"/>
+    </linearGradient>
+  </defs>
+  <!-- An "L" whose foot ends in a play arrow, with a lamp-light dot. -->
+  <path fill="url(#g)" d="M150 96h68a10 10 0 0 1 10 10v212h44l100 46-100 46H150a10 10 0 0 1-10-10V106a10 10 0 0 1 10-10z" transform="translate(-6 -6)"/>
+  <circle cx="352" cy="176" r="30" fill="#ffd58a"/>
+</svg>

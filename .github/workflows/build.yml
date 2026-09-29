@@ -18,30 +18,101 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      - name: Install JS dependencies
+        run: npm ci
 
-      # Real VLC, so test/vlc-real.test.js checks VLC accepts the exact command line Lounge launches it with.
-      - name: Install VLC
-        run: choco install vlc -y --no-progress
+      - name: Renderer tests
+        run: node --test test/*.test.js
 
-      - run: npm test
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Captured so a failure's names and panics land in the run summary (readable without signing
+      # in) and the full log ships as an artifact, instead of living only in the sign-in-gated log.
+      - name: Rust tests (lounge-core)
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p lounge-core 2>&1 | tee test-output.log
+
+      # `::error::` workflow commands become check-run annotations, which stay readable without
+      # signing in (unlike step logs, step summaries and artifacts, which are all gated).
+      - name: Rust test failure summary
+        if: failure()
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          grep -E "^test .* FAILED|panicked at|^ +lounge_core::[a-z_:0-9]+$" test-output.log | head -20 | while IFS= read -r line; do
+            echo "::error::${line:0:200}"
+          done
+          {
+            echo "### Rust test failures (last 150 lines)"
+            echo '```'
+            tail -150 test-output.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Rust test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-log
+          path: src-tauri/test-output.log
+          if-no-files-found: ignore
+          compression-level: 0
+
+      - name: Clippy
+        run: cargo clippy -p lounge-core -p lounge-app --all-targets -- -D warnings
+        working-directory: src-tauri
 
       # For a release tag like v1.2.0, stamp that version into the build so file names match the tag.
       - name: Set version from tag
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
-        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+        run: |
+          set -euo pipefail
+          v="${GITHUB_REF_NAME#v}"
+          cd src-tauri
+          sed -i "s|^version = \".*\"|version = \"$v\"|" app/Cargo.toml
+          sed -i "s|\"version\": \".*\"|\"version\": \"$v\"|" app/tauri.conf.json
 
-      # Produces dist/Lounge-<version>-win-x64.zip (unzip and run Lounge.exe),
-      # dist/Lounge-Setup-<version>.exe (installer) and dist/win-unpacked (used for the FSE package).
-      - name: Build Windows app
-        run: npx electron-builder --win --x64 --publish never
+      # Produces target/release/lounge-app.exe (the app is self-contained: the renderer is embedded,
+      # and WebView2's loader is statically linked), plus the NSIS bundle under
+      # target/release/bundle/nsis/.
+      - name: Build Windows app (Tauri)
+        working-directory: src-tauri
+        run: npx -y @tauri-apps/cli@2 build --bundles nsis
+        env:
+          # Keep the NSIS build from trying to codesign.
+          TAURI_SIGNING_PRIVATE_KEY: ''
+
+      - name: Stage dist layout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content src-tauri/app/tauri.conf.json -Raw | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force -Path dist, dist/win-unpacked | Out-Null
+          Copy-Item src-tauri/target/release/lounge-app.exe dist/win-unpacked/Lounge.exe
+          Copy-Item src-tauri/target/release/bundle/nsis/*.exe "dist/Lounge-Setup-$version.exe"
+          $stage = Join-Path $env:RUNNER_TEMP 'lounge-zip-stage'
+          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item dist/win-unpacked/Lounge.exe $stage
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath "dist/Lounge-$version-win-x64.zip"
+          Write-Host "version: $version"
+          Get-ChildItem dist
 
       # Produces dist/Lounge-FSE-<version>.zip: Lounge as an MSIX that Windows offers as a
       # full screen experience home app, with its installer.
       - name: Build full screen experience package
         shell: powershell
-        run: .\scripts\build-fse.ps1 -Version (node -p "require('./package.json').version")
+        run: .\scripts\build-fse.ps1 -Version ((Get-Content src-tauri/app/tauri.conf.json -Raw | ConvertFrom-Json).version)
 
       - name: Upload FSE package
         uses: actions/upload-artifact@v4
@@ -67,10 +138,51 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  linux:
+    # Test build for Linux (Arch/Omarchy and friends). Built on 22.04 so the binary's glibc floor is old
+    # enough for any current distro; at runtime it needs webkit2gtk-4.1 and gtk3 (Arch: `webkit2gtk-4.1`).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build Linux app
+        working-directory: src-tauri
+        run: cargo build --release -p lounge-app
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' src-tauri/app/tauri.conf.json | head -1)
+          mkdir -p dist/stage
+          cp src-tauri/target/release/lounge-app dist/stage/lounge
+          tar -C dist/stage -czf "dist/Lounge-$version-linux-x64.tar.gz" lounge
+          ls -la dist
+
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lounge-linux-x64
+          path: dist/Lounge-*-linux-x64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
   release:
-    # Pushing a tag such as v2.0.0 publishes a GitHub Release with the zip, installer and FSE package attached.
+    # Pushing a tag such as v3.0.0-alpha publishes a GitHub Release with the zip, installer and FSE
+    # package attached. Pre-releases are skipped by GitHub's /releases/latest, so the app's own update
+    # channel never offers them to users — an alpha is fetched deliberately, from the releases page.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: windows
+    needs: [windows, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -104,6 +216,7 @@ jobs:
           cd dist
           for f in Lounge-Setup-*.exe; do cp "$f" "Foyer-${f#Lounge-}"; done
           for f in Lounge-*-win-x64.zip; do
+            case "$f" in *-win-x64.zip) ;; esac
             d=$(mktemp -d); unzip -q "$f" -d "$d"
             exe=$(find "$d" -name Lounge.exe | head -1)
             cp "$exe" "$(dirname "$exe")/Foyer.exe"
@@ -120,13 +233,15 @@ jobs:
       # Checksums of every download, which the app's updater verifies against when GitHub's API is rate limited
       # and it finds the release through github.com instead.
       - name: Checksums
-        run: cd dist && sha256sum *.zip *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: cd dist && sha256sum *.zip *.exe *.tar.gz > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.zip
             dist/*.exe
+            dist/*.tar.gz
             dist/SHA256SUMS.txt
           body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
