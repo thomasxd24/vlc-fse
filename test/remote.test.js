@@ -166,11 +166,14 @@ test('transfer queue: cancelling stops the download and leaves no finished file 
   const dest = path.join(lib, 'Movies', 'Heat (1995)', 'Heat.mkv');
   let closed = false;
   let release;
+  let started;
+  const startedPromise = new Promise((resolve) => { started = resolve; });
   const client = {
     download: (remote, local, onBytes) =>
       new Promise((resolve, reject) => {
         fs.writeFileSync(local, 'part');
         onBytes(4);
+        started();
         release = () => reject(new Error('connection closed'));
       }),
     close() {
@@ -181,7 +184,7 @@ test('transfer queue: cancelling stops the download and leaves no finished file 
   const queue = new TransferQueue({ connect: async () => client });
   const finished = new Promise((resolve) => queue.once('finished', resolve));
   const id = queue.add({ serverId: 's', title: 'Heat', plan: { kind: 'movie', folders: [], totalSize: 10, items: [{ remote: '/Heat.mkv', rel: 'Heat.mkv', size: 10, dest }] } });
-  await new Promise((r) => setTimeout(r, 20));
+  await Promise.race([startedPromise, new Promise((_, reject) => setTimeout(() => reject(new Error('download never started')), 5000))]);
   queue.cancel(id);
   const job = await finished;
   assert.equal(job.status, 'cancelled');
