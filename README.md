@@ -132,7 +132,7 @@ The package is signed with a certificate made fresh for each build. Only its pub
 cd src-tauri
 cargo run -p lounge-app     # run the app (Windows: WebView2; Linux: webkit2gtk, for development)
 cargo test -p lounge-core   # Rust unit tests
-cd .. && npm test           # renderer tests (gamepad, i18n, stats); Node only, no dependencies
+cd .. && npm install && npm test   # renderer tests (gamepad, i18n, stats, clicks in jsdom)
 npx -y @tauri-apps/cli@2 build --bundles nsis   # installer (run in src-tauri, on Windows)
 ```
 

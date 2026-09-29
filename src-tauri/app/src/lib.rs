@@ -11,9 +11,11 @@
 //!
 //! Known gaps:
 //! - **WebHID device permissions** (the Legion Go controllers' battery/attach toasts): wry/WebView2
-//!   has no device-permission handler, so `renderer/core.js` doesn't start its HID listener (it
-//!   checks `window.lounge.kind`). Input itself (via the Gamepad API) is unaffected.
+//!   has no device-permission handler, so `legion_hid` reads the device natively and the renderer
+//!   consumes its `legion-report` events instead of WebHID.
 //! - While a game runs the page is blanked and the window minimised (freeing GPU work).
+
+mod legion_hid;
 
 use lounge_core::library;
 use lounge_core::remote::{self, RemoteClient, ServerSpec};
@@ -2247,6 +2249,8 @@ pub fn run() {
                 }
             }));
 
+            legion_hid::start(app.handle().clone());
+
             app.manage(AppState {
                 settings,
                 progress: stores.0,
@@ -2399,6 +2403,7 @@ const INIT_SCRIPT: &str = r#"
     quit: () => invoke('quit'),
     onState: on('state'), onNowPlaying: on('now-playing'), onGame: on('game'), onToast: on('toast'),
     onUpdate: on('update'), onTransfers: on('transfers'), onTailscale: on('tailscale'),
+    onLegionReport: on('legion-report'), onLegionState: on('legion-state'),
   };
   function on(event) {
     return (cb) => {

@@ -834,7 +834,22 @@ const LegionHid = (() => {
     return opened;
   }
 
+  // Tauri shell: the native side reads the HID interface and forwards each report as an event.
+  function startNative() {
+    api.onLegionReport((r) => {
+      opened = true;
+      onReport({ reportId: r.reportId, data: Uint8Array.from(r.bytes) });
+    });
+    api.onLegionState((s) => {
+      if (s.connected) return;
+      opened = false;
+      status = null;
+      emit();
+    });
+  }
+
   async function start() {
+    if (window.lounge?.kind === 'tauri') return startNative();
     if (!navigator.hid) return;
     navigator.hid.addEventListener('connect', () => scan());
     navigator.hid.addEventListener('disconnect', (e) => {
@@ -1041,10 +1056,9 @@ const Status = (() => {
     setInterval(pollWifi, 30000);
     renderPad();
     setInterval(renderPad, 3000);
-    // Legion controllers' battery/attach state comes through their vendor HID interface. Under the
-    // Tauri shell there's no way to grant WebHID permission silently (wry/WebView2 has no
-    // device-permission handler), so it isn't started there; input itself uses the Gamepad API.
-    if ((S.platform === 'win32' || navigator.hid) && window.lounge?.kind !== 'tauri') LegionHid.start();
+    // Legion controllers' battery/attach state comes through their vendor HID interface: WebHID where
+    // there is one, or the Tauri shell's native reader (WebView2 can't grant WebHID silently).
+    if (S.platform === 'win32' || navigator.hid) LegionHid.start();
     window.addEventListener('online', pollWifi);
     window.addEventListener('offline', pollWifi);
   }
