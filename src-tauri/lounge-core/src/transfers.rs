@@ -337,15 +337,20 @@ mod tests {
     }
 
     /// A client whose `download` blocks (having already written a partial file and reported some
-    /// bytes) until `close()` releases it, then fails — mirroring the JS test's fake client exactly.
+    /// bytes, and announced the fact over `started`) until `close()` releases it, then fails —
+    /// mirroring the JS test's fake client exactly.
     struct BlockingThenFailClient {
         closed: Arc<AtomicBool>,
+        started: Mutex<Option<Sender<()>>>,
         release: Mutex<Option<Sender<()>>>,
     }
     impl RemoteClient for BlockingThenFailClient {
         fn download(&self, _remote: &str, local: &Path, on_bytes: &mut dyn FnMut(u64)) -> Result<(), String> {
             std::fs::write(local, "part").unwrap();
             on_bytes(4);
+            if let Some(tx) = self.started.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
             let (tx, rx) = channel();
             *self.release.lock().unwrap() = Some(tx);
             let _ = rx.recv(); // blocks until close() sends
@@ -365,7 +370,12 @@ mod tests {
         let lib = tempdir().unwrap();
         let dest = lib.path().join("Movies").join("Heat (1995)").join("Heat.mkv");
         let closed = Arc::new(AtomicBool::new(false));
-        let client = Arc::new(BlockingThenFailClient { closed: Arc::clone(&closed), release: Mutex::new(None) });
+        let (started_tx, started_rx) = channel();
+        let client = Arc::new(BlockingThenFailClient {
+            closed: Arc::clone(&closed),
+            started: Mutex::new(Some(started_tx)),
+            release: Mutex::new(None),
+        });
 
         let (fin_tx, fin_rx) = channel();
         let client_for_connect = Arc::clone(&client);
@@ -386,7 +396,13 @@ mod tests {
             items: vec![PlanItem { remote: "/Heat.mkv".into(), rel: "Heat.mkv".into(), size: 10, dest: dest.clone() }],
         };
         let id = queue.add(AddSpec { server_id: "s".into(), title: "Heat".into(), plan });
-        thread::sleep(Duration::from_millis(20));
+        // Wait until the download is genuinely in flight rather than sleeping a fixed 20ms: under
+        // runner load that sleep could expire before the worker even started, so cancel landed on
+        // a job that had never opened a client and the `closed`/`.part` assertions failed. (The
+        // JS twin test flaked the same way and now handshakes too.)
+        if started_rx.recv_timeout(Duration::from_secs(5)).is_err() {
+            panic!("the download never started");
+        }
         queue.cancel(&id);
         let job = wait_finished(&fin_rx);
 
