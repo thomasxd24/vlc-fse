@@ -348,11 +348,13 @@ mod tests {
         fn download(&self, _remote: &str, local: &Path, on_bytes: &mut dyn FnMut(u64)) -> Result<(), String> {
             std::fs::write(local, "part").unwrap();
             on_bytes(4);
+            // Arm the release before announcing the start: a cancel that lands right after `started`
+            // must find something to release, or this would block forever (it did, on slow runners).
+            let (tx, rx) = channel();
+            *self.release.lock().unwrap() = Some(tx);
             if let Some(tx) = self.started.lock().unwrap().take() {
                 let _ = tx.send(());
             }
-            let (tx, rx) = channel();
-            *self.release.lock().unwrap() = Some(tx);
             let _ = rx.recv(); // blocks until close() sends
             Err("connection closed".to_string())
         }
