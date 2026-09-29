@@ -16,12 +16,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      # The JS suite drives src/*.js (still in the tree while the Tauri build is proven out); it needs
-      # nothing from node_modules, just Node itself. Real VLC, so test/vlc-real.test.js checks VLC
-      # accepts the exact command line Lounge launches it with.
+      # The JS suite drives src/*.js (still in the tree while the Tauri build is proven out).
+      # test/remote.test.js needs ssh2's in-process SFTP server, so node_modules must exist.
+      # Real VLC, so test/vlc-real.test.js checks VLC accepts the exact command line Lounge
+      # launches it with.
       - name: Install VLC
         run: choco install vlc -y --no-progress
+
+      - name: Install JS dependencies
+        run: npm ci
 
       - name: JS tests
         run: node --test test/*.test.js
