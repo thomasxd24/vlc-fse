@@ -939,7 +939,7 @@ const ACTIONS = {
 
 document.addEventListener('click', (e) => {
   const tab = e.target.closest('[data-tab]');
-  if (tab && tab.closest('#tabs')) {
+  if (tab && tab.closest('#tabs, #tools')) {
     if (tab.dataset.tab === stack[0].name && stack.length === 1) {
       // Selecting the current tab drops into its content.
       Nav.focus(page.querySelector('[data-autofocus]') || page.querySelector('.focusable'));
