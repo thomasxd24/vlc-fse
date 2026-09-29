@@ -112,7 +112,7 @@ impl JsonStore {
             None => "tmp".to_string(),
         });
         fs::write(&tmp, json)?;
-        fs::rename(&tmp, file)
+        crate::fsops::rename_replace(&tmp, file)
     }
 }
 

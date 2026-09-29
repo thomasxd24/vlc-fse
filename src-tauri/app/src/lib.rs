@@ -1249,7 +1249,6 @@ fn open_secret(sealed: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn dpapi_protect(plain: &str) -> Option<String> {
-    use base64::Engine as _;
     let script = format!(
         "$b=[System.Text.Encoding]::UTF8.GetBytes('{}'); $p=[System.Security.Cryptography.ProtectedData]::Protect($b, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser); [Convert]::ToBase64String($p)",
         plain.replace('\'', "''")

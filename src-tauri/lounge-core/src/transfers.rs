@@ -310,7 +310,7 @@ fn run_job(inner: &Inner, idx: usize) -> Result<(), String> {
         if inner.jobs.lock().unwrap()[idx].state.status != JobStatus::Running {
             return Ok(());
         }
-        std::fs::rename(&part, &item.dest).map_err(|e| e.to_string())?;
+        crate::fsops::rename_replace(&part, &item.dest).map_err(|e| e.to_string())?;
         before += item.size;
         let mut jobs = inner.jobs.lock().unwrap();
         jobs[idx].state.bytes_done = before;

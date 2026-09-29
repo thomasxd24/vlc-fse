@@ -560,7 +560,7 @@ impl Updater {
                 }
             }
         }
-        std::fs::rename(&partial, &dest).map_err(|e| e.to_string())?;
+        crate::fsops::rename_replace(&partial, &dest).map_err(|e| e.to_string())?;
         *self.file.lock().unwrap() = Some(dest.clone());
         self.mutate(|s| {
             s.status = Status::Ready;
