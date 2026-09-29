@@ -339,7 +339,7 @@ fn registry_value(key: &str, value: &str) -> Option<String> {
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let re = Regex::new(&format!(r"{value}\s+REG_\w+\s+(.*)")).ok()?;
-    let caps = re.captures(&stdout).ok().flatten()?;
+    let caps = re.captures(stdout.as_ref()).ok().flatten()?;
     Some(caps.get(1)?.as_str().trim().to_string())
 }
 #[cfg(not(target_os = "windows"))]

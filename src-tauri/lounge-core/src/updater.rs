@@ -35,9 +35,10 @@ fn now_millis() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-static NSIS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:Lounge|Foyer)-Setup-\d+\.\d+\.\d+\.exe$").unwrap());
-static ZIP_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:Lounge|Foyer)-\d+\.\d+\.\d+-win-x64\.zip$").unwrap());
-static FSE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:Lounge|Foyer)-FSE-\d+\.\d+\.\d+\.zip$").unwrap());
+// Pre-release tags (3.0.0-alpha) keep their suffix in file names, like `Lounge-Setup-3.0.0-alpha.exe`.
+static NSIS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:Lounge|Foyer)-Setup-\d+\.\d+\.\d+(?:-[\w.]+)?\.exe$").unwrap());
+static ZIP_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:Lounge|Foyer)-\d+\.\d+\.\d+(?:-[\w.]+)?-win-x64\.zip$").unwrap());
+static FSE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:Lounge|Foyer)-FSE-\d+\.\d+\.\d+(?:-[\w.]+)?\.zip$").unwrap());
 static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([\w.]+))?$").unwrap());
 static LOCATION_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/releases/tag/v?([^/?#]+)").unwrap());
 
@@ -957,5 +958,21 @@ mod tests {
         assert!(u.wait_for_fse(&status, &fast).ends_with("didn't start"));
 
         assert_eq!(wmi_launch("a 'b'"), "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'a ''b''' }; exit [int]$r.ReturnValue");
+    }
+
+    // Pre-release tags keep their suffix in asset names (Lounge-Setup-3.0.0-alpha.exe) and must still
+    // be found, offered over an older release, and then superseded by the final one.
+    #[test]
+    fn pre_release_assets_match_and_order_correctly() {
+        for (install_type, name) in [
+            (InstallType::Nsis, "Lounge-Setup-3.0.0-alpha.exe"),
+            (InstallType::Zip, "Lounge-3.0.0-alpha-win-x64.zip"),
+            (InstallType::Fse, "Lounge-FSE-3.0.0-alpha.zip"),
+        ] {
+            assert!(asset_matches(install_type, name), "{name}");
+        }
+        assert!(compare_versions("3.0.0-alpha", "2.2.0") > 0, "the alpha is newer than today's release");
+        assert!(compare_versions("3.0.0", "3.0.0-alpha") > 0, "the final supersedes the alpha");
+        assert!(compare_versions("3.0.0-alpha.2", "3.0.0-alpha") > 0);
     }
 }

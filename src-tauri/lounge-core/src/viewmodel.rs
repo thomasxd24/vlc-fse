@@ -614,6 +614,54 @@ pub fn stats_data(lib: &LibraryScan, steam: &SteamGames, stores: &Stores, file_u
     json!({"sessions": sessions, "items": items, "now": now_millis()})
 }
 
+/// One entry of a playback queue: the file, where to start it, and the per-item language override.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlayItem {
+    pub path: String,
+    pub start_time: Option<f64>,
+    /// `{ audio, subs }` for this film/show, when one was picked by hand.
+    pub languages: Option<Value>,
+    /// Shown on the "Playing in VLC" screen for queue items after the first.
+    pub label: Option<String>,
+    /// The id progress and watch-time are recorded under (the film's id, or the show's).
+    pub item_id: Option<String>,
+}
+
+/// What *play* hands to [`crate::vlc`]: a display title plus the queue. A film plays alone; picking
+/// an episode queues the rest of the series (when autoplay is on), each labelled `Show · S01E02`.
+pub fn build_queue(lib: &LibraryScan, stores: &Stores, req: &Value, autoplay_next: bool) -> Result<(String, Vec<PlayItem>), ()> {
+    let id = req.get("id").and_then(Value::as_str).unwrap_or("");
+    if req.get("kind").and_then(Value::as_str) == Some("movie") {
+        let Some(m) = lib.movies.iter().find(|m| m.id == id) else { return Err(()) };
+        let pr = progress_for(stores, &m.path);
+        let start = if req.get("resume").and_then(Value::as_bool).unwrap_or(false) && resumable(&pr) {
+            Some(num(pr.get("time")))
+        } else {
+            None
+        };
+        let languages = languages_of(stores, &m.id);
+        let lang = if languages.is_null() { None } else { Some(languages) };
+        return Ok((m.title.clone(), vec![PlayItem { path: m.path.to_string_lossy().into_owned(), start_time: start, languages: lang, label: None, item_id: Some(m.id.clone()) }]));
+    }
+    let show_id = req.get("showId").and_then(Value::as_str).unwrap_or("");
+    let Some(show) = lib.shows.iter().find(|s| s.id == show_id) else { return Err(()) };
+    let Some(idx) = show.episodes.iter().position(|e| e.id == id) else { return Err(()) };
+    let first = &show.episodes[idx];
+    let pr = progress_for(stores, &first.path);
+    let rest: &[crate::library::Episode] = if autoplay_next { &show.episodes[idx + 1..] } else { &[] };
+    let label = |e: &crate::library::Episode| format!("{} · S{:02}E{:02}", show.title, e.season, e.episode.unwrap_or(0));
+    let languages = languages_of(stores, &show.id);
+    let lang = if languages.is_null() { None } else { Some(languages) };
+    let start = if req.get("resume").and_then(Value::as_bool).unwrap_or(false) && resumable(&pr) {
+        Some(num(pr.get("time")))
+    } else {
+        None
+    };
+    let mut queue = vec![PlayItem { path: first.path.to_string_lossy().into_owned(), start_time: start, languages: lang.clone(), label: Some(label(first)), item_id: Some(show.id.clone()) }];
+    queue.extend(rest.iter().map(|e| PlayItem { path: e.path.to_string_lossy().into_owned(), start_time: None, languages: lang.clone(), label: Some(label(e)), item_id: Some(show.id.clone()) }));
+    Ok((label(first), queue))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1066,5 +1114,71 @@ mod tests {
             "installDir": "/steam/common/TF2", "size": 123, "addedAt": 7, "lastPlayed": 111, "playtime": 60,
             "art": {"poster": "/p.jpg", "hero": null, "logo": null, "header": "/h.jpg", "icon": null},
         }));
+    }
+
+    fn ep(id: &str, season: i32, n: i32, path: String) -> crate::library::Episode {
+        crate::library::Episode { id: id.into(), season, episode: Some(n), episode_end: None, title: None, path: PathBuf::from(path), thumb: None, size: 0, added_at: 5 }
+    }
+
+    #[test]
+    fn build_queue_for_a_movie_carries_resume_and_languages() {
+        let dir = tempdir().unwrap();
+        let stores = mk_stores(dir.path());
+        let st = &stores_ref(&stores);
+        let lib = scan(vec![movie("m1", "Film", "/lib/Film.mkv")], vec![]);
+        set_languages(st, "m1", Some(&json!({"audio": "ja"})));
+
+        let (title, q) = build_queue(&lib, st, &json!({"kind": "movie", "id": "m1"}), true).unwrap();
+        assert_eq!(title, "Film");
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].path, "/lib/Film.mkv");
+        assert_eq!(q[0].start_time, None);
+        assert_eq!(q[0].languages.as_ref().unwrap(), &json!({"audio": "ja"}));
+
+        // Part-watched and asked to resume: the stored position becomes the start time.
+        record_progress(st, Path::new("/lib/Film.mkv"), 300.0, 2000.0);
+        let (_, q) = build_queue(&lib, st, &json!({"kind": "movie", "id": "m1", "resume": true}), true).unwrap();
+        assert_eq!(q[0].start_time, Some(300.0));
+        // Already watched: never resumes.
+        set_watched(st, &["/lib/Film.mkv".into()], true);
+        let (_, q) = build_queue(&lib, st, &json!({"kind": "movie", "id": "m1", "resume": true}), true).unwrap();
+        assert_eq!(q[0].start_time, None);
+        // Unknown id: notFound.
+        assert!(build_queue(&lib, st, &json!({"kind": "movie", "id": "nope"}), true).is_err());
+    }
+
+    #[test]
+    fn build_queue_for_an_episode_queues_the_rest_of_the_series() {
+        let dir = tempdir().unwrap();
+        let stores = mk_stores(dir.path());
+        let st = &stores_ref(&stores);
+        let show = Show {
+            id: "s1".into(), title: "Show".into(), year: None, dir: PathBuf::from("/lib/Show"),
+            poster: None, backdrop: None, added_at: 5,
+            episodes: vec![ep("e1", 1, 1, "/lib/s01e01.mkv".into()), ep("e2", 1, 2, "/lib/s01e02.mkv".into()), ep("e3", 2, 1, "/lib/s02e01.mkv".into())],
+        };
+        let lib = scan(vec![], vec![show]);
+
+        let (title, q) = build_queue(&lib, st, &json!({"kind": "episode", "showId": "s1", "id": "e2"}), true).unwrap();
+        assert_eq!(title, "Show · S01E02");
+        assert_eq!(q.len(), 2, "e2 then e3, the rest of the series");
+        assert_eq!(q[0].label.as_deref(), Some("Show · S01E02"));
+        assert_eq!(q[1].label.as_deref(), Some("Show · S02E01"));
+        assert_eq!(q[0].item_id.as_deref(), Some("s1"), "progress records under the show's id");
+        assert_eq!(q[0].start_time, None);
+
+        // Autoplay off: just the picked episode.
+        let (_, q) = build_queue(&lib, st, &json!({"kind": "episode", "showId": "s1", "id": "e1", "resume": true}), false).unwrap();
+        assert_eq!(q.len(), 1);
+
+        // Resume from part-way through.
+        record_progress(st, Path::new("/lib/s01e02.mkv"), 100.0, 2000.0);
+        let (_, q) = build_queue(&lib, st, &json!({"kind": "episode", "showId": "s1", "id": "e2", "resume": true}), true).unwrap();
+        assert_eq!(q[0].start_time, Some(100.0));
+        assert_eq!(q[1].start_time, None, "later episodes start at the beginning");
+
+        // Unknown show or episode: notFound.
+        assert!(build_queue(&lib, st, &json!({"kind": "episode", "showId": "nope", "id": "e1"}), true).is_err());
+        assert!(build_queue(&lib, st, &json!({"kind": "episode", "showId": "s1", "id": "nope"}), true).is_err());
     }
 }

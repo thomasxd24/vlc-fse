@@ -10,6 +10,7 @@ const on = (channel) => (cb) => {
 const call = (channel) => (arg) => ipcRenderer.invoke(channel, arg);
 
 contextBridge.exposeInMainWorld('lounge', {
+  kind: 'electron',
   getState: call('get-state'),
   saveUiState: call('save-ui-state'),
   rescan: call('rescan'),

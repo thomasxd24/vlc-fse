@@ -1041,7 +1041,11 @@ const Status = (() => {
     setInterval(pollWifi, 30000);
     renderPad();
     setInterval(renderPad, 3000);
-    if (S.platform === 'win32' || navigator.hid) LegionHid.start();
+    // Legion controllers' battery/attach state comes through their vendor HID interface. Under the
+    // Tauri shell there's no way to grant WebHID permission silently (Electron's
+    // setDevicePermissionHandler has no wry/WebView2 equivalent yet), so only Electron starts it;
+    // input itself uses the Gamepad API and works the same under both.
+    if ((S.platform === 'win32' || navigator.hid) && window.lounge?.kind !== 'tauri') LegionHid.start();
     window.addEventListener('online', pollWifi);
     window.addEventListener('offline', pollWifi);
   }
