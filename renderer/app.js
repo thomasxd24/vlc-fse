@@ -133,12 +133,10 @@ async function openOptions(spec) {
       title: app.name,
       choices: [
         { label: t('apps.open'), value: 'open', icon: ICON.play, primary: true },
-        ...(app.tailscale ? [{ label: t('ts.title'), value: 'ts', icon: ICON.vpn }] : []),
         { label: app.hidden ? t('opt.unhide') : t('opt.hide'), value: 'hide', icon: app.hidden ? ICON.show : ICON.hide }
       ]
     });
-    if (v === 'open') openApp(app, { direct: true });
-    else if (v === 'ts') tailscalePanel();
+    if (v === 'open') openApp(app);
     else if (v === 'hide') {
       await api.hideApp({ id: app.id, hidden: !app.hidden });
       toast(t(app.hidden ? 'apps.unhidden' : 'apps.hidden'));
@@ -224,115 +222,13 @@ async function chooseItemLanguages(item) {
   }
 }
 
-// ============================================================================ Apps & Tailscale
+// ============================================================================ Apps
 
-/** Open an installed app. Tailscale opens Lounge's own Tailscale controls instead (its window is a tray menu). */
-async function openApp(app, { direct = false } = {}) {
-  if (app.tailscale && !direct) return tailscalePanel();
+/** Open an installed app. */
+async function openApp(app) {
   toast(t('apps.opening', { name: app.name }));
   const r = await api.launchApp(app.id);
   if (!r.ok) toast(t(r.errorKey, r.vars), 'error');
-}
-
-async function tsRun(action, extra = {}) {
-  toast(t('ts.working'));
-  const r = await api.tailscaleAction({ action, ...extra });
-  if (r.status) S.tailscale = r.status;
-  if (!r.ok && r.errorKey) toast(t(r.errorKey, r.vars), 'error');
-  if (route().name === 'apps') render({ keepFocus: true });
-  return r;
-}
-
-async function chooseExitNode() {
-  const st = S.tailscale || {};
-  const nodes = st.exitNodes || [];
-  const v = await choose({
-    title: t('ts.exitTitle'),
-    choices: [
-      { label: t('ts.exitOff'), value: 'off', icon: st.exitNode ? '' : ICON.check },
-      ...nodes.map((n) => ({ label: n.online ? n.name : t('ts.offline', { name: n.name }), value: n.ip || n.name, icon: n.active ? ICON.check : ICON.link }))
-    ]
-  });
-  if (!v) return;
-  await tsRun('exitNode', { node: v === 'off' ? null : v });
-}
-
-/** Tailscale's controls in a dialog: from the quick menu, the Apps card, or the Tailscale app itself. */
-async function tailscalePanel() {
-  let st = await api.tailscaleStatus();
-  for (;;) {
-    S.tailscale = st;
-    if (!st.installed) return toast(t('err.tsMissing'), 'error');
-    const lines = [tsStateLabel(st)];
-    if (st.state === 'connected') {
-      if (st.hostName && st.ip) lines.push(t('ts.details', { host: st.hostName, ip: st.ip }));
-      lines.push(t('ts.devices', { n: st.peersOnline || 0 }));
-      if (st.exitNode) lines.push(t('ts.viaExit', { name: st.exitNode.name }));
-    } else if (st.error) lines.push(t('ts.serviceDown'));
-    const choices = [];
-    if (st.state === 'connected') {
-      choices.push({ label: t('ts.disconnect'), value: 'down', icon: ICON.power });
-      if ((st.exitNodes || []).length) choices.push({ label: t('ts.exitNode', { name: st.exitNode ? st.exitNode.name : t('ts.exitNone') }), value: 'exit', icon: ICON.link });
-    } else if (st.state === 'stopped') choices.push({ label: t('ts.connect'), value: 'up', icon: ICON.vpn, primary: true });
-    else if (st.state === 'needsLogin') choices.push({ label: t('ts.signIn'), value: 'login', icon: ICON.vpn, primary: true });
-    if ((S.apps || []).some((a) => a.tailscale)) choices.push({ label: t('ts.openApp'), value: 'app', icon: ICON.apps });
-    choices.push({ label: t('common.done'), value: null });
-    const v = await choose({ title: t('ts.title'), text: lines.join('\n'), choices });
-    if (!v) return;
-    if (v === 'up' || v === 'down') st = (await tsRun(v)).status || st;
-    else if (v === 'exit') {
-      await chooseExitNode();
-      st = S.tailscale || st;
-    } else if (v === 'login') {
-      await tailscaleLogin();
-      st = await api.tailscaleStatus();
-    } else if (v === 'app') {
-      const r = await api.tailscaleOpenApp();
-      if (!r.ok && r.errorKey) toast(t(r.errorKey, r.vars), 'error');
-      return;
-    }
-  }
-}
-
-/** Sign-in: a QR code to scan with a phone (typing on a handheld is no fun), or the link in a browser. */
-async function tailscaleLogin() {
-  toast(t('ts.working'));
-  const r = await api.tailscaleLogin();
-  if (!r.ok) return toast(t(r.errorKey, r.vars), 'error');
-  if (!r.url) {
-    if (r.status) S.tailscale = r.status;
-    return;
-  }
-  let unsub = null;
-  const v = await openModal(
-    `<h2>${h(t('ts.signInTitle'))}</h2>
-     <p>${h(t('ts.signInText'))}</p>
-     <div class="ts-login"><img class="ts-qr" src="${h(r.qr)}" alt=""><div class="ts-url">${h(r.url)}</div></div>
-     <div class="choices" data-nav-group>
-       <button class="btn primary focusable" data-ts="browser" data-autofocus>${ICON.link}<span>${h(t('ts.openBrowser'))}</span></button>
-       <button class="btn focusable" data-ts="cancel"><span>${h(t('common.cancel'))}</span></button>
-     </div>`,
-    {
-      onMount(root, close) {
-        root.addEventListener('click', (e) => {
-          const b = e.target.closest('[data-ts]');
-          if (b) close(b.dataset.ts);
-        });
-        // Closes by itself once the sign-in completes.
-        unsub = api.onTailscale((st) => {
-          S.tailscale = st;
-          if (st.state === 'connected') close('done');
-        });
-      }
-    }
-  );
-  if (unsub) unsub();
-  if (v === 'browser') {
-    api.openExternal(r.url);
-    return;
-  }
-  if (v !== 'done') api.tailscaleCancelLogin();
-  if (route().name === 'apps') render({ keepFocus: true });
 }
 
 // ============================================================================ Servers & transfers
@@ -734,30 +630,6 @@ const ACTIONS = {
     if (app) openApp(app);
   },
   'rescan-apps': () => api.rescanApps(),
-  'ts-up': () => tsRun('up'),
-  'ts-down': () => tsRun('down'),
-  'ts-exit': () => chooseExitNode(),
-  'ts-login': () => tailscaleLogin(),
-  'ts-panel': () => tailscalePanel(),
-  'tailscale-find': async () => {
-    for (;;) {
-      const r = await api.tailscaleLocate();
-      await refreshState();
-      const where = { default: t('ts.srcDefault'), service: t('ts.srcService'), startMenu: t('ts.srcStartMenu'), path: t('ts.srcPath') };
-      const lines = (r.tried || []).map((x) => `${x.found ? '✓' : '✗'} ${x.path}  (${where[x.source] || x.source})`);
-      const v = await choose({
-        title: r.cli ? t('ts.foundAt', { path: r.cli }) : t('ts.notFound'),
-        text: [r.cli ? '' : t('ts.notFoundHelp'), t('ts.looked'), ...lines].filter(Boolean).join('\n'),
-        choices: [
-          ...(r.cli ? [{ label: t('ts.title'), value: 'panel', icon: ICON.vpn, primary: true }] : []),
-          { label: t('ts.lookAgain'), value: 'again', icon: ICON.refresh, primary: !r.cli },
-          { label: t('common.done'), value: null }
-        ]
-      });
-      if (v === 'panel') return tailscalePanel();
-      if (v !== 'again') return;
-    }
-  },
   'add-server': async () => {
     const id = await editServer(null);
     if (id) go({ name: 'remote', serverId: id, path: null });
@@ -1245,10 +1117,6 @@ function endIntro({ play }) {
   });
   api.onUpdate(onUpdateState);
   api.onTransfers(onTransfers);
-  api.onTailscale((st) => {
-    S.tailscale = st;
-    if (route().name === 'apps' && !modals.length) render({ keepFocus: true });
-  });
   if (S.update && S.update.status === 'available') maybePromptUpdate();
   api.onToast((m) => toast(m.key ? t(m.key, m.vars) : m.text, m.kind));
   for (const m of initial.toasts || []) toast(t(m.key, m.vars), m.kind);

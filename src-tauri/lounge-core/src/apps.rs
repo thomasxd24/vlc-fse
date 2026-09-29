@@ -55,8 +55,7 @@ impl AppEnv {
     }
 }
 
-/// Windows-style path join, so tests get Windows-shaped results on any host (same reasoning as
-/// `tailscale.rs`'s `win_join`).
+/// Windows-style path join, so tests get Windows-shaped results on any host.
 fn win_join(parts: &[&str]) -> String {
     parts.iter().filter(|p| !p.is_empty()).copied().collect::<Vec<&str>>().join("\\")
 }

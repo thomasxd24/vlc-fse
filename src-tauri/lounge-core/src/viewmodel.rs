@@ -300,7 +300,7 @@ fn first_present(candidates: &[Option<&Value>]) -> Value {
 }
 
 /// `path.dirname` of a Windows-style path, used for manual games' install folders; `std::path::Path`
-/// doesn't understand `\` as a separator unless compiled for Windows (same helper as `tailscale.rs`).
+/// doesn't understand `\` as a separator unless compiled for Windows.
 fn win_dirname(p: &str) -> String {
     match p.rfind(['\\', '/']) {
         Some(i) => p[..i].to_string(),

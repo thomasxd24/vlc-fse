@@ -19,7 +19,6 @@ const S = {
   servers: [],
   transfers: [],
   apps: [],
-  tailscale: null,
   platform: 'win32',
   systemControls: false,
   fsePackage: false,
@@ -1069,12 +1068,6 @@ const Status = (() => {
 
 // ============================================================================ Quick menu (☰)
 
-/** One line for Tailscale's state: "Connected", "Disconnected", "Signed out"… */
-function tsStateLabel(st) {
-  if (!st || !st.installed) return '';
-  return t(`ts.${st.state || 'unknown'}`);
-}
-
 const QuickMenu = (() => {
   const root = $('#quick-menu');
   let open = false;
@@ -1122,7 +1115,6 @@ const QuickMenu = (() => {
           ${showPower ? `<button class="qm-btn focusable" data-qm="sleep" data-key="qm-sleep">${ICON.moon}<span>${h(t('qm.sleep'))}</span></button>` : ''}
           ${showPower ? `<button class="qm-btn focusable" data-qm="restart" data-key="qm-restart">${ICON.restart}<span>${h(t('qm.restart'))}</span></button>` : ''}
           ${showPower ? `<button class="qm-btn focusable" data-qm="shutdown" data-key="qm-shutdown">${ICON.power}<span>${h(t('qm.shutdown'))}</span></button>` : ''}
-          ${S.tailscaleInstalled ? `<button class="qm-btn qm-ts focusable" data-qm="tailscale" data-key="qm-tailscale">${ICON.vpn}<span>${h(t('ts.title'))}<small>${h(S.tailscale ? tsStateLabel(S.tailscale) : '')}</small></span></button>` : ''}
           <button class="qm-btn focusable" data-qm="stats" data-key="qm-stats">${ICON.chart}<span>${h(t('stats.title'))}</span></button>
           <button class="qm-btn focusable" data-qm="settings" data-key="qm-settings">${ICON.gamepad}<span>${h(t('tab.settings'))}</span></button>
           <button class="qm-btn danger focusable" data-qm="quit" data-key="qm-quit">${ICON.exit}<span>${h(t('qm.quit'))}</span></button>
@@ -1191,11 +1183,6 @@ const QuickMenu = (() => {
       switchTab('settings');
       return;
     }
-    if (action === 'tailscale') {
-      close();
-      tailscalePanel();
-      return;
-    }
     if (action === 'stats') {
       close();
       if (route().name !== 'stats') openStats();
@@ -1232,12 +1219,6 @@ const QuickMenu = (() => {
     Sound.open();
     paint();
     Hints.update();
-    if (S.tailscaleInstalled) {
-      api.tailscaleStatus().then((st) => {
-        S.tailscale = st;
-        if (open) paint();
-      });
-    }
     if (S.systemControls) {
       sys = await api.systemGet().catch(() => ({ supported: false }));
       if (open) paint();

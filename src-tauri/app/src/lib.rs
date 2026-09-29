@@ -5,7 +5,7 @@
 //! `renderer/**` runs completely unmodified: library scanning and the Steam scan, the view model,
 //! VLC playback with progress/resume/watch-time, game launching with suspend/resume, TMDB and game
 //! enrichment in background threads, servers/remote browsing/transfers, the Start-menu apps list,
-//! Tailscale (status/connect/login with QR), the system helper (volume/brightness/sleep), the
+//! the system helper (volume/brightness/sleep), the
 //! self-updater, and every settings side effect. `window.lounge` is created by an initialization
 //! script mapping each method to `window.__TAURI__.core.invoke(...)`.
 //!
@@ -23,7 +23,7 @@ use lounge_core::store::JsonStore;
 use lounge_core::transfers::{AddSpec, TransferQueue};
 use lounge_core::updater::{self, Updater};
 use lounge_core::viewmodel::{self, SteamGames, Stores};
-use lounge_core::{apps, gameinfo, games, metadata, steam, system, tailscale, vlc};
+use lounge_core::{apps, gameinfo, games, metadata, steam, system, vlc};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -144,7 +144,6 @@ struct AppState {
     meta_status: Mutex<(bool, Option<String>)>,
     game_info_status: Mutex<(bool, Option<String>)>,
     updater: Mutex<Option<Arc<Updater>>>,
-    tailscale: tailscale::Tailscale,
     helper: system::SystemHelper,
     transfers: Arc<TransferQueue>,
     battery: Mutex<Option<Option<bool>>>,
@@ -226,8 +225,6 @@ fn apps_view(st: &AppState) -> Vec<Value> {
     let icons = st.apps_store.get("icons").unwrap_or_else(|| json!({}));
     let hidden = st.apps_store.get("hidden").unwrap_or_else(|| json!({}));
     let recent = st.apps_store.get("recent").unwrap_or_else(|| json!({}));
-    let ts_apps: Vec<Value> = st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default().into_iter().filter(|a: &Value| is_tailscale_app(a)).collect();
-    let ts_ids: Vec<&str> = ts_apps.iter().filter_map(|a| a.get("id").and_then(Value::as_str)).collect();
     st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default().into_iter().map(|a| {
         let id = a.get("id").and_then(Value::as_str).unwrap_or("").to_string();
         let icon = icons.get(&id).and_then(Value::as_str).filter(|p| Path::new(p).is_file()).map(|p| file_url(Path::new(p)));
@@ -238,15 +235,8 @@ fn apps_view(st: &AppState) -> Vec<Value> {
             "icon": icon,
             "hidden": hidden.get(&id).map(|h| !h.is_null()).unwrap_or(false),
             "lastLaunched": recent.get(&id).cloned().unwrap_or(json!(0)),
-            "tailscale": ts_ids.contains(&id.as_str()),
         })
     }).collect()
-}
-
-fn is_tailscale_app(a: &Value) -> bool {
-    let name = a.get("name").and_then(Value::as_str).unwrap_or("").to_lowercase();
-    let exe = a.get("exe").and_then(Value::as_str).unwrap_or("").to_lowercase();
-    name.contains("tailscale") || exe.contains("tailscale")
 }
 
 fn update_state_json(st: &updater::UpdateState) -> Value {
@@ -312,9 +302,6 @@ fn build_state(st: &AppState) -> Value {
         "apps": apps_view(st),
         "appsScanning": st.apps_scanning.load(Ordering::SeqCst),
         "appsScannedAt": st.apps_store.get("scannedAt").unwrap_or(json!(0)),
-        "tailscaleInstalled": st.tailscale.installed(),
-        "tailscaleCli": st.tailscale.cli().map(|c| json!(c)).unwrap_or(Value::Null),
-        "tailscaleTried": st.tailscale.tried().iter().map(|t| json!({"path": t.path, "source": t.source, "found": t.found})).collect::<Vec<_>>(),
         "transfers": st.transfers.state().iter().map(transfer_state_json).collect::<Vec<_>>(),
         "version": env!("CARGO_PKG_VERSION"),
     })
@@ -553,7 +540,7 @@ fn toast(st: &AppState, app: &AppHandle, key: &str, vars: Value, kind: &str) {
 // ---------------------------------------------------------------------------
 // Media playback (VLC)
 
-#[tauri::command]
+#[tauri::command(async)]
 fn play(app: AppHandle, st: State<AppState>, req: Value) -> Value {
     {
         let play = st.play.lock().unwrap();
@@ -629,7 +616,7 @@ fn split_args(s: &str) -> Vec<String> {
     lounge_core::games::split_args(s)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop(app: AppHandle, st: State<AppState>) {
     if let Some(p) = st.play.lock().unwrap().as_ref() {
         p.session.kill();
@@ -639,7 +626,7 @@ fn stop(app: AppHandle, st: State<AppState>) {
 
 /// Playback controls on the "Playing in VLC" screen, mapped to VLC's HTTP commands. Track switching
 /// goes through VLC's own hotkeys so the on-screen label updates.
-#[tauri::command]
+#[tauri::command(async)]
 fn np_command(st: State<AppState>, name: String) {
     let commands: &[(&str, &[&str])] = &[
         ("pause", &["pl_pause"]),
@@ -666,7 +653,7 @@ fn np_command(st: State<AppState>, name: String) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_watched(app: AppHandle, st: State<AppState>, req: Value) {
     let lib = st.library.lock().unwrap().clone();
     let paths = viewmodel::paths_for(&lib, &req);
@@ -675,26 +662,26 @@ fn set_watched(app: AppHandle, st: State<AppState>, req: Value) {
     st.push_state(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_languages(app: AppHandle, st: State<AppState>, id: String, languages: Option<Value>) {
     viewmodel::set_languages(&st.stores(), &id, languages.as_ref());
     st.push_state(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_pref(app: AppHandle, st: State<AppState>, id: String, key: String, value: bool) {
     viewmodel::set_pref(&st.stores(), &id, &key, value);
     st.push_state(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_stats(st: State<AppState>) -> Value {
     let lib = st.library.lock().unwrap().clone();
     let steam = st.steam_games.lock().unwrap();
     viewmodel::stats_data(&lib, &steam, &st.stores(), &file_url)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_ui_state(st: State<AppState>, s: Value) {
     *st.ui_state.lock().unwrap() = Some(s);
 }
@@ -702,7 +689,7 @@ fn save_ui_state(st: State<AppState>, s: Value) {
 // ---------------------------------------------------------------------------
 // Games
 
-#[tauri::command]
+#[tauri::command(async)]
 fn play_game(app: AppHandle, st: State<AppState>, id: String) -> Value {
     if st.game_session.lock().unwrap().is_some() {
         return json!({"ok": false, "errorKey": "err.alreadyPlaying"});
@@ -743,14 +730,14 @@ fn play_game(app: AppHandle, st: State<AppState>, id: String) -> Value {
     json!({"ok": true})
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn back_to_game(app: AppHandle, st: State<AppState>) {
     if st.game_session.lock().unwrap().is_some() {
         suspend_ui(&app);
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn end_game(app: AppHandle, st: State<AppState>) {
     let untracked = st.game.lock().unwrap().as_ref().and_then(|g| g.get("phase").and_then(Value::as_str)) == Some("untracked");
     if untracked {
@@ -811,7 +798,7 @@ fn icon_for(_artwork_dir: &Path, _exe: &str) -> Option<String> {
     None
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn add_game(app: AppHandle, st: State<AppState>) -> Value {
     use tauri_plugin_dialog::DialogExt;
     let picked = app.dialog().file().add_filter("Games", &["exe", "bat", "cmd", "lnk", "url"]).blocking_pick_file();
@@ -843,7 +830,7 @@ fn add_game(app: AppHandle, st: State<AppState>) -> Value {
     json!({"ok": true, "id": id})
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn edit_game(app: AppHandle, st: State<AppState>, id: String, patch: Value) {
     let mut o = st.games_store.get("overrides").and_then(|v| v.get(&id).cloned()).unwrap_or_else(|| json!({}));
     let manual_index = st.games_store.get("manual").and_then(|v| v.as_array().cloned()).unwrap_or_default().iter().position(|g| g.get("id").and_then(Value::as_str) == Some(id.as_str()));
@@ -932,7 +919,7 @@ fn edit_game(app: AppHandle, st: State<AppState>, id: String, patch: Value) {
     st.push_state(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_game(app: AppHandle, st: State<AppState>, id: String) {
     st.games_store.update("manual", json!([]), |m| {
         if let Value::Array(a) = m {
@@ -948,7 +935,7 @@ fn remove_game(app: AppHandle, st: State<AppState>, id: String) {
     st.push_state(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn search_steam(st: State<AppState>, term: String) -> Value {
     let mut game_info = st.make_game_info();
     match game_info.store_search(&term) {
@@ -957,7 +944,7 @@ fn search_steam(st: State<AppState>, term: String) -> Value {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn search_sgdb(st: State<AppState>, term: String) -> Value {
     let game_info = st.make_game_info();
     match game_info.sgdb_search(&term) {
@@ -966,7 +953,7 @@ fn search_sgdb(st: State<AppState>, term: String) -> Value {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sgdb_images(app: AppHandle, st: State<AppState>, kind: String, id: String) -> Value {
     let steam = st.steam_games.lock().unwrap();
     let raw = st.raw_games(&steam).into_iter().find(|g| g.get("id").and_then(Value::as_str) == Some(id.as_str()));
@@ -988,7 +975,7 @@ fn sgdb_images(app: AppHandle, st: State<AppState>, kind: String, id: String) ->
     json!(out)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_game_art(app: AppHandle, st: State<AppState>, id: String, kind: String, url: String) -> Value {
     let game_info = st.make_game_info();
     let Some(p) = game_info.download(&url) else { return json!({"ok": false}) };
@@ -998,7 +985,7 @@ fn set_game_art(app: AppHandle, st: State<AppState>, id: String, kind: String, u
     json!({"ok": true})
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn screenshot(st: State<AppState>, url: String) -> Value {
     // Only Steam's CDN domains, like the JS version's allowlist.
     let allowed = regex_lite_steam_cdn(&url);
@@ -1020,7 +1007,7 @@ fn regex_lite_steam_cdn(url: &str) -> bool {
     ok_tld && ["steamstatic", "steampowered", "akamaihd"].iter().any(|d| host.contains(d))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn show_game_folder(app: AppHandle, st: State<AppState>, id: String) {
     let steam = st.steam_games.lock().unwrap();
     let g = st.raw_games(&steam).into_iter().find(|g| g.get("id").and_then(Value::as_str) == Some(id.as_str()));
@@ -1039,7 +1026,7 @@ fn show_game_folder(app: AppHandle, st: State<AppState>, id: String) {
 // ---------------------------------------------------------------------------
 // Settings & dialogs
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_settings(app: AppHandle, st: State<AppState>, patch: Map<String, Value>) -> Value {
     let before: Map<String, Value> = default_settings().keys().map(|k| (k.clone(), st.settings.get(k).unwrap_or(Value::Null))).collect();
     let prev_lang = ui_lang(&st);
@@ -1095,25 +1082,25 @@ fn save_settings(app: AppHandle, st: State<AppState>, patch: Map<String, Value>)
     Value::Object(settings_map)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pick_folder(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
     app.dialog().file().blocking_pick_folder().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pick_vlc(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
     app.dialog().file().add_filter("VLC", &["exe"]).blocking_pick_file().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pick_key_file(app: AppHandle) -> Option<String> {
     use tauri_plugin_dialog::DialogExt;
     app.dialog().file().blocking_pick_file().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn detect_vlc(st: State<AppState>) -> Option<String> {
     vlc::find_vlc(
         st.settings.get("vlcPath").and_then(|v| v.as_str().map(str::to_string)).filter(|s| !s.is_empty()).map(PathBuf::from).as_deref(),
@@ -1121,7 +1108,7 @@ fn detect_vlc(st: State<AppState>) -> Option<String> {
     ).map(|p| p.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn clear_metadata(app: AppHandle, st: State<AppState>) {
     st.meta.set("entries", json!({}));
     st.game_info_store.set("games", json!({}));
@@ -1129,7 +1116,7 @@ fn clear_metadata(app: AppHandle, st: State<AppState>) {
     enrich_games(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn show_in_folder(app: AppHandle, st: State<AppState>, p: String) {
     let lib = st.library.lock().unwrap();
     let known = lib.movies.iter().any(|m| m.path.to_string_lossy() == p) || lib.shows.iter().any(|s| s.episodes.iter().any(|e| e.path.to_string_lossy() == p));
@@ -1143,7 +1130,7 @@ fn show_in_folder(app: AppHandle, st: State<AppState>, p: String) {
 // ---------------------------------------------------------------------------
 // System (quick menu & status bar)
 
-#[tauri::command]
+#[tauri::command(async)]
 fn system_get(st: State<AppState>) -> Value {
     if !st.helper.supported() {
         return json!({"supported": false});
@@ -1157,7 +1144,7 @@ fn system_get(st: State<AppState>) -> Value {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn system_set(st: State<AppState>, key: String, value: Value) -> Option<Value> {
     let cmd = match key.as_str() {
         "volume" => "setVolume",
@@ -1168,7 +1155,7 @@ fn system_set(st: State<AppState>, key: String, value: Value) -> Option<Value> {
     st.helper.call(cmd, value).ok()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn wifi(_st: State<AppState>) -> Value {
     match system::wifi() {
         Some(w) => json!({"connected": w.connected, "ssid": w.ssid, "signal": w.signal}),
@@ -1176,7 +1163,7 @@ fn wifi(_st: State<AppState>) -> Value {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn power(app: AppHandle, st: State<AppState>, action: String) -> Option<Value> {
     if action == "desktop" {
         if let Some(win) = app.get_webview_window("main") {
@@ -1197,7 +1184,7 @@ fn power(app: AppHandle, st: State<AppState>, action: String) -> Option<Value> {
     system::power(parsed, helper_call).ok().map(|_| Value::Null)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_external(app: AppHandle, url: String) {
     // Restricted to https:// and ms-settings:, like the original.
     if url.starts_with("https://") || url.starts_with("ms-settings:") {
@@ -1302,7 +1289,7 @@ fn connect_server(st: &AppState, app: &AppHandle, id: &str) -> Result<Arc<dyn Re
     remote::connect(&spec, &secret, Some(&on_host_key))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_server(app: AppHandle, st: State<AppState>, input: Value) {
     let mut server = input.as_object().cloned().unwrap_or_default();
     let secret = server.get("secret").and_then(Value::as_str).unwrap_or("");
@@ -1333,7 +1320,7 @@ fn save_server(app: AppHandle, st: State<AppState>, input: Value) {
     st.push_state(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_server(app: AppHandle, st: State<AppState>, id: String) {
     st.servers.update("servers", json!([]), |list| {
         if let Value::Array(a) = list {
@@ -1343,7 +1330,7 @@ fn remove_server(app: AppHandle, st: State<AppState>, id: String) {
     st.push_state(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn forget_host_key(app: AppHandle, st: State<AppState>, id: String) {
     st.servers.update("servers", json!([]), |list| {
         if let Value::Array(a) = list {
@@ -1367,17 +1354,17 @@ fn remote_list_blocking(st: &AppState, app: &AppHandle, server_id: &str, path: O
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn test_server(app: AppHandle, st: State<AppState>, id: String) -> Value {
     remote_list_blocking(&st, &app, &id, None)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remote_list(app: AppHandle, st: State<AppState>, server_id: String, path: Option<String>) -> Value {
     remote_list_blocking(&st, &app, &server_id, path.as_deref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remote_plan(app: AppHandle, st: State<AppState>, req: Value) -> Value {
     let outcome = plan_remote(&st, &app, &req);
     match outcome {
@@ -1487,7 +1474,7 @@ fn is_sub_name(name: &str) -> bool {
     SUBS.iter().any(|ext| lower.ends_with(ext))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remote_download(app: AppHandle, st: State<AppState>, req: Value) -> Value {
     let planned = match plan_remote(&st, &app, &req) {
         Ok(p) => p,
@@ -1506,17 +1493,17 @@ fn remote_download(app: AppHandle, st: State<AppState>, req: Value) -> Value {
     json!({"ok": true, "id": id})
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_transfer(st: State<AppState>, id: String) {
     st.transfers.cancel(&id);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn clear_transfers(st: State<AppState>, id: Option<String>) {
     st.transfers.clear(id.as_deref());
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn retry_transfer(app: AppHandle, st: State<AppState>, id: String) -> Option<String> {
     let new_id = st.transfers.retry(&id);
     st.push_state(&app);
@@ -1524,9 +1511,9 @@ fn retry_transfer(app: AppHandle, st: State<AppState>, id: String) -> Option<Str
 }
 
 // ---------------------------------------------------------------------------
-// Apps & Tailscale
+// Apps
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rescan_apps(app: AppHandle, st: State<AppState>) {
     if st.apps_scanning.swap(true, Ordering::SeqCst) {
         return;
@@ -1592,7 +1579,7 @@ fn app_icon(artwork_dir: &Path, a: &apps::AppEntry) -> Option<String> {
     Some(dest.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn launch_app(app: AppHandle, st: State<AppState>, id: String) -> Value {
     let a = st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default().into_iter().find(|a| a.get("id").and_then(Value::as_str) == Some(id.as_str()));
     let Some(a) = a else { return json!({"ok": false, "errorKey": "err.notFound"}) };
@@ -1617,7 +1604,7 @@ fn launch_app(app: AppHandle, st: State<AppState>, id: String) -> Value {
     json!({"ok": true})
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn hide_app(app: AppHandle, st: State<AppState>, id: String, hidden: bool) {
     st.apps_store.update("hidden", json!({}), |m| {
         if let Value::Object(m) = m {
@@ -1629,103 +1616,6 @@ fn hide_app(app: AppHandle, st: State<AppState>, id: String, hidden: bool) {
         }
     });
     st.push_state(&app);
-}
-
-fn locate_tailscale(st: &AppState, app: &AppHandle) {
-    let mut hints: Vec<String> = Vec::new();
-    for a in st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default() {
-        if is_tailscale_app(&a) {
-            if let Some(exe) = a.get("exe").and_then(Value::as_str) {
-                if let Some(dir) = Path::new(exe).parent() {
-                    hints.push(dir.to_string_lossy().into_owned());
-                }
-            }
-        }
-    }
-    st.tailscale.locate(&hints);
-    st.push_state(app);
-}
-
-#[tauri::command]
-fn tailscale_locate(app: AppHandle, st: State<AppState>) {
-    locate_tailscale(&st, &app);
-}
-
-#[tauri::command]
-fn tailscale_status(app: AppHandle, st: State<AppState>) -> Value {
-    let status = st.tailscale.status();
-    let _ = app.emit("tailscale", status.clone());
-    status
-}
-
-#[tauri::command]
-fn tailscale_action(app: AppHandle, st: State<AppState>, action: String, node: Option<String>) -> Value {
-    if !st.tailscale.installed() {
-        return json!({"ok": false, "errorKey": "err.tsMissing"});
-    }
-    let result = match action.as_str() {
-        "up" => st.tailscale.up().map(|_| ()),
-        "down" => st.tailscale.down().map(|_| ()),
-        "exitNode" => st.tailscale.set_exit_node(node.as_deref()).map(|_| ()),
-        _ => Err("unknown action".into()),
-    };
-    let status = st.tailscale.status();
-    let _ = app.emit("tailscale", status.clone());
-    match result {
-        Ok(()) => json!({"ok": true, "status": status}),
-        Err(e) => json!({"ok": false, "errorKey": "err.tailscale", "vars": {"message": e}, "status": status}),
-    }
-}
-
-#[tauri::command]
-fn tailscale_login(_app: AppHandle, st: State<AppState>) -> Value {
-    if !st.tailscale.installed() {
-        return json!({"ok": false, "errorKey": "err.tsMissing"});
-    }
-    let handle = st.tailscale.start_login();
-    // `tailscale up` prints the URL within moments; wait (bounded) so the page can show the QR.
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    let mut url = handle.url();
-    while url.is_none() && handle.outcome().is_none() && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(100));
-        url = handle.url();
-    }
-    match (url, handle.outcome()) {
-        (Some(u), _) => {
-            let qr = qr_data_url(&u);
-            json!({"ok": true, "url": u, "qr": qr})
-        }
-        (None, Some(Ok(None))) => json!({"ok": true, "url": Value::Null, "qr": Value::Null}),
-        (None, Some(Ok(Some(u)))) => json!({"ok": true, "url": u, "qr": qr_data_url(&u)}),
-        (None, Some(Err(e))) => json!({"ok": false, "errorKey": "err.tailscale", "vars": {"message": e}}),
-        (None, None) => json!({"ok": true, "url": Value::Null, "qr": Value::Null}),
-    }
-}
-
-/// The sign-in URL as a QR code data URL (SVG inside a data: URI — the page only ever puts it in an
-/// `<img src>`, like the PNG data URL the JS `qrcode` module produced).
-fn qr_data_url(url: &str) -> Value {
-    use base64::Engine as _;
-    let code = match qrcode::QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::M) {
-        Ok(c) => c,
-        Err(_) => return Value::Null,
-    };
-    let svg = code.render::<qrcode::render::svg::Color>().quiet_zone(true).build();
-    json!(format!("data:image/svg+xml;base64,{}", base64::engine::general_purpose::STANDARD.encode(svg)))
-}
-
-#[tauri::command]
-fn tailscale_cancel_login(st: State<AppState>) {
-    st.tailscale.cancel_login();
-}
-
-#[tauri::command]
-fn tailscale_open_app(app: AppHandle, st: State<AppState>) -> Value {
-    let a = st.apps_store.get("apps").and_then(|v| v.as_array().cloned()).unwrap_or_default().into_iter().find(is_tailscale_app);
-    match a {
-        Some(a) => launch_app(app, st, a.get("id").and_then(Value::as_str).unwrap_or("").to_string()),
-        None => json!({"ok": false, "errorKey": "err.tsMissing"}),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1782,7 +1672,7 @@ fn setup_updater(st: &AppState, app: &AppHandle) {
     });
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn check_update(_app: AppHandle, st: State<AppState>) -> Value {
     let updater = st.updater.lock().unwrap().clone();
     let Some(u) = updater else { return Value::Null };
@@ -1794,13 +1684,13 @@ fn check_update(_app: AppHandle, st: State<AppState>) -> Value {
     state
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn skip_update(app: AppHandle, st: State<AppState>, version: String) {
     st.settings.set("skippedVersion", json!(version));
     st.push_state(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn install_update(app: AppHandle, st: State<AppState>) -> Value {
     let Some(u) = st.updater.lock().unwrap().clone() else { return json!({"ok": false}) };
     if st.game_session.lock().unwrap().is_some() {
@@ -2151,19 +2041,6 @@ fn poll_events(app: &AppHandle) {
         }
     }
 
-    // The tailscale login watcher: when the attempt ends, refresh the status (and celebrate).
-    if let Some(handle) = st.tailscale.pending_login() {
-        if let Some(outcome) = handle.outcome() {
-            st.tailscale.clear_login_handle(&handle);
-            let status = st.tailscale.status();
-            let _ = app.emit("tailscale", status.clone());
-            if matches!(outcome, Ok(Some(_))) {
-                let host = status.get("hostName").cloned().unwrap_or(json!(""));
-                let suffix = if host.as_str().map(|h| !h.is_empty()).unwrap_or(false) { format!(" · {}", host.as_str().unwrap_or("")) } else { String::new() };
-                toast(&st, app, "ts.signedIn", json!({"name": suffix}), "info");
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2203,7 +2080,6 @@ pub fn run() {
             save_server, remove_server, forget_host_key, test_server, remote_list, remote_plan, remote_download,
             cancel_transfer, clear_transfers, retry_transfer,
             rescan_apps, launch_app, hide_app,
-            tailscale_locate, tailscale_status, tailscale_action, tailscale_login, tailscale_cancel_login, tailscale_open_app,
             check_update, install_update, skip_update,
             quit, minimize, toggle_fullscreen,
         ])
@@ -2274,7 +2150,6 @@ pub fn run() {
                 meta_status: Mutex::new((false, None)),
                 game_info_status: Mutex::new((false, None)),
                 updater: Mutex::new(None),
-                tailscale: tailscale::Tailscale::new(),
                 helper: system::SystemHelper::new(),
                 transfers,
                 battery: Mutex::new(None),
@@ -2390,12 +2265,6 @@ const INIT_SCRIPT: &str = r#"
     rescanApps: () => invoke('rescan_apps'),
     launchApp: (id) => invoke('launch_app', { id }),
     hideApp: (a) => invoke('hide_app', { id: a.id, hidden: a.hidden }),
-    tailscaleStatus: () => invoke('tailscale_status'),
-    tailscaleLocate: () => invoke('tailscale_locate'),
-    tailscaleAction: (req) => invoke('tailscale_action', { action: req.action, node: req.node }),
-    tailscaleLogin: () => invoke('tailscale_login'),
-    tailscaleCancelLogin: () => invoke('tailscale_cancel_login'),
-    tailscaleOpenApp: () => invoke('tailscale_open_app'),
     systemGet: () => invoke('system_get'),
     systemSet: (a) => invoke('system_set', { key: a.key, value: a.value }),
     wifi: () => invoke('wifi'),
@@ -2408,7 +2277,7 @@ const INIT_SCRIPT: &str = r#"
     minimize: () => invoke('minimize'),
     quit: () => invoke('quit'),
     onState: on('state'), onNowPlaying: on('now-playing'), onGame: on('game'), onToast: on('toast'),
-    onUpdate: on('update'), onTransfers: on('transfers'), onTailscale: on('tailscale'),
+    onUpdate: on('update'), onTransfers: on('transfers'),
     onLegionReport: on('legion-report'), onLegionState: on('legion-state'),
   };
   function on(event) {
@@ -2421,26 +2290,25 @@ const INIT_SCRIPT: &str = r#"
 })();
 "#;
 
-#[tauri::command]
+#[tauri::command(async)]
 fn quit(app: AppHandle, st: State<AppState>) {
-    // before-quit: kill playback, cancel any login, flush everything.
+    // before-quit: kill playback, flush everything.
     if let Some(p) = st.play.lock().unwrap().as_ref() {
         p.session.kill();
     }
-    st.tailscale.cancel_login();
     st.helper.stop();
     st.flush_all();
     app.exit(0);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn minimize(app: AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.minimize();
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn toggle_fullscreen(app: AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         if let Ok(is_fs) = w.is_fullscreen() {
@@ -2449,13 +2317,13 @@ fn toggle_fullscreen(app: AppHandle) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rescan(app: AppHandle, st: State<AppState>) -> Value {
     do_rescan(&st, &app);
     build_state(&st)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_state(st: State<AppState>) -> Value {
     build_state(&st)
 }

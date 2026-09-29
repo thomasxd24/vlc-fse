@@ -155,7 +155,6 @@ function state({ lang = 'en', resume = 'game' } = {}) {
     servers: [],
     apps: [],
     transfers: [],
-    tailscaleTried: [],
     version: '3.0.0',
     hasBattery: true,
     library: {

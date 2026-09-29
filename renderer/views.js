@@ -1,6 +1,6 @@
 'use strict';
 
-/* global S, idx, prefs, api, Stats, Pads, LegionHid, QuickMenu, go, back, modals, fmtSize, renderStatus, tsStateLabel, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
+/* global S, idx, prefs, api, Stats, Pads, LegionHid, QuickMenu, go, back, modals, fmtSize, renderStatus, t, h, img, placeholder, fmtRuntime, fmtPlaytime, fmtAgo, remaining, epCode, seasonName, pct, norm,
    ICON, Backdrop, VIEWS, page, route, render, Nav, $, keyboardHtml */
 
 // ============================================================================ Cards
@@ -638,7 +638,6 @@ VIEWS.settings = {
           ${updateRows(st)}
 
           <div class="section-title">${h(t('set.system'))}</div>
-          ${valueRow(t('ts.title'), S.tailscaleCli ? t('ts.foundAt', { path: S.tailscaleCli }) : t('ts.notFoundDesc'), S.tailscaleCli ? t('ts.found') : t('ts.notFound'), 'tailscale-find', 'ts-find')}
           <div class="settings-actions" data-nav-group>
             <button class="btn small focusable" data-act="minimize" data-key="min">${ICON.desktop}${h(t('qm.desktop'))}</button>
             <button class="btn small focusable" data-act="fullscreen" data-key="fs">${h(t('set.toggleFullscreen'))}</button>
@@ -1017,36 +1016,6 @@ function appTile(a, keyPrefix, autofocus = false) {
     </button>`;
 }
 
-/** Tailscale at the top of Apps: its state and the main actions, without the tray icon FSE doesn't have. */
-function tailscaleCard() {
-  const st = S.tailscale;
-  if (!S.tailscaleInstalled) return '';
-  const state = st ? st.state : null;
-  let detail = '';
-  if (st && st.error && state === 'unknown') detail = t('ts.serviceDown');
-  else if (state === 'connected') {
-    detail = [st.hostName && st.ip ? t('ts.details', { host: st.hostName, ip: st.ip }) : '', t('ts.devices', { n: st.peersOnline || 0 }), st.exitNode ? t('ts.viaExit', { name: st.exitNode.name }) : ''].filter(Boolean).join(' · ');
-  }
-  const btn = (act, label, icon, extra = '') => `<button class="btn small focusable ${extra}" data-act="${act}" data-key="ts-${act}">${icon}${h(label)}</button>`;
-  const actions =
-    state === 'connected'
-      ? btn('ts-down', t('ts.disconnect'), ICON.power) + btn('ts-exit', t('ts.exitNode', { name: st.exitNode ? st.exitNode.name : t('ts.exitNone') }), ICON.link)
-      : state === 'needsLogin'
-        ? btn('ts-login', t('ts.signIn'), ICON.vpn, 'primary')
-        : state === 'stopped'
-          ? btn('ts-up', t('ts.connect'), ICON.vpn, 'primary')
-          : '';
-  return `
-    <section class="ts-card ${state || 'loading'}" data-nav-group>
-      <span class="ts-ico">${ICON.vpn}</span>
-      <div class="ts-text">
-        <div class="ts-name">${h(t('ts.title'))} <span class="ts-state"><i></i>${h(st ? tsStateLabel(st) : t('ts.working'))}</span></div>
-        ${detail ? `<div class="ts-detail">${h(detail)}</div>` : ''}
-      </div>
-      <div class="ts-actions">${actions}<button class="btn small icon-only focusable" data-act="ts-panel" data-key="ts-ts-panel" aria-label="${h(t('ts.title'))}">${ICON.more}</button></div>
-    </section>`;
-}
-
 VIEWS.apps = {
   render() {
     const all = S.apps || [];
@@ -1065,22 +1034,12 @@ VIEWS.apps = {
     return `
       <div class="page" data-scroll="apps">
         <div class="page-head"><h1 class="page-title">${h(t('tab.apps'))}</h1><div class="page-count">${h(t('apps.count', { n: items.length }))}</div></div>
-        ${tailscaleCard()}
         <div class="toolbar" data-nav-group>${toolbar}</div>
         <div class="grid app-grid" data-nav-group>${items.map((a, i) => appTile(a, 'ap', i === 0)).join('') || `<div class="empty-hint">${h(empty)}</div>`}</div>
       </div>`;
   },
-  mount(r) {
+  mount() {
     Backdrop.set(null);
-    if (S.tailscaleInstalled && !r.tsLoading) {
-      r.tsLoading = true;
-      api.tailscaleStatus().then((st) => {
-        r.tsLoading = false;
-        const changed = JSON.stringify(st) !== JSON.stringify(S.tailscale);
-        S.tailscale = st;
-        if (changed && route() === r && !modals.length) render({ keepFocus: true });
-      });
-    }
   }
 };
 

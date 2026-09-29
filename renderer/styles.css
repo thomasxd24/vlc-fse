@@ -1998,7 +1998,6 @@ body[data-nav='left'] #page[data-enter='yes'] > .page {
 }
 #backdrop .layer.on {
   transform: translateX(calc(var(--px) * -2%)) scale(1);
-  animation: drift 38s ease-in-out infinite alternate;
 }
 @keyframes drift {
   to {
@@ -2802,7 +2801,7 @@ body.reduce-motion *:not(#splash *)::after {
   max-width: 50rem;
 }
 
-/* ------------------------------------------------------------------ Apps & Tailscale */
+/* ------------------------------------------------------------------ Apps */
 
 .app-grid {
   grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
@@ -2829,99 +2828,6 @@ body.reduce-motion *:not(#splash *)::after {
 }
 .app-tile.is-hidden .art {
   opacity: 0.45;
-}
-
-.ts-card {
-  display: flex;
-  align-items: center;
-  gap: 1.2rem;
-  margin: 0 var(--gutter) 1.2rem;
-  padding: 1rem 1.3rem;
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-.ts-ico .ico {
-  width: 2rem;
-  height: 2rem;
-  color: var(--muted);
-}
-.ts-card.connected .ts-ico .ico {
-  color: var(--good);
-}
-.ts-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.ts-name {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  font-size: 1.3rem;
-  font-weight: 700;
-}
-.ts-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-.ts-state i {
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 50%;
-  background: var(--faint);
-}
-.ts-card.connected .ts-state i {
-  background: var(--good);
-}
-.ts-card.needsLogin .ts-state i,
-.ts-card.unknown .ts-state i {
-  background: #f5a524;
-}
-.ts-detail {
-  margin-top: 0.25rem;
-  color: var(--muted);
-  font-size: 1rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ts-actions {
-  display: flex;
-  gap: 0.6rem;
-  flex: 0 0 auto;
-}
-.qm-ts span {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.qm-ts small {
-  font-size: 0.85rem;
-  font-weight: 600;
-  opacity: 0.7;
-}
-.ts-login {
-  display: flex;
-  align-items: center;
-  gap: 1.4rem;
-  margin: 0.4rem 0 1.2rem;
-}
-.ts-qr {
-  width: 11rem;
-  height: 11rem;
-  border-radius: 0.6rem;
-  background: #fff;
-  image-rendering: pixelated;
-  flex: 0 0 auto;
-}
-.ts-url {
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  font-size: 1rem;
-  color: var(--muted);
-  word-break: break-all;
 }
 
 /* Eight tabs: on a handheld-sized window, the brand shrinks to its mark and the tabs tighten further. */
@@ -3588,8 +3494,7 @@ body.detail #tools {
   padding: 1.6rem 5.5rem 1.6rem 1.8rem;
   border-radius: 1.2rem;
   border: 1px solid var(--line);
-  background: rgba(10, 11, 16, 0.55);
-  backdrop-filter: blur(18px);
+  background: rgba(10, 11, 16, 0.78);
   color: var(--text);
   transition: transform 0.25s var(--out), background 0.25s, border-color 0.25s;
 }
@@ -3716,4 +3621,10 @@ body:has(.page.home.mini) #backdrop .shade {
 /* Home has its own big clock. */
 body:has(.page.home.mini) #topbar #clock {
   display: none;
+}
+
+/* Taps fire at once (no double-tap-zoom wait); scrolling regions set their own touch-action. */
+html,
+body {
+  touch-action: manipulation;
 }

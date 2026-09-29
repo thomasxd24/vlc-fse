@@ -26,7 +26,6 @@ function state() {
     servers: [],
     apps: [],
     transfers: [],
-    tailscaleTried: [],
     version: '0.0.0'
   };
 }
