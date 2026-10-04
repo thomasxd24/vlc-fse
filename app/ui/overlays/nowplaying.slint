@@ -1,10 +1,230 @@
-// STUB — to be replaced by the real overlay. Keep the exported names (NowPlaying, NowPlayingView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
+// "Playing in VLC": shown over everything while VLC plays (the renderer's renderNowPlaying and the
+// `now-playing` event). Title, file, progress, transport controls and audio / subtitles / stop.
+// Rust: app/src/ui/overlays/nowplaying.rs.
+//
+// Focus: row 0 = the round transport buttons (back, play/pause, forward, [next]), row 1 = the actions.
+// Back does nothing here (the overlay goes away when playback ends).
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav } from "../globals.slint";
+import { Icon, Btn, Pointer } from "../widgets.slint";
+import { HintBar } from "../shell.slint";
 
 export global NowPlaying {
     in-out property <bool> open;
+    in property <string> title;
+    in property <string> file;         // "Harbor.Lights.S01E04.mkv · Episode 4 of 21 in the queue"
+    in property <float> progress;      // 0..1
+    in property <string> time;         // "18:20 / 48:20 · Paused", or "Starting…"
+    in property <bool> paused;
+    in property <bool> has-next;       // something after this one in the queue
+    in-out property <int> row;         // 0 = transport, 1 = actions
+    in-out property <int> index: 1;    // starts on play / pause
+    in-out property <int> focus-rev;
+    // "back" | "pause" | "forward" | "next" | "audio" | "subs" | "stop"
+    callback command(string);
+}
+
+// `.np-controls .btn`: round icon-only buttons; the play button is larger and accent-filled.
+component RoundBtn inherits Rectangle {
+    in property <string> icon;
+    in property <bool> primary;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    private property <length> icon-size: (primary ? 1.8 : 1.2) * Theme.rem;
+    width: icon-size + (primary ? 2.9 : 2.2) * Theme.rem;
+    height: icon-size + (primary ? 2.6 : 1.9) * Theme.rem;
+    border-radius: self.height / 2;
+    background: focused ? Theme.focus : primary ? Theme.accent : Theme.surface-2;
+    drop-shadow-blur: focused ? 2 * Theme.rem : 0;
+    drop-shadow-offset-y: focused ? 0.8 * Theme.rem : 0;
+    drop-shadow-color: #00000080;
+    transform-scale: focused ? Motion.btn-zoom : 1.0;
+    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    Icon {
+        name: root.icon;
+        size: icon-size;
+        tint: focused || primary ? Theme.accent-ink : Theme.text;
+    }
+    Pointer {
+        hovered => { root.hovered(); }
+        clicked => { root.clicked(); }
+    }
+}
+
+component NowPlayingLayer inherits Rectangle {
+    private property <[string]> controls: NowPlaying.has-next ? ["back", "pause", "forward", "next"] : ["back", "pause", "forward"];
+    private property <[string]> actions: ["audio", "subs", "stop"];
+    private property <int> page-rev: Nav.page-focus-rev;
+    private property <int> top-rev: Nav.top-focus-rev;
+    private property <int> my-rev: NowPlaying.focus-rev;
+    private property <float> shown: 0;
+    init => {
+        shown = 1;
+        refocus.running = true;
+    }
+    changed page-rev => { refocus.running = true; }
+    changed top-rev => { refocus.running = true; }
+    changed my-rev => { fs.focus(); }
+    // "Next episode" can disappear under the focus.
+    changed controls => {
+        if (NowPlaying.row == 0 && NowPlaying.index >= controls.length) { NowPlaying.index = controls.length - 1; }
+    }
+    refocus := Timer {
+        interval: 1ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            fs.focus();
+        }
+    }
+
+    function go(row: int, index: int) {
+        NowPlaying.row = row;
+        NowPlaying.index = index;
+        Input.feedback("move");
+    }
+    function activate(name: string) {
+        Input.feedback("select");
+        NowPlaying.command(name);
+    }
+
+    fs := FocusScope {
+        key-pressed(e) => {
+            let i = NowPlaying.index;
+            let n = NowPlaying.row == 0 ? controls.length : actions.length;
+            if (e.text == Key.LeftArrow) { if (i > 0) { go(NowPlaying.row, i - 1); } return accept; }
+            if (e.text == Key.RightArrow) { if (i < n - 1) { go(NowPlaying.row, i + 1); } return accept; }
+            // Between the rows, land on the nearest button (the transport row is narrower).
+            if (e.text == Key.DownArrow) { if (NowPlaying.row == 0) { go(1, 1); } return accept; }
+            if (e.text == Key.UpArrow) {
+                if (NowPlaying.row == 1) { go(0, i == 0 ? 0 : i == 1 ? 1 : controls.length - 1); }
+                return accept;
+            }
+            if (e.text == Key.Return || e.text == " ") {
+                activate(NowPlaying.row == 0 ? controls[min(i, controls.length - 1)] : actions[i]);
+                return accept;
+            }
+            // Everything else (Back, tabs, ☰…) is swallowed while VLC plays.
+            accept
+        }
+    }
+
+    // radial-gradient(80% 80% at 50% 40%, rgba(20,22,30,.9), rgba(3,4,6,.97))
+    opacity: shown;
+    animate opacity { duration: Motion.normal; easing: Motion.ease; }
+    Rectangle {
+        width: parent.width * 1.6;
+        height: parent.height * 1.6;
+        x: (parent.width - self.width) / 2;
+        y: parent.height * 0.4 - self.height / 2;
+        background: @radial-gradient(circle, #14161ee6 0%, #030406f7 50%);
+    }
+    TouchArea { }   // the page underneath doesn't get clicks
+
+    VerticalLayout {
+        alignment: center;
+        padding-left: 3 * Theme.rem;
+        padding-right: 3 * Theme.rem;
+        spacing: 0;
+        HorizontalLayout {
+            alignment: center;
+            VerticalLayout {
+                spacing: 0;
+                max-width: 70 * Theme.rem;
+                Text {
+                    text: T.tr("np.playingInVlc").to-uppercase();
+                    color: Theme.accent;
+                    font-size: 1 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: 0.16 * Theme.rem;
+                    horizontal-alignment: center;
+                }
+                Rectangle { height: 1 * Theme.rem; }
+                Text {
+                    text: NowPlaying.title;
+                    color: Theme.text;
+                    font-size: 3.6 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: -0.03 * 3.6 * Theme.rem;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: 1.4 * Theme.rem; }
+                Text {
+                    text: NowPlaying.file;
+                    color: Theme.muted;
+                    font-size: 1.1 * Theme.rem;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: 2 * Theme.rem; }
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: min(36 * Theme.rem, Theme.vw * 0.8);
+                        height: 0.35 * Theme.rem;
+                        border-radius: self.height / 2;
+                        background: #ffffff2e;
+                        clip: true;
+                        Rectangle {
+                            x: 0;
+                            width: parent.width * max(0, min(1, NowPlaying.progress));
+                            background: Theme.accent;
+                            animate width { duration: Motion.reduced ? 0ms : 1400ms; easing: linear; }
+                        }
+                    }
+                }
+                Rectangle { height: 0.8 * Theme.rem; }
+                Text {
+                    text: NowPlaying.time;
+                    color: Theme.muted;
+                    font-size: 1.1 * Theme.rem;
+                    horizontal-alignment: center;
+                }
+                Rectangle { height: 2.4 * Theme.rem; }
+                // .np-controls
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 1 * Theme.rem;
+                    for c[i] in controls: RoundBtn {
+                        y: (parent.height - self.height) / 2;
+                        icon: c == "pause" ? (NowPlaying.paused ? "play" : "pause") : c == "back" ? "rewind" : c;
+                        primary: c == "pause";
+                        focused: fs.has-focus && NowPlaying.row == 0 && NowPlaying.index == i;
+                        hovered => { if (Input.mode == "mouse") { NowPlaying.row = 0; NowPlaying.index = i; } }
+                        clicked => { NowPlaying.row = 0; NowPlaying.index = i; activate(c); }
+                    }
+                }
+                Rectangle { height: 2 * Theme.rem; }
+                // .actions
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 0.9 * Theme.rem;
+                    for a[i] in actions: Btn {
+                        text: a == "audio" ? T.tr("np.audio") : a == "subs" ? T.tr("np.subs") : T.tr("np.stop");
+                        icon: a == "audio" ? "volume" : a;
+                        danger: a == "stop";
+                        focused: fs.has-focus && NowPlaying.row == 1 && NowPlaying.index == i;
+                        hovered => { if (Input.mode == "mouse") { NowPlaying.row = 1; NowPlaying.index = i; } }
+                        clicked => { NowPlaying.row = 1; NowPlaying.index = i; activate(a); }
+                    }
+                }
+            }
+        }
+    }
+
+    // The hint bar sits above this layer in the renderer (z-index 45 vs 40).
+    HintBar {
+        x: parent.width - self.width - Theme.gutter;
+        y: parent.height - self.height - 1.4 * Theme.rem;
+    }
 }
 
 export component NowPlayingView inherits Rectangle {
-    visible: NowPlaying.open;
+    if NowPlaying.open: NowPlayingLayer {
+        width: root.width;
+        height: root.height;
+    }
 }
