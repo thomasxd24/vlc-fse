@@ -1,18 +1,295 @@
-// STUB — to be replaced by the real screen. Keep the exported names (TransfersPage, TransfersView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
-import { PageScope } from "../widgets.slint";
+// Transfers: the download queue and the saved SFTP/FTP servers — the renderer's VIEWS.transfers and
+// jobRow, drawn as settings rows. Rust (app/src/ui/pages/transfers.rs) fills the rows from the state's
+// `transfers` / `servers` and updates them in place on `transfers` progress ticks.
+//
+// Focus is one index down the page: the jobs, "Clear finished" (when something has finished), the
+// servers, then "Add a server".
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav, Hints } from "../globals.slint";
+import { PageScope, Icon, Btn, Pointer } from "../widgets.slint";
+
+export struct XferRow {
+    id: string,
+    badge: string,     // "Movies" / "TV" / "SFTP"
+    name: string,
+    desc: string,
+    error: bool,       // the description reads as an error
+    bar: float,        // progress 0..1; < 0 hides the bar
+    done: bool,        // green bar + check mark
+    value: string,     // "42%"
+    icon: string,      // shown in the value column ("check", "server"), or ""
+}
 
 export global TransfersPage {
+    in property <[XferRow]> jobs;
+    in property <[XferRow]> servers;
+    in property <bool> finished;       // something can be cleared
     in-out property <int> focus;
+    callback activate(string, int);    // "job" | "clear" | "server" | "add", index within its group
+    callback options(string, int);     // "job" | "server"
+}
+
+// `.section-title`
+component SectionTitle inherits Text {
+    color: Theme.accent;
+    font-size: 1 * Theme.rem;
+    font-weight: 700;
+    letter-spacing: 0.14 * Theme.rem;
+}
+
+// `.setting` (+ `.job`): a badge, a name over a description (and a progress bar), and a value.
+component XferRowView inherits Rectangle {
+    in property <XferRow> row-data;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    callback options();
+    private property <color> ink: focused ? Theme.accent-ink : Theme.text;
+    private property <color> dim: focused ? #3a3f4a : Theme.muted;
+    border-radius: 0.6 * Theme.rem;
+    background: focused ? Theme.focus : Theme.surface;
+    transform-scale: focused ? 1.015 : 1.0;
+    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    min-height: lay.preferred-height;
+    lay := HorizontalLayout {
+        padding-left: 1.4 * Theme.rem;
+        padding-right: 1.4 * Theme.rem;
+        padding-top: 1.1 * Theme.rem;
+        padding-bottom: 1.1 * Theme.rem;
+        spacing: 1.5 * Theme.rem;
+        // `.lib-type`
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: badge.preferred-width + 1.4 * Theme.rem;
+                height: badge.preferred-height + 0.5 * Theme.rem;
+                border-radius: 0.35 * Theme.rem;
+                background: focused ? #0000001f : Theme.surface-2;
+                badge := Text {
+                    text: row-data.badge;
+                    color: ink;
+                    font-size: 0.9 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: 0.06 * 0.9 * Theme.rem;
+                }
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            Text {
+                text: row-data.name;
+                color: ink;
+                font-size: 1.25 * Theme.rem;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: row-data.desc;
+                color: row-data.error ? (focused ? #b3261e : #ff8a80) : dim;
+                font-size: 1 * Theme.rem;
+                overflow: elide;
+            }
+            if row-data.bar >= 0: VerticalLayout {
+                padding-top: 0.55 * Theme.rem;
+                Rectangle {
+                    height: 0.3 * Theme.rem;
+                    border-radius: self.height / 2;
+                    background: focused ? #0000001f : #ffffff1f;
+                    clip: true;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * max(0, min(1, row-data.bar));
+                        border-radius: parent.height / 2;
+                        background: row-data.done ? Theme.good : Theme.accent;
+                        animate width { duration: Motion.reduced ? 0ms : 500ms; easing: linear; }
+                    }
+                }
+            }
+        }
+        if row-data.value != "": Text {
+            text: row-data.value;
+            color: dim;
+            font-size: 1.1 * Theme.rem;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        if row-data.icon != "": VerticalLayout {
+            alignment: center;
+            Icon {
+                name: row-data.icon;
+                size: (row-data.icon == "check" ? 1.4 : 1.3) * Theme.rem;
+                tint: row-data.icon == "check" ? Theme.good : dim;
+            }
+        }
+    }
+    Pointer {
+        hovered => { root.hovered(); }
+        options => { root.options(); }
+        clicked => {
+            if (!self.consume-long-press()) {
+                root.clicked();
+            }
+        }
+    }
 }
 
 export component TransfersView inherits Rectangle {
-    PageScope {
+    private property <int> nj: TransfersPage.jobs.length;
+    private property <int> ns: TransfersPage.servers.length;
+    private property <int> clear-at: TransfersPage.finished && nj > 0 ? nj : -1;
+    private property <int> srv-at: nj + (clear-at >= 0 ? 1 : 0);
+    private property <int> add-at: srv-at + ns;
+    private property <int> cur: max(0, min(TransfersPage.focus, add-at));
+    private property <bool> on-page: scope.has-focus;
+
+    function has-options(i: int) -> bool {
+        (i < nj) || (i >= srv-at && i < add-at)
+    }
+    function hints() {
+        if (has-options(cur)) {
+            Hints.items = [{ button: "a", label: T.tr("hint.select") }, { button: "x", label: T.tr("hint.options") }, { button: "b", label: T.tr("hint.back") }, { button: "menu", label: T.tr("hint.menu") }];
+        } else {
+            Hints.items = [{ button: "a", label: T.tr("hint.select") }, { button: "b", label: T.tr("hint.back") }, { button: "menu", label: T.tr("hint.menu") }];
+        }
+    }
+    function set-focus(i: int) {
+        TransfersPage.focus = i;
+        hints();
+    }
+    function activate(i: int) {
+        if (i < nj) { TransfersPage.activate("job", i); }
+        else if (i == clear-at) { TransfersPage.activate("clear", 0); }
+        else if (i < add-at) { TransfersPage.activate("server", i - srv-at); }
+        else { TransfersPage.activate("add", 0); }
+    }
+    function options(i: int) {
+        if (i < nj) { TransfersPage.options("job", i); }
+        else if (i >= srv-at && i < add-at) { TransfersPage.options("server", i - srv-at); }
+    }
+    // Scroll so a band of the content (y, h) is visible below the top bar.
+    function reveal(y: length, h: length) {
+        if (y + flick.content-y < 8 * Theme.rem) {
+            flick.content-y = min(0, -(y - 8 * Theme.rem));
+        }
+        if (y + h + flick.content-y > flick.height - 3 * Theme.rem) {
+            flick.content-y = -(y + h - flick.height + 3 * Theme.rem);
+        }
+    }
+    changed add-at => { hints(); }
+    init => { hints(); }
+
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (e.text == Key.UpArrow) {
+                if (cur > 0) { set-focus(cur - 1); } else { Nav.focus-top(); }
+                Input.feedback("move");
+                return accept;
+            }
+            if (e.text == Key.DownArrow) { if (cur < add-at) { set-focus(cur + 1); Input.feedback("move"); } return accept; }
+            if (e.text == Key.LeftArrow || e.text == Key.RightArrow) { return accept; }
+            if (e.text == Key.PageUp) { set-focus(0); Input.feedback("move"); return accept; }
+            if (e.text == Key.PageDown) { set-focus(add-at); Input.feedback("move"); return accept; }
+            if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); activate(cur); return accept; }
+            if (e.text == Key.Menu) { options(cur); return accept; }
             reject
         }
     }
-    Text { text: "TransfersView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    flick := Flickable {
+        content-width: self.width;
+        content-height: body.preferred-height;
+        animate content-y { duration: Motion.normal; easing: Motion.ease; }
+        body := VerticalLayout {
+            x: Theme.gutter;
+            width: min(70 * Theme.rem, root.width - 2 * Theme.gutter);
+            padding-top: Theme.page-top;
+            padding-bottom: 6 * Theme.rem;
+            alignment: start;
+            // .page-head (no left padding: the page itself is inset)
+            VerticalLayout {
+                padding-top: 1 * Theme.rem;
+                padding-bottom: 1.2 * Theme.rem;
+                Text {
+                    text: T.tr("tab.transfers");
+                    color: Theme.text;
+                    font-size: 3 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: -0.02 * 3 * Theme.rem;
+                }
+            }
+            if nj > 0: VerticalLayout {
+                padding-top: 2.4 * Theme.rem;
+                padding-bottom: 0.8 * Theme.rem;
+                SectionTitle { text: T.tr("xfer.queue").to-uppercase(); }
+            }
+            for j[i] in TransfersPage.jobs: VerticalLayout {
+                padding-bottom: 0.45 * Theme.rem;
+                XferRowView {
+                    row-data: j;
+                    focused: on-page && cur == i;
+                    hovered => { if (Input.mode == "mouse") { set-focus(i); } }
+                    clicked => { set-focus(i); activate(i); }
+                    options => { set-focus(i); options(i); }
+                    changed focused => { if (self.focused) { root.reveal(parent.y, self.height); } }
+                }
+            }
+            if clear-at >= 0: HorizontalLayout {
+                padding-top: 0.8 * Theme.rem;
+                padding-bottom: 0.4 * Theme.rem;
+                alignment: start;
+                Btn {
+                    small: true;
+                    icon: "trash";
+                    text: T.tr("xfer.clear");
+                    focused: on-page && cur == clear-at;
+                    hovered => { if (Input.mode == "mouse") { set-focus(clear-at); } }
+                    clicked => { set-focus(clear-at); activate(clear-at); }
+                    changed focused => { if (self.focused) { root.reveal(parent.y, parent.height); } }
+                }
+            }
+            VerticalLayout {
+                padding-top: 2.4 * Theme.rem;
+                padding-bottom: 0.8 * Theme.rem;
+                SectionTitle { text: T.tr("xfer.servers").to-uppercase(); }
+            }
+            for x[i] in TransfersPage.servers: VerticalLayout {
+                padding-bottom: 0.45 * Theme.rem;
+                XferRowView {
+                    row-data: x;
+                    focused: on-page && cur == srv-at + i;
+                    hovered => { if (Input.mode == "mouse") { set-focus(srv-at + i); } }
+                    clicked => { set-focus(srv-at + i); activate(srv-at + i); }
+                    options => { set-focus(srv-at + i); options(srv-at + i); }
+                    changed focused => { if (self.focused) { root.reveal(parent.y, self.height); } }
+                }
+            }
+            if ns == 0: VerticalLayout {
+                padding-bottom: 0.6 * Theme.rem;
+                Text {
+                    width: min(56 * Theme.rem, root.width - 2 * Theme.gutter);
+                    text: T.tr("xfer.noServers");
+                    color: Theme.muted;
+                    font-size: 1.15 * Theme.rem;
+                    wrap: word-wrap;
+                }
+            }
+            HorizontalLayout {
+                padding-top: 0.8 * Theme.rem;
+                padding-bottom: 0.4 * Theme.rem;
+                alignment: start;
+                Btn {
+                    small: true;
+                    primary: ns == 0;
+                    icon: "plus";
+                    text: T.tr("xfer.addServer");
+                    focused: on-page && cur == add-at;
+                    hovered => { if (Input.mode == "mouse") { set-focus(add-at); } }
+                    clicked => { set-focus(add-at); activate(add-at); }
+                    changed focused => { if (self.focused) { root.reveal(parent.y, parent.height); } }
+                }
+            }
+        }
+    }
 }
