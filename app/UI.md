@@ -88,7 +88,7 @@ event loop (`ui::art`).
 ## Dialogs and toasts
 
 `dialogs::choose(title, text, vec![choice(label, value), …], |answer: Option<String>| …)` for menus
-and confirmations (`dialogs::open(ChooseSpec{…})` for wide/art/initial focus), `dialogs::prompt(Prompt{…},
+and confirmations (an answer may open the next dialog directly — focus stays with it) (`dialogs::open(ChooseSpec{…})` for wide/art/initial focus), `dialogs::prompt(Prompt{…},
 |text| …)` for text entry with the on-screen keyboard, `toasts::toast(text, "info"|"error"|"success")`.
 Screens with a custom modal (edit a game, pick artwork…) draw it inside `DialogFrame` (shell.slint)
 with their own FocusScope, and register `ui::on_close_overlay(|| …)` so Back closes it.
@@ -106,7 +106,13 @@ cargo build -p lounge                     # full build
 cargo run -p lounge -- --demo             # the demo library in a window
 scripts/snap.sh "go games; key Right; key Menu; shot snaps/menu.png"   # headless screenshots (Xvfb)
 scripts/snap.sh "go home; shot snaps/home-fr.png" --lang fr --resume show
+scripts/snap.sh "wait 600; shot /tmp/intro.png" --intro   # scripted runs skip the boot intro unless asked
 ```
+
+Item actions shared by every screen (play, the options menu, languages, editing games) are in
+`ui::actions` (+ `actions/edit.rs`); a screen calls `actions::options(kind, id, show_id)` rather than
+building its own menu. Sounds and rumble (`overlays/feedback.rs`, cpal + gilrs) are Windows-only, like
+controller input.
 
 Script steps: `go NAME [ID]`, `key Up|Down|Left|Right|Return|Escape|Menu|Tab|Backtab|PageUp|PageDown|F1|F2|F3`,
 `type TEXT`, `mode pad|keyboard|mouse|touch`, `event NAME JSON|demo`, `wait MS`, `shot PATH`, `quit`.
