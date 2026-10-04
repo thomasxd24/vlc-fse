@@ -107,10 +107,12 @@ export component TopBarView inherits Rectangle {
                 activate(TopBar.focus);
                 return accept;
             }
-            if (e.text == Key.DownArrow || e.text == Key.Escape) {
+            if (e.text == Key.DownArrow) {
                 Nav.focus-page();
                 return accept;
             }
+            // Escape / Backspace fall through to the window's Back: from the tab bar that goes Home
+            // (or, on Home, asks to exit) — the renderer's back().
             if (e.text == Key.UpArrow) {
                 return accept;
             }
