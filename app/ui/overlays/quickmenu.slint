@@ -1,10 +1,352 @@
-// STUB — to be replaced by the real overlay. Keep the exported names (QuickMenu, QuickMenuView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
+// The quick menu (☰ / F1): a panel sliding in from the right with the clock and status, volume and
+// brightness sliders (when the system helper is available) and a grid of power / app actions — the
+// renderer's QuickMenu (sliderRow, html, paint, setValue). Rust: app/src/ui/overlays/quickmenu.rs.
+//
+// Focus: zone 0 = the sliders (Left / Right nudge the focused one), zone 1 = the two-column grid.
+// Back closes (Rust registers it with ui::on_close_overlay); F1 toggles it shut.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav, Sys, App } from "../globals.slint";
+import { Icon, Pointer } from "../widgets.slint";
+
+export struct QmSlider {
+    key: string,       // "volume" | "brightness"
+    icon: string,      // "volume" | "mute" | "sun"
+    label: string,
+    value: int,        // 0..100
+    known: bool,       // false: the helper didn't report it ("–")
+}
+
+struct QmAction {
+    value: string,
+    icon: string,
+    label: string,
+    danger: bool,
+}
 
 export global QuickMenu {
     in-out property <bool> open;
+    in property <[QmSlider]> sliders;
+    in property <string> date;         // the long date, words capitalised (`.qm-date { text-transform: capitalize }`)
+    in property <[string]> fact-list;  // "100% · Charging", the Wi-Fi name
+    in-out property <int> zone: 1;     // 0 = sliders, 1 = grid
+    in-out property <int> index;
+    // Bumped by Rust to hand keyboard focus back to the menu (e.g. after a confirmation closes).
+    in-out property <int> focus-rev;
+    out property <[QmAction]> actions: App.platform == "win32"
+        ? [
+            { value: "desktop", icon: "desktop", label: T.tr("qm.desktop") },
+            { value: "sleep", icon: "moon", label: T.tr("qm.sleep") },
+            { value: "restart", icon: "restart", label: T.tr("qm.restart") },
+            { value: "shutdown", icon: "power", label: T.tr("qm.shutdown") },
+            { value: "stats", icon: "chart", label: T.tr("stats.title") },
+            { value: "settings", icon: "gamepad", label: T.tr("tab.settings") },
+            { value: "quit", icon: "exit", label: T.tr("qm.quit"), danger: true },
+        ]
+        : [
+            { value: "desktop", icon: "desktop", label: T.tr("qm.desktop") },
+            { value: "stats", icon: "chart", label: T.tr("stats.title") },
+            { value: "settings", icon: "gamepad", label: T.tr("tab.settings") },
+            { value: "quit", icon: "exit", label: T.tr("qm.quit"), danger: true },
+        ];
+    callback nudge(string, int);       // slider key, -1 / +1
+    callback set(string, float);       // slider key, 0..100 (tap / drag on the bar)
+    callback toggle-mute();
+    callback action(string);           // an actions[].value
+    callback close();
+}
+
+// `.qm-slider`: icon, label, bar, value.
+component SliderRow inherits Rectangle {
+    in property <QmSlider> data;
+    in property <bool> focused;
+    callback hovered();
+    border-radius: 0.7 * Theme.rem;
+    background: focused ? Theme.surface-2 : Theme.surface;
+    animate background { duration: Motion.fast; }
+    height: lay.preferred-height;
+    Pointer {
+        hovered => { root.hovered(); }
+    }
+    // The inset focus ring.
+    Rectangle {
+        border-radius: parent.border-radius;
+        border-width: focused ? 0.18 * Theme.rem : 0;
+        border-color: Theme.focus;
+    }
+    lay := HorizontalLayout {
+        padding-left: 1 * Theme.rem;
+        padding-right: 1 * Theme.rem;
+        padding-top: 0.95 * Theme.rem;
+        padding-bottom: 0.95 * Theme.rem;
+        spacing: 0.9 * Theme.rem;
+        Rectangle {
+            width: 2 * Theme.rem;
+            Icon {
+                name: data.icon;
+                size: 1.5 * Theme.rem;
+            }
+            // Clicking the speaker toggles mute.
+            if data.key == "volume": TouchArea {
+                clicked => { QuickMenu.toggle-mute(); }
+            }
+        }
+        Text {
+            text: data.label;
+            color: Theme.text;
+            font-size: 1 * Theme.rem;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        bar := Rectangle {
+            horizontal-stretch: 1;
+            Rectangle {
+                y: (parent.height - self.height) / 2;
+                height: 0.55 * Theme.rem;
+                border-radius: self.height / 2;
+                background: #ffffff29;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * data.value / 100;
+                    border-radius: parent.border-radius;
+                    background: Theme.accent;
+                }
+            }
+            // Tap or drag along the bar (a taller hit area, like `.qm-bar::before`).
+            TouchArea {
+                function set-at(x: length) {
+                    QuickMenu.set(data.key, max(0, min(1, x / self.width)) * 100);
+                }
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
+                        set-at(self.mouse-x);
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        set-at(self.mouse-x);
+                    }
+                }
+            }
+        }
+        Text {
+            width: 2.6 * Theme.rem;
+            text: data.known ? data.value : "–";
+            color: Theme.muted;
+            font-size: 1 * Theme.rem;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// `.qm-btn`: icon over label; white when focused (red for Exit).
+component ActionBtn inherits Rectangle {
+    in property <QmAction> data;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    private property <color> ink: focused ? (data.danger ? #1a0000 : Theme.accent-ink) : Theme.text;
+    border-radius: 0.8 * Theme.rem;
+    background: focused ? (data.danger ? Theme.danger : Theme.focus) : Theme.surface;
+    transform-scale: focused ? 1.03 : 1.0;
+    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    VerticalLayout {
+        padding: 1.1 * Theme.rem;
+        spacing: 0.7 * Theme.rem;
+        alignment: start;
+        Icon {
+            name: data.icon;
+            size: 1.6 * Theme.rem;
+            tint: ink;
+        }
+        Text {
+            text: data.label;
+            color: ink;
+            font-size: 1.05 * Theme.rem;
+            font-weight: 600;
+            overflow: elide;
+        }
+    }
+    Pointer {
+        hovered => { root.hovered(); }
+        clicked => { root.clicked(); }
+    }
+}
+
+component Panel inherits Rectangle {
+    private property <int> ns: QuickMenu.sliders.length;
+    private property <int> na: QuickMenu.actions.length;
+    private property <int> page-rev: Nav.page-focus-rev;
+    private property <int> top-rev: Nav.top-focus-rev;
+    private property <int> my-rev: QuickMenu.focus-rev;
+    // Slide in from the right.
+    private property <float> shown: 0;
+    init => {
+        shown = 1;
+        refocus.running = true;
+    }
+    // Something handed focus back to the page (a confirmation closing…): take it back once that settles.
+    changed page-rev => { refocus.running = true; }
+    changed top-rev => { refocus.running = true; }
+    changed my-rev => { fs.focus(); }
+    refocus := Timer {
+        interval: 1ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            fs.focus();
+        }
+    }
+
+    function go(zone: int, index: int) {
+        QuickMenu.zone = zone;
+        QuickMenu.index = index;
+        Input.feedback("move");
+    }
+
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (QuickMenu.zone == 0 && ns > 0) {
+                if (e.text == Key.LeftArrow) { QuickMenu.nudge(QuickMenu.sliders[QuickMenu.index].key, -1); return accept; }
+                if (e.text == Key.RightArrow) { QuickMenu.nudge(QuickMenu.sliders[QuickMenu.index].key, 1); return accept; }
+                if (e.text == Key.UpArrow) { if (QuickMenu.index > 0) { go(0, QuickMenu.index - 1); } return accept; }
+                if (e.text == Key.DownArrow) {
+                    if (QuickMenu.index < ns - 1) { go(0, QuickMenu.index + 1); } else { go(1, 0); }
+                    return accept;
+                }
+                if (e.text == Key.Return || e.text == " ") { return accept; }
+            } else {
+                let i = QuickMenu.index;
+                if (e.text == Key.LeftArrow) { if (mod(i, 2) == 1) { go(1, i - 1); } return accept; }
+                if (e.text == Key.RightArrow) { if (mod(i, 2) == 0 && i + 1 < na) { go(1, i + 1); } return accept; }
+                if (e.text == Key.UpArrow) {
+                    if (i >= 2) { go(1, i - 2); }
+                    else if (ns > 0) { go(0, ns - 1); }
+                    return accept;
+                }
+                if (e.text == Key.DownArrow) {
+                    if (i + 2 < na) { go(1, i + 2); }
+                    else if (floor(i / 2) < floor((na - 1) / 2)) { go(1, na - 1); }
+                    return accept;
+                }
+                if (e.text == Key.Return || e.text == " ") {
+                    Input.feedback("select");
+                    QuickMenu.action(QuickMenu.actions[min(i, na - 1)].value);
+                    return accept;
+                }
+            }
+            // ☰ again closes; Back goes through the window (ui::on_close_overlay).
+            if (e.text == Key.F1) { QuickMenu.close(); return accept; }
+            if (e.text == Key.Escape || e.text == Key.Backspace) { return reject; }
+            accept
+        }
+    }
+
+    // The scrim: clicking it closes.
+    background: #03040673;
+    opacity: shown;
+    animate opacity { duration: Motion.fast; easing: Motion.ease; }
+    TouchArea {
+        clicked => { QuickMenu.close(); }
+    }
+
+    panel := Rectangle {
+        private property <length> inner: self.width - 3.6 * Theme.rem;
+        private property <length> gap: 0.6 * Theme.rem;
+        private property <length> btn-w: (inner - gap) / 2;
+        private property <length> btn-h: 2.2 * Theme.rem + 1.6 * Theme.rem + 0.7 * Theme.rem + 1.05 * Theme.rem * 1.33;
+        width: min(30 * Theme.rem, root.width * 0.92);
+        height: root.height;
+        x: root.width - self.width + (1 - shown) * 2 * Theme.rem;
+        animate x { duration: Motion.normal; easing: Motion.ease; }
+        background: #13151df7;
+        drop-shadow-blur: 5 * Theme.rem;
+        drop-shadow-offset-x: -2 * Theme.rem;
+        drop-shadow-color: #00000080;
+        TouchArea { }   // clicks on the panel don't reach the scrim
+        Rectangle {
+            x: 0;
+            width: 1px;
+            background: Theme.line;
+        }
+        VerticalLayout {
+            padding-top: 2.4 * Theme.rem;
+            padding-bottom: 2.4 * Theme.rem;
+            padding-left: 1.8 * Theme.rem;
+            padding-right: 1.8 * Theme.rem;
+            spacing: 0;
+            alignment: start;
+            // .qm-head
+            Text {
+                text: Sys.clock;
+                color: Theme.text;
+                font-size: 3.2 * Theme.rem;
+                font-weight: 700;
+                letter-spacing: -0.02 * 3.2 * Theme.rem;
+            }
+            Text {
+                text: QuickMenu.date;
+                color: Theme.muted;
+                font-size: 1.15 * Theme.rem;
+            }
+            if QuickMenu.fact-list.length > 0: HorizontalLayout {
+                padding-top: 0.6 * Theme.rem;
+                spacing: 1 * Theme.rem;
+                alignment: start;
+                for f in QuickMenu.fact-list: Text {
+                    text: f;
+                    color: Theme.muted;
+                    font-size: 1 * Theme.rem;
+                }
+            }
+            // .qm-sliders
+            if ns > 0: VerticalLayout {
+                padding-top: 1.8 * Theme.rem;
+                padding-bottom: 1.2 * Theme.rem;
+                spacing: 0.6 * Theme.rem;
+                for s[i] in QuickMenu.sliders: SliderRow {
+                    data: s;
+                    focused: fs.has-focus && QuickMenu.zone == 0 && QuickMenu.index == i;
+                    hovered => {
+                        if (Input.mode == "mouse") {
+                            QuickMenu.zone = 0;
+                            QuickMenu.index = i;
+                        }
+                    }
+                }
+            }
+            // .qm-grid: two columns; an odd last button spans both.
+            Rectangle {
+                height: ceil(na / 2) * (btn-h + gap) - gap + 0.6 * Theme.rem;
+                for a[i] in QuickMenu.actions: ActionBtn {
+                    private property <bool> span: i == na - 1 && mod(na, 2) == 1;
+                    x: mod(i, 2) * (btn-w + gap);
+                    y: 0.6 * Theme.rem + floor(i / 2) * (btn-h + gap);
+                    width: span ? inner : btn-w;
+                    height: btn-h;
+                    data: a;
+                    focused: fs.has-focus && QuickMenu.zone == 1 && QuickMenu.index == i;
+                    hovered => {
+                        if (Input.mode == "mouse") {
+                            QuickMenu.zone = 1;
+                            QuickMenu.index = i;
+                        }
+                    }
+                    clicked => {
+                        QuickMenu.zone = 1;
+                        QuickMenu.index = i;
+                        QuickMenu.action(a.value);
+                    }
+                }
+            }
+        }
+    }
 }
 
 export component QuickMenuView inherits Rectangle {
-    visible: QuickMenu.open;
+    if QuickMenu.open: Panel {
+        width: root.width;
+        height: root.height;
+    }
 }

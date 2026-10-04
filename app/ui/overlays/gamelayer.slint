@@ -1,10 +1,182 @@
-// STUB — to be replaced by the real overlay. Keep the exported names (GameLayer, GameLayerView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
+// The running-game layer: covers Lounge while a game is starting or running (the renderer's
+// renderGameLayer and the `game` event) — the game's artwork faded behind its logo or title, the phase,
+// "Back to the game" and "I'm done playing" / "Cancel". Rust: app/src/ui/overlays/gamelayer.rs.
+//
+// Back does nothing here (the layer goes away when the game ends).
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Art, Input, Nav } from "../globals.slint";
+import { Btn, Spinner } from "../widgets.slint";
+import { HintBar } from "../shell.slint";
 
 export global GameLayer {
     in-out property <bool> open;
+    in property <string> title;
+    in property <string> art;          // hero / header / poster, "" = none
+    in property <string> logo;         // a transparent logo drawn instead of the title
+    in property <string> phase;        // "launching" | "running" | "untracked"
+    in-out property <int> index;       // focused button
+    in-out property <int> focus-rev;
+    callback back-to-game();
+    callback done();
+}
+
+component Layer inherits Rectangle {
+    private property <bool> launching: GameLayer.phase == "launching";
+    // [Back to the game,] I'm done playing / Cancel
+    private property <int> n: launching ? 1 : 2;
+    private property <int> page-rev: Nav.page-focus-rev;
+    private property <int> top-rev: Nav.top-focus-rev;
+    private property <int> my-rev: GameLayer.focus-rev;
+    private property <float> shown: 0;
+    init => {
+        shown = 1;
+        refocus.running = true;
+    }
+    changed page-rev => { refocus.running = true; }
+    changed top-rev => { refocus.running = true; }
+    changed my-rev => { fs.focus(); }
+    refocus := Timer {
+        interval: 1ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            fs.focus();
+        }
+    }
+
+    function activate(i: int) {
+        Input.feedback("select");
+        if (!launching && i == 0) { GameLayer.back-to-game(); } else { GameLayer.done(); }
+    }
+
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.LeftArrow) {
+                if (GameLayer.index > 0) { GameLayer.index -= 1; Input.feedback("move"); }
+                return accept;
+            }
+            if (e.text == Key.RightArrow) {
+                if (GameLayer.index < n - 1) { GameLayer.index += 1; Input.feedback("move"); }
+                return accept;
+            }
+            if (e.text == Key.Return || e.text == " ") { activate(min(GameLayer.index, n - 1)); return accept; }
+            accept
+        }
+    }
+
+    background: Theme.bg;
+    TouchArea { }   // the page underneath doesn't get clicks
+
+    // .gl-bg: the artwork, faded (the CSS blur has no Slint equivalent), with a vignette to the background.
+    if GameLayer.art != "": Image {
+        width: parent.width * 1.05;
+        height: parent.height * 1.05;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: Art.get(GameLayer.art, self.width);
+        image-fit: cover;
+        opacity: 0.35 * shown;
+        animate opacity { duration: Motion.slow; easing: Motion.ease; }
+    }
+    Rectangle {
+        // radial-gradient(70% 70% at 50% 50%, rgba(7,8,12,.3), var(--bg))
+        width: parent.width * 1.42;
+        height: parent.height * 1.42;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: @radial-gradient(circle, #07080c4d 0%, #07080c 50%);
+    }
+
+    VerticalLayout {
+        alignment: center;
+        padding-left: 2 * Theme.rem;
+        padding-right: 2 * Theme.rem;
+        spacing: 0;
+        opacity: shown;
+        animate opacity { duration: Motion.slow; easing: Motion.ease; }
+        HorizontalLayout {
+            alignment: center;
+            VerticalLayout {
+                max-width: 60 * Theme.rem;
+                spacing: 0;
+                if GameLayer.logo != "": Image {
+                    source: Art.get(GameLayer.logo, self.width);
+                    width: min(40 * Theme.rem, Theme.vw * 0.7);
+                    height: 12 * Theme.rem;
+                    image-fit: contain;
+                }
+                if GameLayer.logo != "": Rectangle { height: 1.4 * Theme.rem; }
+                if GameLayer.logo == "": Text {
+                    text: GameLayer.title;
+                    color: Theme.text;
+                    font-size: 3.6 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: -0.03 * 3.6 * Theme.rem;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                if GameLayer.logo == "": Rectangle { height: 1 * Theme.rem; }
+                // .gl-phase
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 0.7 * Theme.rem;
+                    if launching: Spinner {
+                        size: 1.3 * Theme.rem;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    Text {
+                        text: launching ? T.tr("gl.launching") : GameLayer.phase == "untracked" ? T.tr("gl.untracked") : T.tr("gl.running");
+                        color: Theme.muted;
+                        font-size: 1.3 * Theme.rem;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                    }
+                }
+                Rectangle { height: 2 * Theme.rem + 2 * Theme.rem; }
+                // .actions
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 0.9 * Theme.rem;
+                    if !launching: Btn {
+                        text: T.tr("gl.backToGame");
+                        icon: "play";
+                        primary: true;
+                        focused: fs.has-focus && GameLayer.index == 0;
+                        hovered => { if (Input.mode == "mouse") { GameLayer.index = 0; } }
+                        clicked => { GameLayer.index = 0; activate(0); }
+                    }
+                    Btn {
+                        text: launching ? T.tr("gl.cancel") : T.tr("gl.done");
+                        icon: "check";
+                        focused: fs.has-focus && GameLayer.index == n - 1;
+                        hovered => { if (Input.mode == "mouse") { GameLayer.index = n - 1; } }
+                        clicked => { GameLayer.index = n - 1; activate(n - 1); }
+                    }
+                }
+                Rectangle { height: 2 * Theme.rem; }
+                Text {
+                    text: T.tr("gl.note");
+                    color: Theme.faint;
+                    font-size: 1 * Theme.rem;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+
+    // The hint bar sits above this layer in the renderer (z-index 45 vs 42).
+    HintBar {
+        x: parent.width - self.width - Theme.gutter;
+        y: parent.height - self.height - 1.4 * Theme.rem;
+    }
 }
 
 export component GameLayerView inherits Rectangle {
-    visible: GameLayer.open;
+    if GameLayer.open: Layer {
+        width: root.width;
+        height: root.height;
+    }
 }
