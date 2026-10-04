@@ -1,18 +1,378 @@
-// STUB — to be replaced by the real screen. Keep the exported names (HomePage, HomeView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
-import { PageScope } from "../widgets.slint";
+// Home: a minimal launcher (the renderer's VIEWS.home, `.page.home.mini`) — the time, one thing to pick
+// back up (the most recently played game or watched item), and a few doors into the tabs.
+// Rust (app/src/ui/pages/home.rs) picks the resume target, formats the clock and greeting, and sets
+// the backdrop to the target's artwork.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Art, Input, Nav, Hints } from "../globals.slint";
+import { PageScope, Pointer, Icon } from "../widgets.slint";
+
+// The resume target (`.mh-resume`).
+export struct HomeResume {
+    kind: string,      // "game" | "movie" | "episode"
+    id: string,
+    show-id: string,   // episodes: their show
+    title: string,
+    logo: string,      // games: a transparent logo drawn instead of the title, if any
+    sub: string,       // "2 hours ago · 70 hours played", "S2 E4 · Salt and Iron · 30 min left"
+    progress: float,   // 0..1; < 0 hides the bar
+}
+
+// A shortcut into a tab (`.mh-door`).
+export struct HomeDoor {
+    tab: string,
+    label: string,
+}
 
 export global HomePage {
+    in property <string> clock;          // "4:55 PM" / "16:55"
+    in property <string> date;           // "Tuesday, September 29"
+    in property <string> greeting;       // already upper-cased
+    in property <bool> has-resume;
+    in property <HomeResume> resume;
+    in property <[HomeDoor]> doors;
+    // 0 = the resume card, 1.. = door (index + 1).
     in-out property <int> focus;
+    // The door focused last, so coming back down from the resume card lands on it (group memory).
+    in-out property <int> last-door;
+    callback play();
+    callback options();
+    callback open-door(string);          // tab name
+}
+
+// `.mh-door`: a pill; focus turns it white and zooms it a little.
+component Door inherits Rectangle {
+    in property <string> text;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    border-radius: self.height / 2;
+    border-width: 1px;
+    border-color: focused ? Theme.text : Theme.line;
+    background: focused ? Theme.text : Theme.surface;
+    transform-scale: focused ? Motion.btn-zoom : 1.0;
+    animate background, border-color, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    min-width: lay.preferred-width;
+    min-height: lay.preferred-height;
+    lay := HorizontalLayout {
+        padding-left: 1.4 * Theme.rem;
+        padding-right: 1.4 * Theme.rem;
+        padding-top: 0.7 * Theme.rem;
+        padding-bottom: 0.7 * Theme.rem;
+        Text {
+            text: root.text;
+            color: focused ? #0b0c10 : Theme.text;
+            font-size: 1.1 * Theme.rem;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+    ta := Pointer {
+        hovered => { root.hovered(); }
+        clicked => {
+            if (!self.consume-long-press()) {
+                root.clicked();
+            }
+        }
+    }
+}
+
+// `.mh-resume`: kicker, title (or logo), subtitle, optional progress bar, and a round play button on
+// the right.
+component ResumeCard inherits Rectangle {
+    in property <HomeResume> item;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    callback options();
+
+    private property <length> pad-l: 1.8 * Theme.rem;
+    private property <length> pad-r: 5.5 * Theme.rem;
+    private property <length> pad-y: 1.6 * Theme.rem;
+    private property <length> max-inner: 44 * Theme.rem - pad-l - pad-r;
+    private property <image> logo-img: Art.get(item.logo, 24 * Theme.rem);
+    private property <float> logo-ratio: logo-img.width > 0 && logo-img.height > 0 ? logo-img.width / logo-img.height : 4;
+    private property <length> logo-w: min(24 * Theme.rem, 5 * Theme.rem * logo-ratio);
+    private property <length> inner: max(26 * Theme.rem - pad-l - pad-r, min(max-inner, max(kicker.preferred-width, max(item.logo != "" ? logo-w : title.preferred-width, sub.preferred-width))));
+
+    width: inner + pad-l + pad-r;
+    height: lay.preferred-height;
+    border-radius: 1.2 * Theme.rem;
+    border-width: 1px;
+    border-color: focused ? Theme.focus : Theme.line;
+    background: focused ? #14161eb8 : #0a0b10c7;
+    transform-scale: focused ? 1.03 : 1.0;
+    animate transform-scale, background, border-color { duration: Motion.normal; easing: Motion.ease; }
+
+    lay := VerticalLayout {
+        x: pad-l;
+        width: inner;
+        padding-top: pad-y;
+        padding-bottom: pad-y;
+        spacing: 0.5 * Theme.rem;
+        alignment: start;
+        kicker := Text {
+            text: T.tr("media.resume").to-uppercase();
+            color: Theme.accent;
+            font-weight: 700;
+            font-size: 0.9 * Theme.rem;
+            letter-spacing: 0.14 * 0.9 * Theme.rem;
+        }
+        title := Text {
+            visible: item.logo == "";
+            height: self.visible ? self.preferred-height : 0;
+            text: item.title;
+            color: Theme.text;
+            font-size: 3 * Theme.rem;
+            font-weight: 700;
+            letter-spacing: -0.03 * 3 * Theme.rem;
+            wrap: word-wrap;
+        }
+        // .mh-logo: at most 5rem tall and 24rem wide, kept to the left.
+        logo := Image {
+            visible: item.logo != "";
+            source: Art.get(item.logo, 24 * Theme.rem);
+            width: self.visible ? logo-w : 0;
+            height: self.visible ? logo-w / logo-ratio : 0;
+            image-fit: contain;
+        }
+        sub := Text {
+            text: item.sub;
+            color: Theme.muted;
+            font-size: 1.15 * Theme.rem;
+            wrap: word-wrap;
+        }
+        if item.progress >= 0: Rectangle {
+            height: 0.28 * Theme.rem;
+            border-radius: self.height / 2;
+            background: Theme.surface-2;
+            clip: true;
+            Rectangle {
+                x: 0;
+                width: parent.width * max(0, min(1, item.progress));
+                background: Theme.accent;
+            }
+        }
+    }
+
+    // `.mh-play`
+    Rectangle {
+        x: parent.width - 1.6 * Theme.rem - self.width;
+        y: (parent.height - self.height) / 2;
+        width: 3.2 * Theme.rem;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: Theme.accent;
+        Icon {
+            name: "play";
+            tint: Theme.accent-ink;
+            size: 1.4 * Theme.rem;
+        }
+    }
+
+    Pointer {
+        hovered => { root.hovered(); }
+        options => { root.options(); }
+        clicked => {
+            if (!self.consume-long-press()) {
+                root.clicked();
+            }
+        }
+    }
 }
 
 export component HomeView inherits Rectangle {
-    PageScope {
+    private property <int> n-doors: HomePage.doors.length;
+    private property <bool> on-resume: HomePage.has-resume && HomePage.focus == 0;
+
+    function set-focus(i: int) {
+        HomePage.focus = i;
+        if (i > 0) { HomePage.last-door = i - 1; }
+        hints();
+    }
+    function hints() {
+        if (on-resume) {
+            Hints.items = Input.mode == "pad"
+                ? [{ button: "a", label: T.tr("hint.play") }, { button: "b", label: T.tr("hint.back") }, { button: "x", label: T.tr("hint.options") }, { button: "y", label: T.tr("hint.search") }, { button: "menu", label: T.tr("hint.menu") }]
+                : [{ button: "a", label: T.tr("hint.play") }, { button: "b", label: T.tr("hint.back") }, { button: "x", label: T.tr("hint.options") }, { button: "menu", label: T.tr("hint.menu") }];
+        } else {
+            Hints.items = Input.mode == "pad"
+                ? [{ button: "a", label: T.tr("hint.select") }, { button: "b", label: T.tr("hint.back") }, { button: "y", label: T.tr("hint.search") }, { button: "menu", label: T.tr("hint.menu") }]
+                : [{ button: "a", label: T.tr("hint.select") }, { button: "b", label: T.tr("hint.back") }, { button: "menu", label: T.tr("hint.menu") }];
+        }
+    }
+    // Keep focus on something that exists (the resume target can disappear, doors can change).
+    function clamp() {
+        if (HomePage.focus == 0 && !HomePage.has-resume && n-doors > 0) {
+            set-focus(1);
+        } else if (HomePage.focus > n-doors) {
+            set-focus(HomePage.has-resume ? 0 : max(0, n-doors));
+        } else {
+            hints();
+        }
+    }
+    function activate() {
+        Input.feedback("select");
+        if (on-resume) {
+            HomePage.play();
+        } else if (HomePage.focus >= 1 && HomePage.focus <= n-doors) {
+            HomePage.open-door(HomePage.doors[HomePage.focus - 1].tab);
+        }
+    }
+
+    init => { clamp(); }
+    changed n-doors => { clamp(); }
+    private property <bool> has-resume: HomePage.has-resume;
+    changed has-resume => { clamp(); }
+    private property <string> mode: Input.mode;
+    changed mode => { hints(); }
+
+    // Entrance (`#page[data-enter='yes'] … { animation: rise }`): the clock, then the resume card, then
+    // the doors one after another. Not when the UI is rebuilt after a game.
+    private property <bool> shown: Nav.restoring;
+    enter := Timer {
+        interval: 1ms;
+        running: !shown;
+        triggered => {
+            self.running = false;
+            shown = true;
+        }
+    }
+    private property <length> rise: 1.1 * Theme.rem;
+
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (e.text == Key.UpArrow) {
+                if (HomePage.focus > 0 && HomePage.has-resume) {
+                    set-focus(0);
+                    Input.feedback("move");
+                } else {
+                    Nav.focus-top();
+                    Input.feedback("move");
+                }
+                return accept;
+            }
+            if (e.text == Key.DownArrow) {
+                if (HomePage.focus == 0 && n-doors > 0) {
+                    set-focus(min(HomePage.last-door, n-doors - 1) + 1);
+                    Input.feedback("move");
+                } else {
+                    Input.feedback("edge");
+                }
+                return accept;
+            }
+            if (e.text == Key.LeftArrow) {
+                if (HomePage.focus > 1) {
+                    set-focus(HomePage.focus - 1);
+                    Input.feedback("move");
+                } else {
+                    Input.feedback("edge");
+                }
+                return accept;
+            }
+            if (e.text == Key.RightArrow) {
+                if (HomePage.focus >= 1 && HomePage.focus < n-doors) {
+                    set-focus(HomePage.focus + 1);
+                    Input.feedback("move");
+                } else {
+                    Input.feedback("edge");
+                }
+                return accept;
+            }
+            if (e.text == Key.Return || e.text == " ") {
+                activate();
+                return accept;
+            }
+            if (e.text == Key.Menu) {
+                if (on-resume) { HomePage.options(); }
+                return accept;
+            }
             reject
         }
     }
-    Text { text: "HomeView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    // `.page.home.mini`: padding 7rem gutter 3.5rem; the top block, then the resume card pushed to
+    // the bottom, then the doors.
+    VerticalLayout {
+        padding-top: Theme.page-top;
+        padding-left: Theme.gutter;
+        padding-right: Theme.gutter;
+        padding-bottom: 3.5 * Theme.rem;
+
+        // .mh-top
+        top := VerticalLayout {
+            vertical-stretch: 0;
+            alignment: start;
+            spacing: 0.2 * Theme.rem;
+            opacity: shown ? 1 : 0;
+            animate opacity { duration: Motion.slow * 4 / 3; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+            Text {
+                text: HomePage.clock;
+                color: Theme.text;
+                font-size: 7.5 * Theme.rem;
+                font-weight: 200;
+                letter-spacing: -0.04 * 7.5 * Theme.rem;
+                height: 7.5 * Theme.rem;
+                vertical-alignment: center;
+            }
+            Text {
+                text: HomePage.date;
+                color: Theme.muted;
+                font-size: 1.5 * Theme.rem;
+            }
+            Rectangle { height: 0.8 * Theme.rem - 0.2 * Theme.rem; }
+            Text {
+                text: HomePage.greeting;
+                color: Theme.accent;
+                font-weight: 700;
+                font-size: 0.95 * Theme.rem;
+                letter-spacing: 0.14 * 0.95 * Theme.rem;
+            }
+        }
+
+        // .mh-main: grows, and sits the resume card on its bottom edge.
+        VerticalLayout {
+            vertical-stretch: 1;
+            alignment: end;
+            padding-bottom: 2.4 * Theme.rem;
+            if HomePage.has-resume: HorizontalLayout {
+                alignment: start;
+                Rectangle {
+                    width: card.width;
+                    height: card.height;
+                    card := ResumeCard {
+                        x: 0;
+                        y: shown ? 0 : rise;
+                        opacity: shown ? 1 : 0;
+                        animate y, opacity { duration: Motion.slow * 4 / 3; delay: Motion.reduced ? 0ms : 120ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                        item: HomePage.resume;
+                        focused: scope.has-focus && on-resume;
+                        hovered => { if (Input.mode == "mouse") { set-focus(0); } }
+                        clicked => { set-focus(0); Input.feedback("select"); HomePage.play(); }
+                        options => { set-focus(0); HomePage.options(); }
+                    }
+                }
+            }
+        }
+
+        // .mh-doors
+        HorizontalLayout {
+            vertical-stretch: 0;
+            alignment: start;
+            spacing: 0.7 * Theme.rem;
+            for d[i] in HomePage.doors: Rectangle {
+                width: door.min-width;
+                height: door.min-height;
+                door := Door {
+                    y: shown ? 0 : rise;
+                    opacity: shown ? 1 : 0;
+                    animate y, opacity { duration: Motion.slow * 4 / 3; delay: Motion.reduced ? 0ms : 240ms + (i + 1) * 70ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                    text: d.label;
+                    focused: scope.has-focus && HomePage.focus == i + 1;
+                    hovered => { if (Input.mode == "mouse") { set-focus(i + 1); } }
+                    clicked => { set-focus(i + 1); Input.feedback("select"); HomePage.open-door(d.tab); }
+                }
+            }
+        }
+    }
 }
