@@ -12,7 +12,7 @@ import { BackdropView, TopBar, TopBarView, HintBar, ToastStack, DialogLayer } fr
 import { Grids, GridView, GridData, GridChip, GridFocus } from "pages/grid.slint";
 import { HomePage, HomeView } from "pages/home.slint";
 import { WelcomePage, WelcomeView } from "pages/welcome.slint";
-import { GameDetail, GameDetailView } from "pages/game.slint";
+import { GameDetail, GameDetailView, GameModals } from "pages/game.slint";
 import { MovieDetail, MovieDetailView } from "pages/movie.slint";
 import { ShowDetail, ShowDetailView } from "pages/show.slint";
 import { SearchPage, SearchView } from "pages/search.slint";
@@ -103,6 +103,7 @@ export component AppWindow inherits Window {
             GameLayerView { }
             QuickMenuView { }
             UpdateLayerView { }
+            GameModals { }
             DialogLayer { }
 
             ToastStack {

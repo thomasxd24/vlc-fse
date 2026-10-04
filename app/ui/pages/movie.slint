@@ -1,18 +1,145 @@
-// STUB — to be replaced by the real screen. Keep the exported names (MovieDetail, MovieDetailView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
+// A film's page (the renderer's VIEWS.movie): poster, title, metaLine, tagline, overview, genres, the
+// resume bar, Resume / Play from the start (or Play), Mark watched, ⋯ — and the file's path underneath.
+// Rust: app/src/ui/pages/detail/movie.rs.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav } from "../globals.slint";
 import { PageScope } from "../widgets.slint";
+import { MetaBit, DetailAction, DetailHints, DetailPoster, MetaLine, ActionRow, DetailTitle, DetailOverview, DetailGenres, NotFound } from "detail.slint";
 
 export global MovieDetail {
-    in-out property <int> focus;
+    in property <bool> found;
+    in property <string> title;
+    in property <string> poster;
+    in property <color> tint;
+    in property <[MetaBit]> meta;
+    in property <string> tagline;
+    in property <string> overview;
+    in property <string> genres;
+    in property <float> progress: -1;   // 0..1 when resumable, else < 0 (no resume bar)
+    in property <string> progress-text; // "40:00 of 1:58:00"
+    in property <[DetailAction]> actions;
+    in property <string> path;
+    in-out property <int> focus;        // the focused button
+    callback act(string);
+    callback options();
 }
 
 export component MovieDetailView inherits Rectangle {
-    PageScope {
+    private property <int> n: MovieDetail.actions.length;
+    init => {
+        DetailHints.set(T.tr("hint.select"));
+        if (MovieDetail.focus >= n) { MovieDetail.focus = 0; }
+    }
+    private property <string> mode: Input.mode;
+    changed mode => { DetailHints.set(T.tr("hint.select")); }
+
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (e.text == Key.UpArrow) { Nav.focus-top(); Input.feedback("move"); return accept; }
+            if (!MovieDetail.found) { return reject; }
+            if (e.text == Key.LeftArrow) {
+                if (MovieDetail.focus > 0) { MovieDetail.focus -= 1; Input.feedback("move"); } else { Input.feedback("edge"); }
+                return accept;
+            }
+            if (e.text == Key.RightArrow) {
+                if (MovieDetail.focus < n - 1) { MovieDetail.focus += 1; Input.feedback("move"); } else { Input.feedback("edge"); }
+                return accept;
+            }
+            if (e.text == Key.DownArrow) { Input.feedback("edge"); return accept; }
+            if (e.text == Key.Return || e.text == " ") {
+                Input.feedback("select");
+                MovieDetail.act(MovieDetail.actions[MovieDetail.focus].value);
+                return accept;
+            }
+            if (e.text == Key.Menu) { MovieDetail.options(); return accept; }
             reject
         }
     }
-    Text { text: "MovieDetailView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    if !MovieDetail.found: NotFound { }
+
+    if MovieDetail.found: VerticalLayout {
+        alignment: start;
+        // .detail-main: poster and info sit at the bottom of the first 72vh.
+        HorizontalLayout {
+            min-height: Theme.vh * 0.72;
+            padding-top: 9 * Theme.rem;
+            padding-left: Theme.gutter;
+            padding-right: Theme.gutter;
+            padding-bottom: 2 * Theme.rem;
+            spacing: 3 * Theme.rem;
+            alignment: start;
+            VerticalLayout {
+                alignment: end;
+                DetailPoster {
+                    path: MovieDetail.poster;
+                    title: MovieDetail.title;
+                    tint: MovieDetail.tint;
+                }
+            }
+            VerticalLayout {
+                alignment: end;
+                max-width: 62 * Theme.rem;
+                horizontal-stretch: 1;
+                spacing: 0;
+                DetailTitle { text: MovieDetail.title; }
+                Rectangle { height: 0.9 * Theme.rem; }
+                MetaLine { bits: MovieDetail.meta; }
+                if MovieDetail.tagline != "": Rectangle { height: 0.8 * Theme.rem; }
+                if MovieDetail.tagline != "": Text {
+                    text: MovieDetail.tagline;
+                    color: Theme.muted;
+                    font-size: 1.2 * Theme.rem;
+                    font-italic: true;
+                    wrap: word-wrap;
+                }
+                if MovieDetail.overview != "": Rectangle { height: 1 * Theme.rem; }
+                if MovieDetail.overview != "": DetailOverview { text: MovieDetail.overview; }
+                if MovieDetail.genres != "": Rectangle { height: 0.9 * Theme.rem; }
+                if MovieDetail.genres != "": DetailGenres { text: MovieDetail.genres; }
+                // .resume-bar
+                if MovieDetail.progress >= 0: Rectangle { height: 1.4 * Theme.rem; }
+                if MovieDetail.progress >= 0: HorizontalLayout {
+                    spacing: 1 * Theme.rem;
+                    alignment: start;
+                    Rectangle {
+                        width: 18 * Theme.rem;
+                        height: 0.3 * Theme.rem;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 1 * Theme.rem;
+                        background: #ffffff33;
+                        clip: true;
+                        Rectangle {
+                            x: 0;
+                            width: parent.width * max(0, min(1, MovieDetail.progress));
+                            background: Theme.accent;
+                        }
+                    }
+                    Text {
+                        text: MovieDetail.progress-text;
+                        color: Theme.muted;
+                        font-size: 1.05 * Theme.rem;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle { height: 2 * Theme.rem; }
+                ActionRow {
+                    actions: MovieDetail.actions;
+                    focused-index: scope.has-focus ? MovieDetail.focus : -1;
+                    clicked(i) => { MovieDetail.focus = i; MovieDetail.act(MovieDetail.actions[i].value); }
+                    hovered(i) => { if (Input.mode == "mouse") { MovieDetail.focus = i; } }
+                }
+            }
+        }
+        // .file-path
+        Text {
+            x: Theme.gutter;
+            width: parent.width - 2 * Theme.gutter;
+            text: MovieDetail.path;
+            color: Theme.faint;
+            font-size: 0.95 * Theme.rem;
+            wrap: char-wrap;
+        }
+    }
 }
