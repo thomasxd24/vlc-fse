@@ -22,16 +22,14 @@ pub fn install() {
     edit::install();
 }
 
-/// `dialogs::choose`, with the answer handled on the next turn of the event loop. Closing a dialog hands
-/// focus back to the page (asynchronously); a menu that opens another one from its answer would lose
-/// the focus to the page without this.
+/// `dialogs::choose` (kept as the actions' entry point; dialogs chain from answers without help now).
 pub(crate) fn choose(title: &str, text: &str, choices: Vec<Choice>, on_answer: impl FnOnce(Option<String>) + 'static) {
-    dialogs::choose(title, text, choices, move |v| later(move || on_answer(v)));
+    dialogs::choose(title, text, choices, on_answer);
 }
 
-/// `dialogs::prompt`, answered on the next turn of the event loop (see [`choose`]).
+/// `dialogs::prompt` (see [`choose`]).
 pub(crate) fn prompt(p: dialogs::Prompt, on_answer: impl FnOnce(Option<String>) + 'static) {
-    dialogs::prompt(p, move |v| later(move || on_answer(v)));
+    dialogs::prompt(p, on_answer);
 }
 
 pub(crate) fn later(f: impl FnOnce() + 'static) {

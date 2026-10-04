@@ -13,6 +13,7 @@ use crate::ui::ctx::{cx, Ctx};
 use crate::ui::dialogs::{self, choice, Choice, Prompt};
 use crate::ui::i18n::{t, tv};
 use crate::ui::model::{self, arr, b, s};
+use crate::ui::overlays::update;
 use crate::ui::{actions, input, router, toasts};
 use crate::{Nav, SetBtn, SetItem, SettingsPage};
 use serde_json::{json, Map, Value};
@@ -169,19 +170,6 @@ fn mask(v: &str) -> String {
         let tail: String = v.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
         format!("••••{tail}")
     }
-}
-
-pub fn update_error_text(message: &str) -> String {
-    let is_key = message.strip_prefix("upd.").is_some_and(|r| !r.is_empty() && r.chars().all(|c| c.is_alphanumeric() || c == '_'));
-    if is_key {
-        return t(message);
-    }
-    let lower = message.to_lowercase();
-    let word = |w: &str| lower.split(|c: char| !c.is_alphanumeric()).any(|x| x == w);
-    if word("403") || word("429") || lower.contains("rate limit") {
-        return t("upd.rateLimited");
-    }
-    tv("err.update", &[("message", message.into())])
 }
 
 fn build(st: &Value, vlc_found: Option<&str>, up: &Value) -> Vec<Line> {
@@ -349,7 +337,7 @@ fn build(st: &Value, vlc_found: Option<&str>, up: &Value) -> Vec<Line> {
             "downloading" => tv("upd.downloading", &[("n", up.get("progress").and_then(Value::as_f64).unwrap_or(0.0).into())]),
             "ready" | "installing" => t("upd.installing"),
             "elevating" => t("upd.elevating"),
-            "error" => update_error_text(s(up, "error")),
+            "error" => update::error_text(s(up, "error")),
             _ => String::new(),
         };
         let busy = matches!(up_status, "checking" | "downloading" | "elevating" | "installing" | "ready");
@@ -554,8 +542,8 @@ fn run(act: &str) {
             save(json!({ "animations": if reduced { "full" } else { "reduced" } }));
         }
         "open-padtest" => router::go("padtest", ""),
-        "check-update" => check_update(),
-        "install-update" => start_update(),
+        "check-update" => update::check(),
+        "install-update" => update::start(),
         "open-gaming-settings" => cx().send("open_external", |b| b.open_external("ms-settings:gaming-gamebar")),
         "open-releases" => cx().send("open_external", |b| b.open_external("https://github.com/thomasxd24/vlc-fse/releases/latest")),
         "minimize" => cx().send("minimize", |b| b.minimize()),
@@ -767,41 +755,4 @@ fn library_menu(index: usize) {
             save(json!({ "libraries": libs }));
         },
     );
-}
-
-fn check_update() {
-    toasts::toast(&t("upd.checking"), "info");
-    cx().call("check_update", |b| b.check_update(), |st| {
-        if st.is_null() {
-            return;
-        }
-        match s(&st, "status") {
-            "uptodate" => toasts::toast(&t("upd.upToDate"), "info"),
-            "error" => toasts::toast(&update_error_text(s(&st, "error")), "error"),
-            _ => {}
-        }
-        PAGE.with(|p| p.borrow_mut().update = st);
-        rebuild();
-    });
-}
-
-/// The renderer's `startUpdate()`: download and install; progress arrives through `update` events
-/// (the update overlay shows it).
-fn start_update() {
-    cx().call("install_update", |b| b.install_update(), |r| {
-        if b(&r, "ok") {
-            return;
-        }
-        let key = s(&r, "errorKey");
-        if key.is_empty() {
-            return;
-        }
-        let vars: Vec<(String, crate::ui::i18n::Arg)> = r
-            .get("vars")
-            .and_then(Value::as_object)
-            .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().map(String::from).unwrap_or_else(|| v.to_string()).into())).collect())
-            .unwrap_or_default();
-        let refs: Vec<(&str, crate::ui::i18n::Arg)> = vars.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
-        toasts::toast(&tv(key, &refs), "error");
-    });
 }

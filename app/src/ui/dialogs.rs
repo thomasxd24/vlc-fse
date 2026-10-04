@@ -35,7 +35,6 @@ pub fn install(ctx: &Ctx) {
     dialog.on_prompt_done(|id, ok, value| {
         cx().ui().global::<Dialog>().set_prompt(PromptSpec::default());
         answer(id, if ok { Some(value.to_string()) } else { None });
-        restore_focus();
     });
 }
 
@@ -121,10 +120,12 @@ fn answer(id: i32, value: Option<String>) {
         }
     });
     let cb = WAITING.with(|w| w.borrow_mut().remove(&id));
-    restore_focus();
+    // The answer first: if it opens another dialog, that one keeps the focus (the page takes focus in a
+    // deferred `changed` handler, which would otherwise steal it from the new dialog).
     if let Some(cb) = cb {
         cb(value);
     }
+    restore_focus();
 }
 
 /// Close the topmost dialog as cancelled. False when none is open.
