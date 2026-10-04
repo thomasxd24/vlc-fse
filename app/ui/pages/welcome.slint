@@ -1,18 +1,110 @@
-// STUB — to be replaced by the real screen. Keep the exported names (WelcomePage, WelcomeView): app.slint and Rust use them.
+// Welcome: the first-run page (the renderer's VIEWS.welcome, shown instead of Home while the library is
+// empty). A big title, a paragraph, whether Steam and VLC were found, and a row of buttons to get going.
+
 import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
-import { PageScope } from "../widgets.slint";
+import { T, Input, Nav, Hints, Backdrop } from "../globals.slint";
+import { Btn, PageScope } from "../widgets.slint";
 
 export global WelcomePage {
-    in-out property <int> focus;
+    in-out property <int> focus;        // the focused button (0 = Add a game, the autofocus)
+    in property <bool> steam-found;
+    in property <string> vlc-path;      // "" = VLC not found
+    callback act(string);               // "add-game" | "add-movies" | "add-tv" | "settings"
 }
 
 export component WelcomeView inherits Rectangle {
-    PageScope {
+    private property <[string]> acts: ["add-game", "add-movies", "add-tv", "settings"];
+    private property <bool> active: scope.has-focus;
+
+    function set-focus(i: int) {
+        WelcomePage.focus = i;
+        Input.feedback("move");
+    }
+
+    init => {
+        Backdrop.src = "";
+        Hints.items = [{ button: "a", label: T.tr("hint.select") }, { button: "b", label: T.tr("hint.back") }, { button: "menu", label: T.tr("hint.menu") }];
+    }
+
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (e.text == Key.LeftArrow) { if (WelcomePage.focus > 0) { set-focus(WelcomePage.focus - 1); } return accept; }
+            if (e.text == Key.RightArrow) { if (WelcomePage.focus < acts.length - 1) { set-focus(WelcomePage.focus + 1); } return accept; }
+            if (e.text == Key.UpArrow) { Nav.focus-top(); Input.feedback("move"); return accept; }
+            if (e.text == Key.DownArrow) { return accept; }
+            if (e.text == Key.Return || e.text == " ") {
+                Input.feedback("select");
+                WelcomePage.act(acts[WelcomePage.focus]);
+                return accept;
+            }
             reject
         }
     }
-    Text { text: "WelcomeView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    // `.welcome`: a column centred vertically in the page (below the top bar), one gutter from the left.
+    VerticalLayout {
+        padding-top: Theme.page-top;
+        padding-bottom: 4 * Theme.rem;
+        padding-left: Theme.gutter;
+        padding-right: Theme.gutter;
+        alignment: center;
+        Text {
+            text: T.tr("welcome.title");
+            color: Theme.text;
+            font-size: 5 * Theme.rem;
+            font-weight: 700;
+            letter-spacing: -0.04 * 5 * Theme.rem;
+            wrap: word-wrap;
+        }
+        // p: 1.4rem, line-height 1.55, max-width 50rem, 1em margins.
+        HorizontalLayout {
+            padding-top: 1.4 * Theme.rem;
+            padding-bottom: 1.4 * Theme.rem;
+            alignment: start;
+            Text {
+                width: min(50 * Theme.rem, root.width - 2 * Theme.gutter);
+                text: T.tr("welcome.body");
+                color: Theme.muted;
+                font-size: 1.4 * Theme.rem;
+                wrap: word-wrap;   // (Slint has no line-height: the renderer's 1.55 isn't reproduced)
+            }
+        }
+        for ok[i] in [WelcomePage.steam-found, WelcomePage.vlc-path != ""]: HorizontalLayout {
+            // .check
+            padding-top: 0.6 * Theme.rem;
+            spacing: 0.8 * Theme.rem;
+            alignment: start;
+            Rectangle {
+                width: 0.7 * Theme.rem;
+                Rectangle {
+                    width: 0.7 * Theme.rem;
+                    height: 0.7 * Theme.rem;
+                    border-radius: self.width / 2;
+                    background: ok ? Theme.good : Theme.danger;
+                }
+            }
+            Text {
+                text: i == 0
+                    ? (ok ? T.tr("welcome.steamFound") : T.tr("welcome.steamMissing"))
+                    : (ok ? T.trv("welcome.vlcFound", ["path", WelcomePage.vlc-path]) : T.tr("welcome.vlcMissing"));
+                color: Theme.muted;
+                font-size: 1.15 * Theme.rem;
+                vertical-alignment: center;
+            }
+        }
+        // .actions
+        HorizontalLayout {
+            padding-top: 2 * Theme.rem;
+            spacing: 0.9 * Theme.rem;
+            alignment: start;
+            for a[i] in acts: Btn {
+                text: a == "add-game" ? T.tr("games.add") : a == "add-movies" ? T.tr("lib.addMovies") : a == "add-tv" ? T.tr("lib.addTv") : T.tr("tab.settings");
+                icon: a == "settings" ? "" : "plus";
+                primary: i == 0;
+                focused: root.active && WelcomePage.focus == i;
+                hovered => { if (Input.mode == "mouse") { WelcomePage.focus = i; } }
+                clicked => { WelcomePage.focus = i; Input.feedback("select"); WelcomePage.act(a); }
+            }
+        }
+    }
 }
