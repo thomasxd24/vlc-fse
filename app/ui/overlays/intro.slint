@@ -1,10 +1,125 @@
-// STUB — to be replaced by the real overlay. Keep the exported names (Intro, IntroView): app.slint and Rust use them.
+// The startup intro (the renderer's #splash): a band of light sweeps across the dark screen, the mark
+// blooms in with a breathing glow and the name rises letter by letter while the library loads
+// underneath; then the splash lifts. With Settings › Animations › Reduced it's the same intro as a
+// plain fade (the renderer's .intro-calm). Rust (app/src/ui/overlays/intro.rs) runs the timeline:
+// `open` → `playing` (once the window is on screen) → `leaving` → closed.
+
 import { Theme } from "../theme.slint";
+import { Icons } from "../icons.slint";
 
 export global Intro {
     in-out property <bool> open;
+    // The window is on screen: the animation runs (held on its first frame until then).
+    in property <bool> playing;
+    // A plain fade: nothing moves or scales.
+    in property <bool> calm;
+    // Lifting off (fades out over 0.6 s).
+    in property <bool> leaving;
+}
+
+// --spring and --out from styles.css.
+component Letter inherits Rectangle {
+    in property <string> letter;
+    in property <int> index;
+    width: txt.preferred-width;
+    height: txt.preferred-height;
+    txt := Text {
+        text: root.letter;
+        font-size: 2.8 * Theme.rem;
+        font-weight: 700;
+        color: Theme.text;
+        // letter-in: 0.55 s --out, from opacity 0 and 0.9rem lower; 280 ms + n × 65 ms in.
+        opacity: Intro.playing ? 1 : 0;
+        y: Intro.playing || Intro.calm ? 0 : 0.9 * Theme.rem;
+        animate opacity, y {
+            delay: 280ms + (root.index + 1) * 65ms;
+            duration: 550ms;
+            easing: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+    }
 }
 
 export component IntroView inherits Rectangle {
     visible: Intro.open;
+    background: Theme.bg;
+    clip: true;
+    opacity: Intro.leaving ? 0 : 1;
+    animate opacity { duration: 600ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+    // radial-gradient(55% 55% at 50% 44%, #17121a, var(--bg) 70%)
+    Rectangle {
+        width: 1.1 * max(parent.width, parent.height);
+        height: self.width;
+        x: (parent.width - self.width) / 2;
+        y: 0.44 * parent.height - self.height / 2;
+        background: @radial-gradient(circle, #17121a 0%, #110e15 35%, #07080c00 70%);
+    }
+
+    // The sweep: a band of light crosses the screen once (1.3 s, from 0.15 s).
+    if !Intro.calm: Rectangle {
+        width: parent.width;
+        height: 1.4 * parent.height;
+        y: -0.2 * parent.height;
+        x: Intro.playing ? parent.width : -parent.width;
+        animate x { delay: 150ms; duration: 1300ms; easing: cubic-bezier(0.2, 0.8, 0.2, 1); }
+        background: @linear-gradient(100deg, #ffbe6e00 35%, #ffbe6e29 47%, #ffffff38 50%, #ffbe6e29 53%, #ffbe6e00 65%);
+    }
+
+    // The splash swallows pointer input until it lifts.
+    if !Intro.leaving: TouchArea { }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 1.6 * Theme.rem;
+
+        // The mark with its glow (a drop-shadow in the renderer, breathing every 1.6 s from 0.5 s).
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 5.5 * Theme.rem;
+                height: 5.5 * Theme.rem;
+
+                // mark-in: 0.85 s --spring from 0.35 s; from opacity 0 (fully in at 55%), scale .35, -30°.
+                private property <bool> in: Intro.playing;
+                private property <float> mark-opacity: in ? 1 : 0;
+                animate mark-opacity { delay: 350ms; duration: Intro.calm ? 850ms : 470ms; easing: ease-out; }
+                private property <float> grow: in || Intro.calm ? 1 : 0;
+                animate grow { delay: 350ms; duration: 850ms; easing: cubic-bezier(0.34, 1.45, 0.64, 1); }
+                private property <float> breathe: Intro.calm ? 0 : (1 - cos(360deg * mod(animation-tick(), 1600ms) / 1600ms)) / 2;
+                private property <float> lift: Intro.leaving ? 1.35 : 1;
+                animate lift { duration: 600ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+                glow := Rectangle {
+                    private property <length> reach: (1.6 + 1.0 * parent.breathe) * Theme.rem * 2.2;
+                    width: parent.width + 2 * self.reach;
+                    height: self.width;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    opacity: parent.mark-opacity * (0.55 + 0.25 * parent.breathe) / 0.8;
+                    background: @radial-gradient(circle, #ff8a1eaa 0%, #ff8a1e55 30%, #ff8a1e00 70%);
+                    transform-origin: { x: self.width / 2, y: self.height / 2 };
+                    transform-scale: parent.lift * (0.35 + 0.65 * parent.grow);
+                }
+                Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: Icons.logo;
+                    image-fit: contain;
+                    opacity: parent.mark-opacity;
+                    transform-origin: { x: self.width / 2, y: self.height / 2 };
+                    transform-scale: parent.lift * (0.35 + 0.65 * parent.grow);
+                    transform-rotation: -30deg * (1 - parent.grow);
+                }
+            }
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: 0.06 * 2.8 * Theme.rem;
+            for letter[i] in ["L", "o", "u", "n", "g", "e"]: Letter {
+                letter: letter;
+                index: i;
+            }
+        }
+    }
 }
