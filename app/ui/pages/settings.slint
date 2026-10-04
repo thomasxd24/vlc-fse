@@ -1,18 +1,430 @@
-// STUB — to be replaced by the real screen. Keep the exported names (SettingsPage, SettingsView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
-import { PageScope } from "../widgets.slint";
+// Settings: one long column of sections (the renderer's VIEWS.settings, toggleRow, valueRow, updateRows,
+// controlsHelp). Rust (app/src/ui/pages/settings.rs) builds the rows as a flat list of `SetItem`s and owns
+// the focus: arrows, LT/RT, clicks and hovers go to Rust, which moves `line` / `col` (rows, and the
+// buttons in an actions line) the way the renderer's spatial navigation did — action lines remember the
+// button that was focused last. Slint draws the list and scrolls to keep the focused line in view.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav, Hints } from "../globals.slint";
+import { Btn, Icon, PageScope, Pointer } from "../widgets.slint";
+
+export struct SetBtn {
+    label: string,
+    icon: string,
+    primary: bool,
+    danger: bool,
+    disabled: bool,
+}
+
+export struct SetItem {
+    // "section" | "toggle" | "value" | "lib" | "buttons" | "fse" | "card" | "empty" | "stats" | "help" | "about"
+    kind: string,
+    name: string,      // row name, section title, or the text of a note / card / about block
+    desc: string,      // row description; fse: the paragraph
+    value: string,     // value rows: the value on the right
+    on: bool,          // toggles: on; fse: package installed (green dot)
+    tag: string,       // library rows: "Movies" / "TV"
+    buttons: [SetBtn], // "buttons" and "fse" lines
+    note: string,      // a faint note after the buttons (`.settings-actions .s-desc`)
+}
 
 export global SettingsPage {
-    in-out property <int> focus;
+    in property <[SetItem]> items;
+    // The focused item, and the button within it for action lines.
+    in property <int> line: -1;
+    in property <int> col;
+    // Scroll position, kept so the page comes back where it was.
+    in-out property <length> scroll;
+    callback move(string);             // "up" | "down" | "left" | "right" | "pgup" | "pgdn"
+    callback activate();               // A on the focused row / button
+    callback pointed(int, int, bool);  // line, col, clicked (false = hovered in mouse mode)
+}
+
+// `.toggle`: a pill with a sliding knob.
+component Toggle inherits Rectangle {
+    in property <bool> on;
+    in property <bool> focused;
+    width: 3.2 * Theme.rem;
+    height: 1.8 * Theme.rem;
+    border-radius: 1 * Theme.rem;
+    background: on ? Theme.accent : focused ? #c8ccd4 : #ffffff33;
+    animate background { duration: Motion.normal; }
+    Rectangle {
+        x: (on ? 1.6 : 0.2) * Theme.rem;
+        y: 0.2 * Theme.rem;
+        width: 1.4 * Theme.rem;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: #ffffff;
+        animate x { duration: Motion.normal; easing: Motion.ease; }
+    }
+}
+
+// `.setting`: a full-width row — name and description on the left; a value, a toggle, or (library
+// folders) a type tag in front.
+component SettingRow inherits Rectangle {
+    in property <SetItem> item;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    private property <color> sub: focused ? #3a3f4a : Theme.muted;
+    border-radius: 0.6 * Theme.rem;
+    background: focused ? Theme.focus : Theme.surface;
+    transform-scale: focused ? 1.015 : 1.0;
+    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    min-height: lay.preferred-height;
+    lay := HorizontalLayout {
+        padding-left: 1.4 * Theme.rem;
+        padding-right: 1.4 * Theme.rem;
+        padding-top: 1.1 * Theme.rem;
+        padding-bottom: 1.1 * Theme.rem;
+        spacing: 1.5 * Theme.rem;
+        if item.tag != "": VerticalLayout {
+            alignment: center;
+            Rectangle {
+                border-radius: 0.35 * Theme.rem;
+                background: focused ? #0000001f : Theme.surface-2;
+                width: tag.preferred-width + 1.4 * Theme.rem;
+                height: tag.preferred-height + 0.5 * Theme.rem;
+                tag := Text {
+                    text: item.tag.to-uppercase();
+                    color: focused ? Theme.accent-ink : Theme.text;
+                    font-size: 0.9 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: 0.06 * 0.9 * Theme.rem;
+                }
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 0.2 * Theme.rem;
+            Text {
+                text: item.name;
+                color: focused ? Theme.accent-ink : Theme.text;
+                font-size: 1.25 * Theme.rem;
+                font-weight: 600;
+                overflow: elide;
+            }
+            if item.desc != "": Text {
+                text: item.desc;
+                color: sub;
+                font-size: 1 * Theme.rem;
+                overflow: elide;
+            }
+        }
+        if item.kind == "toggle": VerticalLayout {
+            alignment: center;
+            Toggle { on: item.on; focused: root.focused; }
+        }
+        if item.kind == "value" && item.value != "": Text {
+            text: item.value;
+            color: sub;
+            font-size: 1.1 * Theme.rem;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            overflow: elide;
+            max-width: root.width * 0.4;
+            horizontal-stretch: 0;
+        }
+    }
+    Pointer {
+        hovered => { root.hovered(); }
+        clicked => { root.clicked(); }
+    }
+}
+
+// `.settings-actions`: a line of small buttons, optionally followed by a faint note.
+component ActionLine inherits HorizontalLayout {
+    in property <[SetBtn]> buttons;
+    in property <string> note;
+    in property <int> focus-col: -1;
+    callback clicked(int);
+    callback hovered(int);
+    spacing: 0.8 * Theme.rem;
+    alignment: start;
+    for b[j] in buttons: Btn {
+        small: true;
+        text: b.label;
+        icon: b.icon;
+        primary: b.primary;
+        danger: b.danger;
+        enabled: !b.disabled;
+        focused: j == root.focus-col;
+        clicked => { root.clicked(j); }
+        hovered => { root.hovered(j); }
+    }
+    if note != "": Text {
+        text: note;
+        color: Theme.faint;
+        font-size: 1 * Theme.rem;
+        vertical-alignment: center;
+    }
+}
+
+// The renderer's controlsHelp(): always the pad's glyphs, whatever the current input.
+component PadGlyph inherits Rectangle {
+    in property <string> button;
+    private property <bool> shoulder: button == "lb" || button == "rb" || button == "lt" || button == "rt";
+    height: 1.7 * Theme.rem;
+    width: max((shoulder ? 2.2 : 1.7) * Theme.rem, txt.preferred-width + 0.7 * Theme.rem);
+    border-radius: shoulder ? 0.45 * Theme.rem : self.height / 2;
+    background: button == "a" ? #6cc24a : button == "b" ? #e5534b : button == "x" ? #3b8eea : button == "y" ? #f2c230 : #d9dce3;
+    txt := Text {
+        text: button == "menu" ? "☰" : button.to-uppercase();
+        color: #0b0c10;
+        font-size: (shoulder ? 0.75 : button == "menu" ? 1.0 : 0.85) * Theme.rem;
+        font-weight: 800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component HelpHint inherits HorizontalLayout {
+    in property <string> button;
+    in property <string> label;
+    spacing: 0.5 * Theme.rem;
+    PadGlyph { button: root.button; }
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 1 * Theme.rem;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+}
+
+// `.controls-help` (flex-wrap in CSS: two fixed lines here).
+component ControlsHelp inherits VerticalLayout {
+    spacing: 0.8 * Theme.rem;
+    padding-top: 0.8 * Theme.rem;
+    padding-bottom: 0.4 * Theme.rem;
+    HorizontalLayout {
+        alignment: start;
+        spacing: 1.6 * Theme.rem;
+        HelpHint { button: "a"; label: T.tr("hint.select"); }
+        HelpHint { button: "b"; label: T.tr("hint.back"); }
+        HelpHint { button: "x"; label: T.tr("hint.options"); }
+        HelpHint { button: "y"; label: T.tr("hint.search"); }
+        HelpHint { button: "lb"; label: T.tr("help.prevTab"); }
+    }
+    HorizontalLayout {
+        alignment: start;
+        spacing: 1.6 * Theme.rem;
+        HelpHint { button: "rb"; label: T.tr("help.nextTab"); }
+        HelpHint { button: "lt"; label: T.tr("help.pageUp"); }
+        HelpHint { button: "rt"; label: T.tr("help.pageDown"); }
+        HelpHint { button: "menu"; label: T.tr("hint.menu"); }
+    }
+}
+
+// `.fse-card`: a surface card (FSE status with its buttons, or the "updates unsupported" note).
+component InfoCard inherits Rectangle {
+    in property <SetItem> item;
+    in property <int> focus-col: -1;
+    callback clicked(int);
+    callback hovered(int);
+    border-radius: 0.6 * Theme.rem;
+    background: Theme.surface;
+    min-height: lay.preferred-height;
+    lay := VerticalLayout {
+        padding-left: 1.4 * Theme.rem;
+        padding-right: 1.4 * Theme.rem;
+        padding-top: 1.2 * Theme.rem;
+        padding-bottom: 1.2 * Theme.rem;
+        spacing: 0;
+        // `.check`: a status dot and its text.
+        if item.kind == "fse": HorizontalLayout {
+            alignment: start;
+            spacing: 0.8 * Theme.rem;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 0.7 * Theme.rem;
+                    height: self.width;
+                    border-radius: self.width / 2;
+                    background: item.on ? Theme.good : Theme.danger;
+                }
+            }
+            Text {
+                text: item.name;
+                color: Theme.muted;
+                font-size: 1.15 * Theme.rem;
+            }
+        }
+        // `.fse-card p`
+        VerticalLayout {
+            padding-top: (item.kind == "fse" ? 0.6 : 0) * Theme.rem;
+            padding-bottom: 0.4 * Theme.rem;
+            Text {
+                text: item.kind == "fse" ? item.desc : item.name;
+                color: Theme.muted;
+                font-size: 1.05 * Theme.rem;
+                wrap: word-wrap;
+            }
+        }
+        if item.buttons.length > 0: VerticalLayout {
+            padding-top: 0.8 * Theme.rem;
+            padding-bottom: 0.4 * Theme.rem;
+            ActionLine {
+                buttons: item.buttons;
+                focus-col: root.focus-col;
+                clicked(j) => { root.clicked(j); }
+                hovered(j) => { root.hovered(j); }
+            }
+        }
+    }
 }
 
 export component SettingsView inherits Rectangle {
-    PageScope {
+    private property <int> lang-rev: T.rev;
+
+    function set-hints() {
+        Hints.items = [{ button: "a", label: T.tr("hint.select") }, { button: "b", label: T.tr("hint.back") }, { button: "y", label: T.tr("hint.search") }, { button: "menu", label: T.tr("hint.menu") }];
+    }
+    // Keep the focused line in view, with room under the top bar and above the hint bar.
+    function reveal(y: length, h: length) {
+        if (y + flick.content-y < 8 * Theme.rem) {
+            flick.content-y = min(0, -(y - 8 * Theme.rem));
+        }
+        if (y + h + flick.content-y > flick.height - 5 * Theme.rem) {
+            flick.content-y = -(y + h - flick.height + 5 * Theme.rem);
+        }
+        // Near the end (the last buttons): show the rest of the page, the about lines included.
+        if (body.preferred-height - (y + h) < 16 * Theme.rem) {
+            flick.content-y = min(0, -(body.preferred-height - flick.height));
+        }
+    }
+    function pointed(i: int, j: int, click: bool) {
+        if (click || Input.mode == "mouse") {
+            SettingsPage.pointed(i, j, click);
+        }
+    }
+    init => {
+        set-hints();
+        flick.content-y = SettingsPage.scroll;
+    }
+    changed lang-rev => { set-hints(); }
+
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (e.text == Key.UpArrow) { SettingsPage.move("up"); return accept; }
+            if (e.text == Key.DownArrow) { SettingsPage.move("down"); return accept; }
+            if (e.text == Key.LeftArrow) { SettingsPage.move("left"); return accept; }
+            if (e.text == Key.RightArrow) { SettingsPage.move("right"); return accept; }
+            if (e.text == Key.PageDown) { SettingsPage.move("pgdn"); return accept; }
+            if (e.text == Key.PageUp) { SettingsPage.move("pgup"); return accept; }
+            if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); SettingsPage.activate(); return accept; }
             reject
         }
     }
-    Text { text: "SettingsView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    flick := Flickable {
+        content-width: self.width;
+        content-height: body.preferred-height;
+        animate content-y { duration: Motion.normal; easing: Motion.ease; }
+        changed content-y => { SettingsPage.scroll = self.content-y; }
+        body := VerticalLayout {
+            // `.page.settings` + `.settings-grid { max-width: 70rem }`
+            padding-top: Theme.page-top;
+            padding-bottom: 4 * Theme.rem;
+            padding-left: Theme.gutter;
+            padding-right: max(Theme.gutter, root.width - Theme.gutter - 70 * Theme.rem);
+            spacing: 0;
+            alignment: start;
+            // .page-head (padding-left: 0)
+            VerticalLayout {
+                padding-top: 1 * Theme.rem;
+                padding-bottom: 1.2 * Theme.rem;
+                Text {
+                    text: T.tr("tab.settings");
+                    color: Theme.text;
+                    font-size: 3 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: -0.02 * 3 * Theme.rem;
+                }
+            }
+            for item[i] in SettingsPage.items: VerticalLayout {
+                private property <bool> current: SettingsPage.line == i;
+                private property <bool> lit: current && scope.has-focus;
+                changed current => {
+                    if (self.current) {
+                        root.reveal(self.y, self.height);
+                    }
+                }
+                if item.kind == "section": VerticalLayout {
+                    // `.section-title`: margin 2.4rem 0 0.8rem
+                    padding-top: 2.4 * Theme.rem;
+                    padding-bottom: 0.8 * Theme.rem;
+                    Text {
+                        text: item.name.to-uppercase();
+                        color: Theme.accent;
+                        font-size: 1 * Theme.rem;
+                        font-weight: 700;
+                        letter-spacing: 0.14 * Theme.rem;
+                    }
+                }
+                if item.kind == "toggle" || item.kind == "value" || item.kind == "lib": VerticalLayout {
+                    padding-bottom: 0.45 * Theme.rem;
+                    SettingRow {
+                        item: item;
+                        focused: lit;
+                        clicked => { root.pointed(i, 0, true); }
+                        hovered => { root.pointed(i, 0, false); }
+                    }
+                }
+                if item.kind == "buttons": VerticalLayout {
+                    padding-top: 0.8 * Theme.rem;
+                    padding-bottom: 0.4 * Theme.rem;
+                    ActionLine {
+                        buttons: item.buttons;
+                        note: item.note;
+                        focus-col: lit ? SettingsPage.col : -1;
+                        clicked(j) => { root.pointed(i, j, true); }
+                        hovered(j) => { root.pointed(i, j, false); }
+                    }
+                }
+                if item.kind == "fse" || item.kind == "card": VerticalLayout {
+                    padding-bottom: 0.45 * Theme.rem;
+                    InfoCard {
+                        item: item;
+                        focus-col: lit ? SettingsPage.col : -1;
+                        clicked(j) => { root.pointed(i, j, true); }
+                        hovered(j) => { root.pointed(i, j, false); }
+                    }
+                }
+                if item.kind == "empty": VerticalLayout {
+                    // `.empty-hint` with padding: 0.4rem 0 0.8rem
+                    padding-top: 0.4 * Theme.rem;
+                    padding-bottom: 0.8 * Theme.rem;
+                    Text {
+                        text: item.name;
+                        color: Theme.muted;
+                        font-size: 1.3 * Theme.rem;
+                        wrap: word-wrap;
+                    }
+                }
+                if item.kind == "stats": VerticalLayout {
+                    padding-top: 0.4 * Theme.rem;
+                    Text {
+                        text: item.name;
+                        color: Theme.faint;
+                        font-size: 1 * Theme.rem;
+                        wrap: word-wrap;
+                    }
+                }
+                if item.kind == "help": ControlsHelp { }
+                if item.kind == "about": VerticalLayout {
+                    padding-top: 2.5 * Theme.rem;
+                    Text {
+                        text: item.name;
+                        color: Theme.faint;
+                        font-size: 1 * Theme.rem;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
 }
