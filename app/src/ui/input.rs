@@ -217,3 +217,67 @@ mod pad {
         }
     }
 }
+
+/// Rumble the controllers: `strong` / `weak` motor magnitudes 0..1 for `ms` milliseconds (the pad
+/// tester's vibration buttons and L3 + R3). No-op without force feedback, and off Windows.
+pub fn rumble(strong: f32, weak: f32, ms: u32) {
+    #[cfg(windows)]
+    rumbler::play(strong, weak, ms);
+    #[cfg(not(windows))]
+    let _ = (strong, weak, ms);
+}
+
+#[cfg(windows)]
+mod rumbler {
+    //! Force feedback on its own gilrs instance and thread (the polling thread above is left alone);
+    //! requests arrive over a channel.
+    use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Repeat, Replay, Ticks};
+    use gilrs::Gilrs;
+    use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+
+    static TX: OnceLock<Mutex<Sender<(f32, f32, u32)>>> = OnceLock::new();
+
+    pub fn play(strong: f32, weak: f32, ms: u32) {
+        let tx = TX.get_or_init(|| {
+            let (tx, rx) = channel::<(f32, f32, u32)>();
+            std::thread::spawn(move || {
+                let Ok(mut gilrs) = Gilrs::new() else { return };
+                let mut playing = Vec::new();
+                loop {
+                    while gilrs.next_event().is_some() {}
+                    match rx.recv_timeout(Duration::from_millis(50)) {
+                        Ok((strong, weak, ms)) => {
+                            let pads: Vec<_> = gilrs.gamepads().filter(|(_, g)| g.is_connected() && g.is_ff_supported()).map(|(id, _)| id).collect();
+                            if pads.is_empty() {
+                                continue;
+                            }
+                            let replay = Replay { play_for: Ticks::from_ms(ms), ..Default::default() };
+                            let mag = |v: f32| (v.clamp(0.0, 1.0) * u16::MAX as f32) as u16;
+                            let effect = EffectBuilder::new()
+                                .add_effect(BaseEffect { kind: BaseEffectType::Strong { magnitude: mag(strong) }, scheduling: replay, ..Default::default() })
+                                .add_effect(BaseEffect { kind: BaseEffectType::Weak { magnitude: mag(weak) }, scheduling: replay, ..Default::default() })
+                                .repeat(Repeat::For(Ticks::from_ms(ms)))
+                                .gamepads(&pads)
+                                .finish(&mut gilrs);
+                            if let Ok(effect) = effect {
+                                let _ = effect.play();
+                                // Dropping an effect stops it: keep it until it has played.
+                                playing.push((effect, Instant::now() + Duration::from_millis(ms as u64 + 100)));
+                            }
+                        }
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    }
+                    let now = Instant::now();
+                    playing.retain(|(_, until)| *until > now);
+                }
+            });
+            Mutex::new(tx)
+        });
+        if let Ok(tx) = tx.lock() {
+            let _ = tx.send((strong, weak, ms));
+        }
+    }
+}

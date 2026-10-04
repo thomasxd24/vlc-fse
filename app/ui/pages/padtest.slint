@@ -1,18 +1,509 @@
-// STUB — to be replaced by the real screen. Keep the exported names (PadTestPage, PadTestView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
-import { PageScope } from "../widgets.slint";
+// The controller tester (the renderer's VIEWS.padtest, padDiagram, padStat, startPadTester): a drawing of
+// the pad that lights up what's pressed, the sticks' positions with their trails, the triggers' travel,
+// stick drift / roundness and the polling rate, the Legion Go halves' attach state and battery, and
+// vibration tests. While it's open the controller doesn't navigate (Rust captures it — see
+// app/src/ui/pages/padtest.rs); hold B to leave, L3 + R3 rumbles.
+//
+// The drawing keeps the renderer's SVG coordinates (a 640 × 330 viewbox), scaled by `u` (one unit).
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav } from "../globals.slint";
+import { Btn, Icon, PageScope } from "../widgets.slint";
+
+export struct PadHalf {
+    name: string,
+    state: string,     // "attached" | "detached" | "off" | "unknown"
+    text: string,      // "attached", "no data"…
+    battery: float,    // 0..1
+    pct: string,       // "64 %" or "–"
+}
+
+export struct PadRawByte {
+    index: int,
+    hex: string,
+    hl: bool,          // one of the bytes Lounge reads
+}
 
 export global PadTestPage {
-    in-out property <int> focus;
+    in-out property <int> focus;         // the focused action button (keyboard / mouse)
+    in property <bool> waiting: true;    // no controller yet: "Press any button"
+    in property <string> name;           // "Xbox Controller" (· 2 connected…)
+    in property <string> ids;            // "045e:028e · standard layout"
+    in property <bool> legion;           // the Legion Go badge
+    // Standard-mapping order: A B X Y LB RB LT RT View Menu L3 R3 Up Down Left Right Guide.
+    in property <[bool]> pressed;
+    in property <float> lt;
+    in property <float> rt;
+    in property <float> lx;
+    in property <float> ly;
+    in property <float> rx;
+    in property <float> ry;
+    // Stick trails as path commands in viewbox units ("M x y L x y …"), "" for none.
+    in property <string> trail-l;
+    in property <string> trail-r;
+    // Polling rate, left / right stick, left / right drift, left / right roundness, triggers, pressed.
+    in property <[string]> stats;
+    in property <bool> show-legion;
+    in property <[PadHalf]> halves;
+    in property <bool> raw-open;
+    in property <[PadRawByte]> raw;
+    in property <bool> no-hid;
+    in property <float> hold;            // holding B: 0..1, leaves at 1
+    callback action(string);             // "weak" | "strong" | "reset" | "raw"
+}
+
+// `.pb` — a pressable part of the drawing: a rounded rect or (radius = half the size) a circle.
+component PadPart inherits Rectangle {
+    in property <length> u;
+    in property <float> vx;
+    in property <float> vy;
+    in property <float> vw;
+    in property <float> vh;
+    in property <float> vr;
+    in property <bool> on;
+    in property <string> label;
+    in property <float> label-size: 15;
+    in property <color> idle: #ffffff1a;
+    in property <color> lit: Theme.accent;
+    x: vx * u;
+    y: vy * u;
+    width: vw * u;
+    height: vh * u;
+    border-radius: vr * u;
+    background: on ? lit : idle;
+    border-width: 1.5 * u;
+    border-color: on ? Theme.accent : #ffffff38;
+    animate background { duration: 60ms; }
+    if label != "": Text {
+        text: root.label;
+        color: on ? Theme.accent-ink : Theme.muted;
+        font-size: label-size * u;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// `.pt-trigger`: the trigger's travel fills the bar.
+component PadTrigger inherits Rectangle {
+    in property <length> u;
+    in property <float> vx;
+    in property <float> value;
+    in property <string> label;
+    x: vx * u;
+    y: 8 * u;
+    width: 118 * u;
+    height: 36 * u;
+    border-radius: 10 * u;
+    background: #ffffff14;
+    clip: true;
+    Rectangle {
+        x: 0;
+        width: parent.width * max(0, min(1, value));
+        border-radius: 10 * u;
+        background: Theme.accent;
+    }
+    Text {
+        text: root.label;
+        color: Theme.muted;
+        font-size: 15 * u;
+        font-weight: 700;
+    }
+}
+
+// `.pt-stick`: the click ring, the gate, a cross, the trail and the dot.
+component PadStick inherits Rectangle {
+    in property <length> u;
+    in property <float> cx;
+    in property <float> cy;
+    in property <float> sx;
+    in property <float> sy;
+    in property <bool> click;
+    in property <string> trail;
+    private property <float> r: 38;
+    PadPart {
+        u: root.u;
+        vx: cx - r - 6;
+        vy: cy - r - 6;
+        vw: 2 * (r + 6);
+        vh: 2 * (r + 6);
+        vr: r + 6;
+        on: click;
+        idle: #00000040;
+        lit: #ff8a1e59;
+    }
+    // .st-gate (the CSS dashes it; a faint ring here) and .st-cross.
+    Rectangle {
+        x: (cx - r) * u;
+        y: (cy - r) * u;
+        width: 2 * r * u;
+        height: 2 * r * u;
+        border-radius: r * u;
+        border-width: 1px;
+        border-color: #ffffff40;
+    }
+    Rectangle { x: (cx - r) * u; y: cy * u; width: 2 * r * u; height: 1px; background: #ffffff1f; }
+    Rectangle { x: cx * u; y: (cy - r) * u; width: 1px; height: 2 * r * u; background: #ffffff1f; }
+    if trail != "": Path {
+        x: 0;
+        y: 0;
+        width: 640 * u;
+        height: 330 * u;
+        viewbox-width: 640;
+        viewbox-height: 330;
+        commands: trail;
+        stroke: #3987e5cc;
+        stroke-width: 1.4 * u;
+    }
+    Rectangle {
+        x: (cx + sx * r - 9) * u;
+        y: (cy + sy * r - 9) * u;
+        width: 18 * u;
+        height: 18 * u;
+        border-radius: 9 * u;
+        background: Theme.text;
+        border-width: 2 * u;
+        border-color: Theme.bg;
+    }
+}
+
+// The whole drawing (`.pt-svg`).
+component PadDiagram inherits Rectangle {
+    private property <length> u: self.width / 640;
+    private property <[bool]> p: PadTestPage.pressed;
+    height: self.width * 330 / 640;
+
+    PadTrigger { u: root.u; vx: 70; value: PadTestPage.lt; label: "LT"; }
+    PadTrigger { u: root.u; vx: 452; value: PadTestPage.rt; label: "RT"; }
+    PadPart { u: root.u; vx: 70; vy: 54; vw: 118; vh: 24; vr: 12; on: p[4]; label: "LB"; }
+    PadPart { u: root.u; vx: 452; vy: 54; vw: 118; vh: 24; vr: 12; on: p[5]; label: "RB"; }
+    // .pt-body
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-width: 640;
+        viewbox-height: 330;
+        commands: "M150 86h340c62 0 104 40 116 104l14 80c7 38-20 56-46 44l-56-26c-14-7-26-10-44-10H172c-18 0-30 3-44 10l-56 26c-26 12-53-6-46-44l14-80C46 126 88 86 150 86z";
+        fill: Theme.surface;
+        stroke: Theme.line;
+        stroke-width: 2 * u;
+    }
+    PadPart { u: root.u; vx: 268; vy: 140; vw: 34; vh: 22; vr: 11; on: p[8]; label: "⧉"; }
+    PadPart { u: root.u; vx: 338; vy: 140; vw: 34; vh: 22; vr: 11; on: p[9]; label: "☰"; }
+    PadPart { u: root.u; vx: 306; vy: 176; vw: 28; vh: 28; vr: 14; on: p[16]; label: "⌂"; }
+    PadStick { u: root.u; cx: 160; cy: 150; sx: PadTestPage.lx; sy: PadTestPage.ly; click: p[10]; trail: PadTestPage.trail-l; }
+    PadStick { u: root.u; cx: 408; cy: 222; sx: PadTestPage.rx; sy: PadTestPage.ry; click: p[11]; trail: PadTestPage.trail-r; }
+    // D-pad: the centre square and the four arms.
+    Rectangle { x: 222 * u; y: 216 * u; width: 20 * u; height: 20 * u; background: #ffffff1a; }
+    for arm[i] in [
+        "M222 216h20v-18a6 6 0 0 0-6-6h-8a6 6 0 0 0-6 6z",
+        "M222 236h20v18a6 6 0 0 1-6 6h-8a6 6 0 0 1-6-6z",
+        "M222 216v20h-18a6 6 0 0 1-6-6v-8a6 6 0 0 1 6-6z",
+        "M242 216v20h18a6 6 0 0 0 6-6v-8a6 6 0 0 0-6-6z",
+    ]: Path {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        viewbox-width: 640;
+        viewbox-height: 330;
+        commands: arm;
+        fill: p[12 + i] ? Theme.accent : #ffffff1a;
+        stroke: p[12 + i] ? Theme.accent : #ffffff38;
+        stroke-width: 1.5 * u;
+    }
+    // Face buttons.
+    PadPart { u: root.u; vx: 468; vy: 174; vw: 32; vh: 32; vr: 16; on: p[0]; label: "A"; }
+    PadPart { u: root.u; vx: 500; vy: 144; vw: 32; vh: 32; vr: 16; on: p[1]; label: "B"; }
+    PadPart { u: root.u; vx: 436; vy: 144; vw: 32; vh: 32; vr: 16; on: p[2]; label: "X"; }
+    PadPart { u: root.u; vx: 468; vy: 114; vw: 32; vh: 32; vr: 16; on: p[3]; label: "Y"; }
+}
+
+// `.pt-stat`
+component PadStat inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    border-radius: 0.5 * Theme.rem;
+    background: Theme.surface;
+    HorizontalLayout {
+        padding-left: 0.9 * Theme.rem;
+        padding-right: 0.9 * Theme.rem;
+        padding-top: 0.55 * Theme.rem;
+        padding-bottom: 0.55 * Theme.rem;
+        spacing: 1 * Theme.rem;
+        Text { text: root.label; color: Theme.muted; font-size: 1.02 * Theme.rem; horizontal-stretch: 1; overflow: elide; }
+        Text { text: root.value == "" ? "–" : root.value; color: Theme.text; font-size: 1.02 * Theme.rem; font-weight: 700; horizontal-alignment: right; }
+    }
+}
+
+// A pad-style glyph for the help line (always the controller's buttons, whatever the input mode).
+component PadGlyph inherits Rectangle {
+    in property <string> text;
+    in property <color> fill: #d9dce3;
+    height: 1.7 * Theme.rem;
+    width: max(self.height, t.preferred-width + 0.7 * Theme.rem);
+    border-radius: self.height / 2;
+    background: fill;
+    t := Text { text: root.text; color: #0b0c10; font-size: 0.85 * Theme.rem; font-weight: 800; }
 }
 
 export component PadTestView inherits Rectangle {
-    PageScope {
+    private property <[string]> actions: ["weak", "strong", "reset", "raw"];
+    private property <length> inner: self.width - 2 * Theme.gutter;
+    private property <length> gap: 2 * Theme.rem;
+    private property <length> left-w: (inner - gap) * 1.35 / 2.35;
+    private property <length> right-w: inner - gap - left-w;
+
+    // Keyboard focus on the actions: bring them (at the bottom) into view; back to the top otherwise.
+    function reveal(show: bool) {
+        flick.content-y = show ? min(0, flick.height - flick.content-height) : 0;
+    }
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (PadTestPage.waiting) {
+                if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+                return reject;
+            }
+            reveal(e.text != Key.UpArrow || PadTestPage.focus >= 2);
+            if (e.text == Key.LeftArrow) { if (PadTestPage.focus > 0) { PadTestPage.focus -= 1; Input.feedback("move"); } return accept; }
+            if (e.text == Key.RightArrow) { if (PadTestPage.focus < actions.length - 1) { PadTestPage.focus += 1; Input.feedback("move"); } return accept; }
+            if (e.text == Key.UpArrow) {
+                if (PadTestPage.focus >= 2) { PadTestPage.focus -= 2; } else { Nav.focus-top(); }
+                Input.feedback("move");
+                return accept;
+            }
+            if (e.text == Key.DownArrow) {
+                if (PadTestPage.focus < 2) { PadTestPage.focus += 2; Input.feedback("move"); }
+                return accept;
+            }
+            if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); PadTestPage.action(actions[PadTestPage.focus]); return accept; }
             reject
         }
     }
-    Text { text: "PadTestView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    flick := Flickable {
+        content-width: self.width;
+        content-height: body.preferred-height;
+        animate content-y { duration: Motion.normal; easing: Motion.ease; }
+        body := VerticalLayout {
+            padding-top: Theme.page-top;
+            padding-bottom: 2 * Theme.rem;
+            alignment: start;
+            HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 1 * Theme.rem;
+                padding-bottom: 1.2 * Theme.rem;
+                spacing: 2 * Theme.rem;
+                Text {
+                    text: T.tr("pad.title");
+                    color: Theme.text;
+                    font-size: 3 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: -0.02 * 3 * Theme.rem;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: PadTestPage.waiting ? "" : PadTestPage.name;
+                    color: Theme.muted;
+                    font-size: 1.2 * Theme.rem;
+                    vertical-alignment: bottom;
+                    height: 3 * Theme.rem * 1.1;
+                    overflow: elide;
+                }
+            }
+            // .pt-waiting
+            if PadTestPage.waiting: VerticalLayout {
+                padding-top: 5 * Theme.rem;
+                padding-bottom: 5 * Theme.rem;
+                spacing: 1 * Theme.rem;
+                alignment: center;
+                Rectangle {
+                    height: 4.6 * Theme.rem;
+                    Icon {
+                        name: "gamepad";
+                        size: 4 * Theme.rem;
+                        tint: Theme.muted;
+                        // `animation: bob`
+                        y: Motion.reduced ? 0.3 * Theme.rem : (0.3 + 0.3 * sin(animation-tick() / 1600ms * 360deg)) * Theme.rem;
+                    }
+                }
+                Text {
+                    text: T.tr("pad.pressAny");
+                    color: Theme.muted;
+                    font-size: 1.3 * Theme.rem;
+                    horizontal-alignment: center;
+                }
+            }
+            // .pt-body: the drawing, and beside it the device, the Legion halves, the stats and the actions.
+            if !PadTestPage.waiting: HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                spacing: gap;
+                alignment: start;
+                VerticalLayout {
+                    alignment: start;
+                    PadDiagram { width: left-w; }
+                }
+                VerticalLayout {
+                    width: right-w;
+                    spacing: 0.35 * Theme.rem;
+                    alignment: start;
+                    // .pt-device
+                    HorizontalLayout {
+                        spacing: 0.7 * Theme.rem;
+                        padding-bottom: 0.65 * Theme.rem;
+                        alignment: start;
+                        if PadTestPage.legion: Rectangle {
+                            border-radius: 0.35 * Theme.rem;
+                            background: Theme.accent;
+                            width: badge.preferred-width + 1.2 * Theme.rem;
+                            height: badge.preferred-height + 0.4 * Theme.rem;
+                            badge := Text { text: "Legion Go"; color: Theme.accent-ink; font-size: 0.85 * Theme.rem; font-weight: 800; }
+                        }
+                        Text {
+                            text: PadTestPage.ids;
+                            color: Theme.muted;
+                            font-family: "Cascadia Mono";
+                            font-size: 1 * Theme.rem;
+                            vertical-alignment: center;
+                        }
+                    }
+                    // .pt-legion: each half's state and battery, and the raw report on request.
+                    if PadTestPage.show-legion: VerticalLayout {
+                        spacing: 0.35 * Theme.rem;
+                        padding-bottom: 0.65 * Theme.rem;
+                        for h in PadTestPage.halves: Rectangle {
+                            border-radius: 0.5 * Theme.rem;
+                            background: Theme.surface;
+                            HorizontalLayout {
+                                padding-left: 0.9 * Theme.rem;
+                                padding-right: 0.9 * Theme.rem;
+                                padding-top: 0.55 * Theme.rem;
+                                padding-bottom: 0.55 * Theme.rem;
+                                spacing: 0.8 * Theme.rem;
+                                Text { width: 9 * Theme.rem; text: h.name; color: Theme.text; font-weight: 600; overflow: elide; vertical-alignment: center; }
+                                Text {
+                                    width: 6.5 * Theme.rem;
+                                    text: h.text;
+                                    color: h.state == "attached" ? Theme.good : h.state == "off" ? #f5a524 : Theme.muted;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    Rectangle {
+                                        height: 0.4 * Theme.rem;
+                                        border-radius: self.height / 2;
+                                        background: #ffffff1f;
+                                        clip: true;
+                                        Rectangle {
+                                            x: 0;
+                                            width: parent.width * max(0, min(1, h.battery));
+                                            border-radius: parent.height / 2;
+                                            background: h.state == "detached" ? Theme.accent : Theme.good;
+                                        }
+                                    }
+                                }
+                                Text { width: 3.5 * Theme.rem; text: h.pct; color: Theme.text; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
+                            }
+                        }
+                        if PadTestPage.raw-open: Rectangle {
+                            border-radius: 0.5 * Theme.rem;
+                            background: #0000004d;
+                            VerticalLayout {
+                                padding: 0.8 * Theme.rem;
+                                spacing: 0.5 * Theme.rem;
+                                HorizontalLayout {
+                                    spacing: 0.2 * Theme.rem;
+                                    for byte in PadTestPage.raw: Rectangle {
+                                        horizontal-stretch: 1;
+                                        border-radius: 0.25 * Theme.rem;
+                                        background: byte.hl ? #ff8a1e40 : transparent;
+                                        VerticalLayout {
+                                            padding-top: 0.15 * Theme.rem;
+                                            padding-bottom: 0.15 * Theme.rem;
+                                            Text { text: byte.index; color: Theme.faint; font-size: 0.65 * Theme.rem; horizontal-alignment: center; }
+                                            Text { text: byte.hex; color: byte.hl ? Theme.text : Theme.muted; font-family: "Cascadia Mono"; font-size: 0.95 * Theme.rem; horizontal-alignment: center; }
+                                        }
+                                    }
+                                }
+                                Text { text: T.tr("pad.rawNote"); color: Theme.faint; font-size: 0.9 * Theme.rem; wrap: word-wrap; }
+                            }
+                        }
+                    }
+                    if PadTestPage.no-hid: Text {
+                        text: T.tr("pad.noHid");
+                        color: Theme.faint;
+                        font-size: 0.9 * Theme.rem;
+                        wrap: word-wrap;
+                    }
+                    // .pt-stats
+                    PadStat { label: T.tr("pad.rate"); value: PadTestPage.stats[0]; }
+                    PadStat { label: T.tr("pad.leftStick"); value: PadTestPage.stats[1]; }
+                    PadStat { label: T.tr("pad.rightStick"); value: PadTestPage.stats[2]; }
+                    PadStat { label: T.tr("pad.leftRest"); value: PadTestPage.stats[3]; }
+                    PadStat { label: T.tr("pad.rightRest"); value: PadTestPage.stats[4]; }
+                    PadStat { label: T.tr("pad.leftRound"); value: PadTestPage.stats[5]; }
+                    PadStat { label: T.tr("pad.rightRound"); value: PadTestPage.stats[6]; }
+                    PadStat { label: T.tr("pad.triggers"); value: PadTestPage.stats[7]; }
+                    PadStat { label: T.tr("pad.pressed"); value: PadTestPage.stats[8]; }
+                    // .pt-actions (wrapping onto a second line, as on narrow screens).
+                    VerticalLayout {
+                        padding-top: 0.65 * Theme.rem;
+                        spacing: 0.9 * Theme.rem;
+                        for line in 2: HorizontalLayout {
+                            spacing: 0.9 * Theme.rem;
+                            alignment: start;
+                            for k[j] in line == 0 ? ["weak", "strong"] : ["reset", "raw"]: Btn {
+                                private property <int> index: line * 2 + j;
+                                small: true;
+                                text: k == "weak" ? T.tr("pad.rumbleWeak") : k == "strong" ? T.tr("pad.rumbleStrong") : k == "reset" ? T.tr("pad.reset") : PadTestPage.raw-open ? T.tr("pad.hideRaw") : T.tr("pad.showRaw");
+                                icon: k == "reset" ? "restart" : "";
+                                focused: scope.has-focus && PadTestPage.focus == index;
+                                hovered => { if (Input.mode == "mouse") { PadTestPage.focus = index; } }
+                                clicked => { PadTestPage.focus = index; PadTestPage.action(k); }
+                            }
+                        }
+                    }
+                }
+            }
+            // .pt-help: hold B (with its progress ring) to go back; L3 + R3 to rumble.
+            HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 1.4 * Theme.rem;
+                spacing: 2.4 * Theme.rem;
+                alignment: start;
+                HorizontalLayout {
+                    spacing: 0.5 * Theme.rem;
+                    Rectangle {
+                        width: 1.7 * Theme.rem;
+                        height: 1.7 * Theme.rem;
+                        y: (parent.height - self.height) / 2;
+                        PadGlyph { text: "B"; fill: #e5534b; }
+                        if PadTestPage.hold > 0: Path {
+                            private property <float> a: min(PadTestPage.hold, 0.999);
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            width: 2.1 * Theme.rem;
+                            height: 2.1 * Theme.rem;
+                            viewbox-width: 100;
+                            viewbox-height: 100;
+                            stroke: Theme.accent;
+                            stroke-width: 0.18 * Theme.rem;
+                            commands: "M 50 5 A 45 45 0 " + (a > 0.5 ? "1" : "0") + " 1 " + (50 + 45 * sin(a * 360deg)) + " " + (50 - 45 * cos(a * 360deg));
+                        }
+                    }
+                    Text { text: T.tr("pad.holdB"); color: Theme.muted; font-size: 1.05 * Theme.rem; vertical-alignment: center; }
+                }
+                HorizontalLayout {
+                    spacing: 0.5 * Theme.rem;
+                    PadGlyph { text: "L3"; y: (parent.height - self.height) / 2; }
+                    Text { text: "+"; color: Theme.muted; font-size: 1.05 * Theme.rem; vertical-alignment: center; }
+                    PadGlyph { text: "R3"; y: (parent.height - self.height) / 2; }
+                    Text { text: T.tr("pad.l3r3"); color: Theme.muted; font-size: 1.05 * Theme.rem; vertical-alignment: center; }
+                }
+            }
+        }
+    }
 }

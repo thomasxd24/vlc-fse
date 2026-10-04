@@ -1,18 +1,266 @@
-// STUB — to be replaced by the real screen. Keep the exported names (RemotePage, RemoteView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
-import { PageScope } from "../widgets.slint";
+// Browsing a server (the renderer's VIEWS.remote): the server's name and the current path, a "Download
+// this folder" chip, and the folder's entries as a list. Folders open (a new page on the stack, so Back
+// climbs out), files download; X offers both. Rust (app/src/ui/pages/remote.rs) loads listings and keeps
+// each folder's listing and focus so Back returns to where you were.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav, Hints } from "../globals.slint";
+import { Chip, Btn, Icon, Spinner, PageScope, Pointer } from "../widgets.slint";
+
+export struct RemoteEntry {
+    name: string,
+    kind: string,      // "dir" | "video" | "other"
+    size: string,      // "1.4 GB", "" for folders
+}
 
 export global RemotePage {
+    in property <string> title;          // the server's name
+    in property <string> path;
+    in property <string> status;         // "loading" | "error" | "empty" | "list"
+    in property <string> error;
+    in property <[RemoteEntry]> entries;
+    in-out property <int> zone: 1;       // 0 = the toolbar chip, 1 = the list
     in-out property <int> focus;
+    // Bumped by Rust when another folder (or its listing) is shown, so the view scrolls to the focus.
+    in property <int> rev;
+    callback open(int);
+    callback options(int);
+    callback download-here();
+    callback retry();
+}
+
+component RemoteRow inherits Rectangle {
+    in property <RemoteEntry> entry;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    callback options();
+    border-radius: 0.6 * Theme.rem;
+    background: focused ? Theme.focus : Theme.surface;
+    transform-scale: focused ? 1.01 : 1.0;
+    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    HorizontalLayout {
+        padding-left: 1.2 * Theme.rem;
+        padding-right: 1.2 * Theme.rem;
+        padding-top: 0.85 * Theme.rem;
+        padding-bottom: 0.85 * Theme.rem;
+        spacing: 1 * Theme.rem;
+        Rectangle {
+            width: 1.6 * Theme.rem;
+            Icon {
+                name: entry.kind == "dir" ? "folder" : entry.kind == "video" ? "play" : "file";
+                size: (entry.kind == "video" ? 1.1 : 1.4) * Theme.rem;
+                tint: focused ? Theme.accent-ink : entry.kind == "dir" ? Theme.accent : Theme.muted;
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: entry.name;
+            color: focused ? Theme.accent-ink : entry.kind == "other" ? Theme.muted : Theme.text;
+            font-size: 1.15 * Theme.rem;
+            font-weight: 600;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        if entry.size != "": Text {
+            text: entry.size;
+            color: focused ? #3a3f4a : Theme.muted;
+            font-size: 1 * Theme.rem;
+            vertical-alignment: center;
+        }
+    }
+    Pointer {
+        hovered => { root.hovered(); }
+        options => { root.options(); }
+        clicked => {
+            if (!self.consume-long-press()) {
+                root.clicked();
+            }
+        }
+    }
 }
 
 export component RemoteView inherits Rectangle {
-    PageScope {
+    private property <int> n: RemotePage.entries.length;
+    private property <bool> listing: RemotePage.status == "list";
+    private property <length> row-h: 1.15 * Theme.rem * 1.4 + 1.7 * Theme.rem;
+    private property <length> row-gap: 0.35 * Theme.rem;
+
+    function set-hints() {
+        Hints.items = listing && RemotePage.zone == 1
+            ? [{ button: "a", label: T.tr("hint.select") }, { button: "x", label: T.tr("hint.options") }, { button: "b", label: T.tr("hint.back") }, { button: "menu", label: T.tr("hint.menu") }]
+            : [{ button: "a", label: T.tr("hint.select") }, { button: "b", label: T.tr("hint.back") }, { button: "menu", label: T.tr("hint.menu") }];
+    }
+    function set-row(i: int) {
+        RemotePage.zone = 1;
+        RemotePage.focus = i;
+        reveal();
+        set-hints();
+    }
+    function set-chip() {
+        RemotePage.zone = 0;
+        reveal();
+        set-hints();
+    }
+    function reveal() {
+        if (!listing || RemotePage.zone == 0) {
+            flick.content-y = 0;
+            return;
+        }
+        let top = list.y + 0.4 * Theme.rem + RemotePage.focus * (row-h + row-gap);
+        if (top + flick.content-y < 8 * Theme.rem) {
+            flick.content-y = min(0, -(top - 8 * Theme.rem));
+        }
+        if (top + row-h + flick.content-y > flick.height - 4 * Theme.rem) {
+            flick.content-y = -(top + row-h - flick.height + 4 * Theme.rem);
+        }
+    }
+    private property <int> rev: RemotePage.rev;
+    changed rev => { reveal(); set-hints(); }
+    changed listing => { set-hints(); }
+    init => { reveal(); set-hints(); }
+
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (RemotePage.status == "error") {
+                if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); RemotePage.retry(); return accept; }
+                if (e.text == Key.UpArrow) { Nav.focus-top(); Input.feedback("move"); return accept; }
+                if (e.text == Key.DownArrow || e.text == Key.LeftArrow || e.text == Key.RightArrow) { return accept; }
+                return reject;
+            }
+            if (!listing) {
+                if (e.text == Key.UpArrow) { Nav.focus-top(); Input.feedback("move"); return accept; }
+                return reject;
+            }
+            if (RemotePage.zone == 0) {
+                if (e.text == Key.UpArrow) { Nav.focus-top(); Input.feedback("move"); return accept; }
+                if (e.text == Key.DownArrow) { set-row(min(RemotePage.focus, n - 1)); Input.feedback("move"); return accept; }
+                if (e.text == Key.LeftArrow || e.text == Key.RightArrow) { return accept; }
+                if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); RemotePage.download-here(); return accept; }
+                return reject;
+            }
+            if (e.text == Key.UpArrow) {
+                if (RemotePage.focus > 0) { set-row(RemotePage.focus - 1); } else { set-chip(); }
+                Input.feedback("move");
+                return accept;
+            }
+            if (e.text == Key.DownArrow) {
+                if (RemotePage.focus < n - 1) { set-row(RemotePage.focus + 1); Input.feedback("move"); }
+                return accept;
+            }
+            if (e.text == Key.LeftArrow || e.text == Key.RightArrow) { return accept; }
+            if (e.text == Key.PageDown) { set-row(min(n - 1, RemotePage.focus + 8)); Input.feedback("move"); return accept; }
+            if (e.text == Key.PageUp) { set-row(max(0, RemotePage.focus - 8)); Input.feedback("move"); return accept; }
+            if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); RemotePage.open(RemotePage.focus); return accept; }
+            if (e.text == Key.Menu) { RemotePage.options(RemotePage.focus); return accept; }
             reject
         }
     }
-    Text { text: "RemoteView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    flick := Flickable {
+        content-width: self.width;
+        content-height: body.preferred-height;
+        animate content-y { duration: Motion.normal; easing: Motion.ease; }
+        body := VerticalLayout {
+            padding-top: Theme.page-top;
+            alignment: start;
+            // .page-head: the server's name and the path (the count slot).
+            HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 1 * Theme.rem;
+                padding-bottom: 1.2 * Theme.rem;
+                spacing: 2 * Theme.rem;
+                Text {
+                    text: RemotePage.title;
+                    color: Theme.text;
+                    font-size: 3 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: -0.02 * 3 * Theme.rem;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: RemotePage.path;
+                    color: Theme.muted;
+                    font-size: 1.2 * Theme.rem;
+                    vertical-alignment: bottom;
+                    height: 3 * Theme.rem * 1.1;
+                    overflow: elide;
+                }
+            }
+            if listing: HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-bottom: 0.8 * Theme.rem;
+                alignment: start;
+                Chip {
+                    text: T.tr("xfer.downloadFolder");
+                    icon: "download";
+                    accent: true;
+                    focused: scope.has-focus && RemotePage.zone == 0;
+                    hovered => { if (Input.mode == "mouse") { set-chip(); } }
+                    clicked => { set-chip(); RemotePage.download-here(); }
+                }
+            }
+            // .remote-state: connecting, an error with Try again, or an empty folder.
+            if RemotePage.status == "loading": HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 1 * Theme.rem;
+                spacing: 0.5 * Theme.rem;
+                alignment: start;
+                Spinner { size: 1.2 * Theme.rem; y: (parent.height - self.height) / 2; }
+                Text { text: T.tr("xfer.connecting"); color: Theme.muted; font-size: 1.2 * Theme.rem; vertical-alignment: center; }
+            }
+            if RemotePage.status == "empty": HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 1 * Theme.rem;
+                Text { text: T.tr("xfer.empty"); color: Theme.muted; font-size: 1.2 * Theme.rem; }
+            }
+            if RemotePage.status == "error": VerticalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 1 * Theme.rem;
+                spacing: 1 * Theme.rem;
+                alignment: start;
+                Text {
+                    text: RemotePage.error;
+                    color: Theme.muted;
+                    font-size: 1.2 * Theme.rem;
+                    wrap: word-wrap;
+                    max-width: 50 * Theme.rem;
+                }
+                HorizontalLayout {
+                    padding-top: 1 * Theme.rem;
+                    alignment: start;
+                    Btn {
+                        text: T.tr("xfer.retry");
+                        icon: "refresh";
+                        primary: true;
+                        focused: scope.has-focus;
+                        clicked => { RemotePage.retry(); }
+                    }
+                }
+            }
+            list := VerticalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 0.4 * Theme.rem;
+                padding-bottom: 3 * Theme.rem;
+                spacing: row-gap;
+                if listing: VerticalLayout {
+                    spacing: row-gap;
+                    for e[i] in RemotePage.entries: RemoteRow {
+                        height: row-h;
+                        entry: e;
+                        focused: scope.has-focus && RemotePage.zone == 1 && RemotePage.focus == i;
+                        hovered => { if (Input.mode == "mouse") { set-row(i); } }
+                        clicked => { set-row(i); RemotePage.open(i); }
+                        options => { set-row(i); RemotePage.options(i); }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -1,18 +1,262 @@
-// STUB — to be replaced by the real screen. Keep the exported names (AppsPage, AppsView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
-import { PageScope } from "../widgets.slint";
+// Apps (the renderer's VIEWS.apps and appTile): the installed Start-menu apps as square tiles — the app's
+// icon (or its initial) on a gradient from its name's hue — with sort / filter chips and Refresh. Rust:
+// app/src/ui/pages/apps.rs. Works like the Games grid (pages/grid.slint): toolbar zone, grid zone.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Art, Input, Nav, Hints } from "../globals.slint";
+import { PageScope, Pointer } from "../widgets.slint";
+import { ChipBar, GridChip } from "grid.slint";
+
+export struct AppTile {
+    id: string,
+    name: string,
+    icon: string,      // image path ("" = show the initial)
+    letter: string,
+    tint-a: color,     // the art's radial gradient: hsl(h 30% 24%) → hsl(h+30 35% 11%)
+    tint-b: color,
+    hidden: bool,
+}
 
 export global AppsPage {
-    in-out property <int> focus;
+    in property <string> count;          // "6 apps"
+    in property <[GridChip]> chips;
+    in property <[AppTile]> apps;
+    in property <string> empty;          // shown when there are no tiles
+    in-out property <int> zone: 1;       // 0 = toolbar, 1 = grid
+    in-out property <int> chip;
+    in-out property <int> focus;         // the focused tile
+    callback chip-clicked(string);       // chip value
+    callback open(int);
+    callback options(int);
+}
+
+// `.card.app-tile`: a square art tile with the name centred under it.
+component AppTileView inherits VerticalLayout {
+    in property <AppTile> app;
+    in property <bool> focused;
+    in property <length> tile-width;
+    callback clicked();
+    callback hovered();
+    callback options();
+    width: tile-width;
+    spacing: 0.7 * Theme.rem;
+    alignment: start;
+
+    Rectangle {
+        height: root.tile-width;
+        border-radius: Theme.radius;
+        transform-scale: focused ? Motion.card-zoom : 1.0;
+        transform-origin: { x: self.width / 2, y: self.height / 2 };
+        animate transform-scale { duration: Motion.normal; easing: Motion.ease; }
+        drop-shadow-blur: focused ? 3 * Theme.rem : 1.6 * Theme.rem;
+        drop-shadow-offset-y: focused ? 1.2 * Theme.rem : 0.6 * Theme.rem;
+        drop-shadow-color: focused ? #000000b3 : #00000073;
+        Rectangle {
+            border-radius: Theme.radius;
+            clip: true;
+            opacity: app.hidden ? 0.45 : 1;
+            background: app.tint-b;
+            // radial-gradient(120% 120% at 30% 20%, …): a circle centred up and left of the middle.
+            Rectangle {
+                x: parent.width * 0.3 - self.width / 2;
+                y: parent.height * 0.2 - self.height / 2;
+                width: parent.width * 2.4;
+                height: parent.height * 2.4;
+                background: @radial-gradient(circle, app.tint-a 0%, app.tint-b 50%);
+            }
+            if app.icon != "": Image {
+                width: parent.width * 0.46;
+                height: parent.height * 0.46;
+                source: Art.get(app.icon, self.width);
+                image-fit: contain;
+            }
+            if app.icon == "": Text {
+                text: app.letter;
+                color: #ffffffd9;
+                font-size: 3 * Theme.rem;
+                font-weight: 700;
+            }
+        }
+        // Focus ring, outside the art.
+        Rectangle {
+            x: -0.22 * Theme.rem;
+            y: -0.22 * Theme.rem;
+            width: parent.width + 0.44 * Theme.rem;
+            height: parent.height + 0.44 * Theme.rem;
+            border-radius: Theme.radius + 0.22 * Theme.rem;
+            border-width: 0.22 * Theme.rem;
+            border-color: Theme.focus;
+            opacity: focused ? 1 : 0;
+            animate opacity { duration: Motion.fast; }
+        }
+        Pointer {
+            hovered => { root.hovered(); }
+            options => { root.options(); }
+            clicked => {
+                if (!self.consume-long-press()) {
+                    root.clicked();
+                }
+            }
+        }
+    }
+    Text {
+        text: app.name;
+        color: Theme.text;
+        opacity: focused ? 1 : 0.85;
+        font-size: 1.05 * Theme.rem;
+        font-weight: 600;
+        overflow: elide;
+        horizontal-alignment: center;
+    }
 }
 
 export component AppsView inherits Rectangle {
-    PageScope {
+    // Columns: `repeat(auto-fill, minmax(9.5rem, 1fr))` with 2rem / 1.5rem gaps.
+    private property <length> gap-x: 1.5 * Theme.rem;
+    private property <length> gap-y: 2 * Theme.rem;
+    private property <length> inner: self.width - 2 * Theme.gutter;
+    private property <int> cols: max(1, floor((inner + gap-x) / (9.5 * Theme.rem + gap-x)));
+    private property <length> tile: (inner - (cols - 1) * gap-x) / cols;
+    private property <length> tile-h: tile + 0.7 * Theme.rem + 1.05 * Theme.rem * 1.4;
+    private property <int> n: AppsPage.apps.length;
+
+    function set-hints() {
+        Hints.items = [
+            { button: "a", label: AppsPage.zone == 1 && n > 0 ? T.tr("apps.open") : T.tr("hint.select") },
+            { button: "x", label: T.tr("hint.options") },
+            { button: "b", label: T.tr("hint.back") },
+            { button: "menu", label: T.tr("hint.menu") },
+        ];
+    }
+    function set-card(i: int) {
+        AppsPage.zone = 1;
+        AppsPage.focus = i;
+        reveal();
+        set-hints();
+    }
+    function set-chip(i: int) {
+        AppsPage.zone = 0;
+        AppsPage.chip = i;
+        reveal();
+        set-hints();
+    }
+    function reveal() {
+        if (AppsPage.zone == 0) {
+            flick.content-y = 0;
+        } else {
+            let row = floor(AppsPage.focus / cols);
+            let top = grid.y + 1 * Theme.rem + row * (tile-h + gap-y);
+            if (top + flick.content-y < 8 * Theme.rem) {
+                flick.content-y = min(0, -(top - 8 * Theme.rem));
+            }
+            if (top + tile-h + flick.content-y > flick.height - 3 * Theme.rem) {
+                flick.content-y = -(top + tile-h - flick.height + 3 * Theme.rem);
+            }
+        }
+    }
+    changed n => {
+        if (AppsPage.focus >= n) { AppsPage.focus = max(0, n - 1); }
+        if (n == 0 && AppsPage.zone == 1) { AppsPage.zone = 0; }
+        set-hints();
+    }
+    init => {
+        if (AppsPage.focus >= n) { AppsPage.focus = max(0, n - 1); }
+        if (n == 0) { AppsPage.zone = 0; }
+        set-hints();
+        reveal();
+    }
+
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (AppsPage.zone == 0) {
+                if (e.text == Key.LeftArrow) { if (AppsPage.chip > 0) { set-chip(AppsPage.chip - 1); Input.feedback("move"); } return accept; }
+                if (e.text == Key.RightArrow) { if (AppsPage.chip < AppsPage.chips.length - 1) { set-chip(AppsPage.chip + 1); Input.feedback("move"); } return accept; }
+                if (e.text == Key.UpArrow) { Nav.focus-top(); Input.feedback("move"); return accept; }
+                if (e.text == Key.DownArrow) { if (n > 0) { set-card(min(AppsPage.focus, n - 1)); Input.feedback("move"); } return accept; }
+                if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); AppsPage.chip-clicked(AppsPage.chips[AppsPage.chip].value); return accept; }
+                return reject;
+            }
+            if (e.text == Key.LeftArrow) { if (mod(AppsPage.focus, cols) > 0) { set-card(AppsPage.focus - 1); Input.feedback("move"); } return accept; }
+            if (e.text == Key.RightArrow) { if (mod(AppsPage.focus, cols) < cols - 1 && AppsPage.focus < n - 1) { set-card(AppsPage.focus + 1); Input.feedback("move"); } return accept; }
+            if (e.text == Key.UpArrow) {
+                if (AppsPage.focus >= cols) { set-card(AppsPage.focus - cols); } else { set-chip(AppsPage.chip); }
+                Input.feedback("move");
+                return accept;
+            }
+            if (e.text == Key.DownArrow) {
+                if (AppsPage.focus + cols < n) { set-card(AppsPage.focus + cols); Input.feedback("move"); }
+                else if (floor(AppsPage.focus / cols) < floor((n - 1) / cols)) { set-card(n - 1); Input.feedback("move"); }
+                return accept;
+            }
+            if (e.text == Key.PageDown) { set-card(min(n - 1, AppsPage.focus + cols * 3)); return accept; }
+            if (e.text == Key.PageUp) { set-card(max(0, AppsPage.focus - cols * 3)); return accept; }
+            if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); AppsPage.open(AppsPage.focus); return accept; }
+            if (e.text == Key.Menu) { AppsPage.options(AppsPage.focus); return accept; }
             reject
         }
     }
-    Text { text: "AppsView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    flick := Flickable {
+        content-width: self.width;
+        content-height: body.preferred-height;
+        animate content-y { duration: Motion.normal; easing: Motion.ease; }
+        body := VerticalLayout {
+            padding-top: Theme.page-top;
+            padding-bottom: 4 * Theme.rem;
+            alignment: start;
+            HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 1 * Theme.rem;
+                padding-bottom: 1.2 * Theme.rem;
+                spacing: 2 * Theme.rem;
+                alignment: start;
+                Text {
+                    text: T.tr("tab.apps");
+                    color: Theme.text;
+                    font-size: 3 * Theme.rem;
+                    font-weight: 700;
+                    letter-spacing: -0.02 * 3 * Theme.rem;
+                }
+                Text {
+                    text: AppsPage.count;
+                    color: Theme.muted;
+                    font-size: 1.2 * Theme.rem;
+                    vertical-alignment: bottom;
+                    height: 3 * Theme.rem * 1.1;
+                }
+            }
+            ChipBar {
+                chips: AppsPage.chips;
+                focus-index: scope.has-focus && AppsPage.zone == 0 ? AppsPage.chip : -1;
+                clicked(i) => { set-chip(i); AppsPage.chip-clicked(AppsPage.chips[i].value); }
+                hovered(i) => { if (Input.mode == "mouse") { set-chip(i); } }
+            }
+            // .empty-hint
+            if n == 0: HorizontalLayout {
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-top: 3 * Theme.rem;
+                Text {
+                    text: AppsPage.empty;
+                    color: Theme.muted;
+                    font-size: 1.3 * Theme.rem;
+                    wrap: word-wrap;
+                }
+            }
+            grid := Rectangle {
+                height: n == 0 ? 0 : ceil(n / cols) * (tile-h + gap-y) + 1 * Theme.rem;
+                for a[i] in AppsPage.apps: AppTileView {
+                    x: Theme.gutter + mod(i, cols) * (tile + gap-x);
+                    y: 1 * Theme.rem + floor(i / cols) * (tile-h + gap-y);
+                    tile-width: tile;
+                    app: a;
+                    focused: scope.has-focus && AppsPage.zone == 1 && AppsPage.focus == i;
+                    hovered => { if (Input.mode == "mouse") { set-card(i); } }
+                    clicked => { set-card(i); AppsPage.open(i); }
+                    options => { set-card(i); AppsPage.options(i); }
+                }
+            }
+        }
+    }
 }
