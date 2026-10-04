@@ -1,0 +1,176 @@
+// Pieces the three detail pages (game.slint, movie.slint, show.slint) share — the renderer's `.detail`
+// styles: the poster, the `.meta` line (metaLine / gameMetaLine), the `.actions` row of buttons, and the
+// "not found" page.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Art, Input, Nav, Hints } from "../globals.slint";
+import { Artwork, Btn, Icon } from "../widgets.slint";
+
+// One item of the `.meta` line under the title.
+export struct MetaBit {
+    text: string,
+    kind: string,   // "" plain | "rating" (★ 7.8) | "pill" | "fav" (gold pill) | "score" (metacritic)
+    icon: string,   // pills: an icon before the text
+}
+
+// One button of the `.actions` row. `value` goes back to Rust through the page's `act` callback.
+export struct DetailAction {
+    label: string,  // "" = icon-only (the ⋯ options button)
+    icon: string,
+    value: string,
+    primary: bool,
+}
+
+// The detail pages' button hints: A (Select / Play), B, X, Y (pad only), ☰ — the renderer's Hints.update.
+export global DetailHints {
+    public function set(select: string) {
+        if (Input.mode == "pad") {
+            Hints.items = [{ button: "a", label: select }, { button: "b", label: T.tr("hint.back") }, { button: "x", label: T.tr("hint.options") }, { button: "y", label: T.tr("hint.search") }, { button: "menu", label: T.tr("hint.menu") }];
+        } else {
+            Hints.items = [{ button: "a", label: select }, { button: "b", label: T.tr("hint.back") }, { button: "x", label: T.tr("hint.options") }, { button: "menu", label: T.tr("hint.menu") }];
+        }
+    }
+}
+
+// `.detail-poster`: 17rem, 2:3, rounded, with a deep shadow. Games without a cover get their icon over
+// the generated gradient.
+export component DetailPoster inherits Rectangle {
+    in property <string> path;
+    in property <string> title;
+    in property <color> tint;
+    in property <string> icon;
+    width: 17 * Theme.rem;
+    height: self.width * 3 / 2;
+    border-radius: Theme.radius;
+    drop-shadow-blur: 4 * Theme.rem;
+    drop-shadow-offset-y: 1.5 * Theme.rem;
+    drop-shadow-color: #00000099;
+    Artwork {
+        border-radius: Theme.radius;
+        path: root.path;
+        title: root.title;
+        tint: root.tint;
+        if root.path == "" && root.icon != "": Image {
+            x: (parent.width - self.width) / 2;
+            y: parent.height * 0.3;
+            width: parent.width * 0.4;
+            height: self.width;
+            source: Art.get(root.icon, self.width);
+            image-fit: contain;
+        }
+    }
+}
+
+// `.meta`: muted bits in a row; the rating gets a gold star, pills a thin border.
+export component MetaLine inherits HorizontalLayout {
+    in property <[MetaBit]> bits;
+    spacing: 1.1 * Theme.rem;
+    alignment: start;
+    for bit in bits: HorizontalLayout {
+        alignment: start;
+        if bit.kind == "" || bit.kind == "rating": HorizontalLayout {
+            spacing: 0;
+            if bit.kind == "rating": Text {
+                text: "★ ";
+                color: Theme.star;
+                font-size: 1.2 * Theme.rem;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+            Text {
+                text: bit.text;
+                color: bit.kind == "rating" ? Theme.text : Theme.muted;
+                font-size: 1.2 * Theme.rem;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+        }
+        if bit.kind != "" && bit.kind != "rating": Rectangle {
+            y: (parent.height - self.height) / 2;
+            height: pill.preferred-height;
+            border-radius: 0.35 * Theme.rem;
+            border-width: bit.kind == "score" ? 0 : 1px;
+            border-color: bit.kind == "fav" ? #ffc53d66 : Theme.line;
+            background: bit.kind == "score" ? #6cc24a : transparent;
+            pill := HorizontalLayout {
+                padding-left: 0.6 * Theme.rem;
+                padding-right: 0.6 * Theme.rem;
+                padding-top: 0.1 * Theme.rem;
+                padding-bottom: 0.1 * Theme.rem;
+                spacing: 0.35 * Theme.rem;
+                if bit.icon != "": Icon {
+                    name: bit.icon;
+                    size: 1 * Theme.rem;
+                    tint: bit.kind == "fav" ? Theme.star : Theme.muted;
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    text: bit.text;
+                    color: bit.kind == "fav" ? Theme.star : bit.kind == "score" ? #1a1a1a : Theme.muted;
+                    font-size: 0.95 * Theme.rem;
+                    font-weight: bit.kind == "score" ? 800 : 500;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+// `.actions`: the page's buttons. The page owns which one is focused (-1 = none).
+export component ActionRow inherits HorizontalLayout {
+    in property <[DetailAction]> actions;
+    in property <int> focused-index: -1;
+    callback clicked(int);
+    callback hovered(int);
+    spacing: 0.9 * Theme.rem;
+    alignment: start;
+    for a[i] in actions: Btn {
+        text: a.label;
+        icon: a.icon;
+        primary: a.primary;
+        focused: i == root.focused-index;
+        clicked => { root.clicked(i); }
+        hovered => { root.hovered(i); }
+    }
+}
+
+// `.detail-info h1`
+export component DetailTitle inherits Text {
+    color: Theme.text;
+    font-size: 4 * Theme.rem;
+    font-weight: 700;
+    letter-spacing: -0.03 * 4 * Theme.rem;
+    wrap: word-wrap;
+}
+
+// `.overview` inside a detail page: up to five lines.
+export component DetailOverview inherits Text {
+    in property <int> lines: 5;
+    color: Theme.body;
+    font-size: 1.25 * Theme.rem;
+    wrap: word-wrap;
+    overflow: elide;
+    max-height: lines * 1.25 * Theme.rem * 1.4;
+}
+
+// `.genres`
+export component DetailGenres inherits Text {
+    color: Theme.muted;
+    font-size: 1.05 * Theme.rem;
+    wrap: word-wrap;
+}
+
+// A missing item (deleted, or a stale link): just the page title.
+export component NotFound inherits VerticalLayout {
+    padding-top: Theme.page-top + 1 * Theme.rem;
+    padding-left: Theme.gutter;
+    padding-right: Theme.gutter;
+    alignment: start;
+    Text {
+        text: T.tr("err.notFound");
+        color: Theme.text;
+        font-size: 3 * Theme.rem;
+        font-weight: 700;
+        letter-spacing: -0.02 * 3 * Theme.rem;
+    }
+}

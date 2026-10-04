@@ -1,18 +1,466 @@
-// STUB — to be replaced by the real screen. Keep the exported names (GameDetail, GameDetailView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
-import { PageScope } from "../widgets.slint";
+// A game's page (the renderer's VIEWS.game): poster, logo or title, gameMetaLine, overview, genres and
+// credits, the Play / Favorite / Edit info / ⋯ buttons, and a row of screenshots. Rust:
+// app/src/ui/pages/detail/game.rs.
+//
+// Also the game modals, which can open from any screen (Edit info from a grid's options menu): the
+// artwork picker (pickArtwork) and the screenshot lightbox (showScreenshot) — `GameModals`, drawn by
+// app.slint above the page.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Art, Input, Nav, Hints } from "../globals.slint";
+import { PageScope, Btn, Icon, Artwork, Pointer } from "../widgets.slint";
+import { DialogFrame } from "../shell.slint";
+import { MetaBit, DetailAction, DetailHints, DetailPoster, MetaLine, ActionRow, DetailTitle, DetailOverview, DetailGenres, NotFound } from "detail.slint";
+
+export struct ArtPicker {
+    open: bool,
+    title: string,
+    shape: string,      // "tall" (covers) | "wide" (backgrounds) | "logo"
+    images: [string],   // thumbnails (local paths)
+}
+
+export struct Lightbox {
+    open: bool,
+    image: string,
+    count: string,      // "2 / 4"
+}
 
 export global GameDetail {
-    in-out property <int> focus;
+    in property <bool> found;
+    in property <string> title;
+    in property <string> poster;
+    in property <string> icon;          // shown on the placeholder when there's no cover
+    in property <string> logo;          // replaces the title when there is one
+    in property <color> tint;
+    in property <[MetaBit]> meta;
+    in property <string> overview;
+    in property <string> genres;        // "Action · Roguelike  —  Studio"
+    in property <[DetailAction]> actions;
+    in property <[string]> shots;       // screenshot thumbnails
+    // Focus: zone 0 = the buttons, 1 = the screenshots.
+    in-out property <int> zone;
+    in-out property <int> action;
+    in-out property <int> shot;
+    callback act(string);               // a DetailAction value
+    callback open-shot(int);
+    callback options();
+
+    in property <ArtPicker> picker;
+    in-out property <int> picker-focus;
+    callback picker-done(int);          // index, or -1 when cancelled
+
+    in property <Lightbox> lightbox;
+    in-out property <int> lightbox-focus: 1;   // 0 = previous, 1 = next
+    callback lightbox-step(int);
+    callback lightbox-close();
+}
+
+// `.card.shot`: a 16:9 screenshot thumbnail.
+component ShotTile inherits Rectangle {
+    in property <string> path;
+    in property <string> title;
+    in property <color> tint;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    width: 22 * Theme.rem;
+    height: self.width * 9 / 16;
+    border-radius: Theme.radius;
+    transform-scale: focused ? Motion.card-zoom : 1.0;
+    animate transform-scale { duration: Motion.normal; easing: Motion.ease; }
+    drop-shadow-blur: focused ? 3 * Theme.rem : 1.6 * Theme.rem;
+    drop-shadow-offset-y: focused ? 1.2 * Theme.rem : 0.6 * Theme.rem;
+    drop-shadow-color: focused ? #000000b3 : #00000073;
+    Artwork {
+        border-radius: Theme.radius;
+        path: root.path;
+        title: root.title;
+        tint: root.tint;
+    }
+    Rectangle {
+        x: -0.22 * Theme.rem;
+        y: -0.22 * Theme.rem;
+        width: parent.width + 0.44 * Theme.rem;
+        height: parent.height + 0.44 * Theme.rem;
+        border-radius: Theme.radius + 0.22 * Theme.rem;
+        border-width: 0.22 * Theme.rem;
+        border-color: Theme.focus;
+        opacity: focused ? 1 : 0;
+        animate opacity { duration: Motion.fast; }
+    }
+    Pointer {
+        hovered => { root.hovered(); }
+        clicked => { root.clicked(); }
+    }
 }
 
 export component GameDetailView inherits Rectangle {
-    PageScope {
+    private property <int> n-actions: GameDetail.actions.length;
+    private property <int> n-shots: GameDetail.shots.length;
+    private property <length> shot-gap: 1.3 * Theme.rem;
+
+    function set-action(i: int) {
+        GameDetail.zone = 0;
+        GameDetail.action = i;
+        reveal();
+    }
+    function set-shot(i: int) {
+        GameDetail.zone = 1;
+        GameDetail.shot = i;
+        reveal();
+    }
+    function reveal() {
+        if (GameDetail.zone == 0) {
+            flick.content-y = 0;
+        } else {
+            let bottom = shots-row.y + shots-row.height;
+            if (bottom + flick.content-y > flick.height - 3 * Theme.rem) {
+                flick.content-y = -(bottom - flick.height + 3 * Theme.rem);
+            }
+            track.content-x = -max(0, min(track.content-width - track.width, GameDetail.shot * (22 * Theme.rem + shot-gap)));
+        }
+    }
+    init => {
+        DetailHints.set(T.tr("hint.select"));
+        if (GameDetail.action >= n-actions) { GameDetail.action = 0; }
+        if (GameDetail.zone == 1 && n-shots == 0) { GameDetail.zone = 0; }
+        if (GameDetail.shot >= n-shots) { GameDetail.shot = max(0, n-shots - 1); }
+        reveal();
+    }
+    private property <string> mode: Input.mode;
+    changed mode => { DetailHints.set(T.tr("hint.select")); }
+
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (!GameDetail.found) {
+                if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+                return reject;
+            }
+            if (GameDetail.zone == 0) {
+                if (e.text == Key.LeftArrow) {
+                    if (GameDetail.action > 0) { set-action(GameDetail.action - 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.RightArrow) {
+                    if (GameDetail.action < n-actions - 1) { set-action(GameDetail.action + 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.UpArrow) { Nav.focus-top(); Input.feedback("move"); return accept; }
+                if (e.text == Key.DownArrow) {
+                    if (n-shots > 0) { set-shot(min(GameDetail.shot, n-shots - 1)); Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.Return || e.text == " ") {
+                    Input.feedback("select");
+                    GameDetail.act(GameDetail.actions[GameDetail.action].value);
+                    return accept;
+                }
+                if (e.text == Key.Menu) { GameDetail.options(); return accept; }
+                return reject;
+            }
+            if (e.text == Key.LeftArrow) {
+                if (GameDetail.shot > 0) { set-shot(GameDetail.shot - 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                return accept;
+            }
+            if (e.text == Key.RightArrow) {
+                if (GameDetail.shot < n-shots - 1) { set-shot(GameDetail.shot + 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                return accept;
+            }
+            if (e.text == Key.UpArrow) { set-action(GameDetail.action); Input.feedback("move"); return accept; }
+            if (e.text == Key.DownArrow) { Input.feedback("edge"); return accept; }
+            if (e.text == Key.PageDown) { set-shot(min(n-shots - 1, GameDetail.shot + 3)); Input.feedback("move"); return accept; }
+            if (e.text == Key.PageUp) { set-shot(max(0, GameDetail.shot - 3)); Input.feedback("move"); return accept; }
+            if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); GameDetail.open-shot(GameDetail.shot); return accept; }
+            if (e.text == Key.Menu) { GameDetail.options(); return accept; }
             reject
         }
     }
-    Text { text: "GameDetailView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    if !GameDetail.found: NotFound { }
+
+    flick := Flickable {
+        visible: GameDetail.found;
+        content-width: self.width;
+        content-height: max(self.height, body.preferred-height);
+        animate content-y { duration: Motion.normal; easing: Motion.ease; }
+        body := VerticalLayout {
+            alignment: start;
+            // .detail-main.game-main: poster and info sit at the bottom of the first 64vh.
+            HorizontalLayout {
+                min-height: Theme.vh * 0.64;
+                padding-top: 9 * Theme.rem;
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-bottom: 2 * Theme.rem;
+                spacing: 3 * Theme.rem;
+                alignment: start;
+                VerticalLayout {
+                    alignment: end;
+                    DetailPoster {
+                        path: GameDetail.poster;
+                        title: GameDetail.title;
+                        tint: GameDetail.tint;
+                        icon: GameDetail.icon;
+                    }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    max-width: 62 * Theme.rem;
+                    horizontal-stretch: 1;
+                    spacing: 0;
+                    if GameDetail.logo != "": Image {
+                        // .detail-logo
+                        source: Art.get(GameDetail.logo, min(36 * Theme.rem, Theme.vw * 0.55));
+                        width: min(36 * Theme.rem, Theme.vw * 0.55);
+                        height: 10 * Theme.rem;
+                        image-fit: contain;
+                        horizontal-alignment: left;
+                        vertical-alignment: bottom;
+                    }
+                    if GameDetail.logo != "": Rectangle { height: 1.1 * Theme.rem; }
+                    if GameDetail.logo == "": DetailTitle { text: GameDetail.title; }
+                    if GameDetail.logo == "": Rectangle { height: 0.9 * Theme.rem; }
+                    MetaLine { bits: GameDetail.meta; }
+                    if GameDetail.overview != "": Rectangle { height: 1 * Theme.rem; }
+                    if GameDetail.overview != "": DetailOverview { text: GameDetail.overview; }
+                    if GameDetail.genres != "": Rectangle { height: 0.9 * Theme.rem; }
+                    if GameDetail.genres != "": DetailGenres { text: GameDetail.genres; }
+                    Rectangle { height: 2 * Theme.rem; }
+                    ActionRow {
+                        actions: GameDetail.actions;
+                        focused-index: scope.has-focus && GameDetail.zone == 0 ? GameDetail.action : -1;
+                        clicked(i) => { set-action(i); GameDetail.act(GameDetail.actions[i].value); }
+                        hovered(i) => { if (Input.mode == "mouse") { set-action(i); } }
+                    }
+                }
+            }
+            // .row: Screenshots
+            shots-row := VerticalLayout {
+                visible: n-shots > 0;
+                height: n-shots > 0 ? self.preferred-height : 0;
+                Text {
+                    x: Theme.gutter;
+                    text: T.tr("game.screenshots");
+                    color: Theme.text;
+                    font-size: 1.45 * Theme.rem;
+                    font-weight: 650;
+                    // .row h2 { padding-top: .8rem }
+                    height: self.preferred-height + 0.8 * Theme.rem;
+                    vertical-alignment: bottom;
+                }
+                track := Flickable {
+                    height: lay.preferred-height;
+                    content-width: lay.preferred-width;
+                    animate content-x { duration: Motion.normal; easing: Motion.ease; }
+                    lay := HorizontalLayout {
+                        padding-left: Theme.gutter;
+                        padding-right: Theme.gutter;
+                        padding-top: 1.1 * Theme.rem;
+                        padding-bottom: 1.6 * Theme.rem + 1 * Theme.rem;
+                        spacing: shot-gap;
+                        alignment: start;
+                        for s[i] in GameDetail.shots: ShotTile {
+                            path: s;
+                            title: GameDetail.title;
+                            tint: GameDetail.tint;
+                            focused: scope.has-focus && GameDetail.zone == 1 && GameDetail.shot == i;
+                            hovered => { if (Input.mode == "mouse") { set-shot(i); } }
+                            clicked => { set-shot(i); GameDetail.open-shot(i); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Artwork picker (pickArtwork)
+// `.picker`: a grid of SteamGridDB thumbnails — covers (2:3), backgrounds (96:31) or logos (16:9 on a
+// checkerboard). A picks, B cancels.
+component PickerView inherits DialogFrame {
+    private property <ArtPicker> p: GameDetail.picker;
+    private property <int> n: p.images.length;
+    private property <length> gap: 1 * Theme.rem;
+    private property <length> min-tile: (p.shape == "tall" ? 10 : p.shape == "wide" ? 20 : 16) * Theme.rem;
+    private property <float> ratio: p.shape == "tall" ? 3 / 2 : p.shape == "wide" ? 31 / 96 : 9 / 16;
+    private property <length> inner: grid-flick.width;
+    private property <int> cols: max(1, floor((inner + gap) / (min-tile + gap)));
+    private property <length> tile: (inner - (cols - 1) * gap) / cols;
+    private property <length> tile-h: tile * ratio;
+    private property <int> rows: ceil(n / cols);
+    private property <int> cursor: GameDetail.picker-focus;
+    wide: true;
+    dismissed => { GameDetail.picker-done(-1); }
+    init => { fs.focus(); }
+
+    function set(i: int) {
+        GameDetail.picker-focus = i;
+        let top = floor(i / cols) * (tile-h + gap);
+        if (top + grid-flick.content-y < 0) { grid-flick.content-y = -top; }
+        if (top + tile-h + 0.5 * Theme.rem + grid-flick.content-y > grid-flick.height) {
+            grid-flick.content-y = -(top + tile-h + 0.5 * Theme.rem - grid-flick.height);
+        }
+        Input.feedback("move");
+    }
+
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.LeftArrow) { if (mod(cursor, cols) > 0) { set(cursor - 1); } return accept; }
+            if (e.text == Key.RightArrow) { if (mod(cursor, cols) < cols - 1 && cursor < n - 1) { set(cursor + 1); } return accept; }
+            if (e.text == Key.UpArrow) { if (cursor >= cols) { set(cursor - cols); } return accept; }
+            if (e.text == Key.DownArrow) {
+                if (cursor + cols < n) { set(cursor + cols); } else if (floor(cursor / cols) < rows - 1) { set(n - 1); }
+                return accept;
+            }
+            if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); GameDetail.picker-done(cursor); return accept; }
+            if (e.text == Key.Escape || e.text == Key.Backspace) { Input.feedback("back"); GameDetail.picker-done(-1); return accept; }
+            accept
+        }
+    }
+    VerticalLayout {
+        spacing: 1.2 * Theme.rem;
+        Text {
+            text: p.title;
+            color: Theme.text;
+            font-size: 2 * Theme.rem;
+            font-weight: 700;
+        }
+        grid-flick := Flickable {
+            // The modal is at most 88vh; keep room for the title and padding.
+            height: min(rows * (tile-h + gap), Theme.vh * 0.88 - 9 * Theme.rem);
+            content-width: self.width;
+            content-height: rows * (tile-h + gap) + 0.5 * Theme.rem;
+            animate content-y { duration: Motion.normal; easing: Motion.ease; }
+            for img[i] in p.images: Rectangle {
+                private property <bool> focused: i == cursor;
+                x: mod(i, cols) * (tile + gap);
+                y: 0.25 * Theme.rem + floor(i / cols) * (tile-h + gap);
+                width: tile;
+                height: tile-h;
+                border-radius: Theme.radius;
+                // Logos: a checkerboard so light and dark logos both show.
+                background: p.shape == "logo" ? #20232c : Theme.bg-2;
+                transform-scale: focused ? 1.04 : 1.0;
+                animate transform-scale { duration: Motion.normal; easing: Motion.ease; }
+                clip: true;
+                if p.shape == "logo": Rectangle {
+                    for k in ceil(parent.width / (0.7 * Theme.rem)) * ceil(parent.height / (0.7 * Theme.rem)): Rectangle {
+                        private property <int> per-row: ceil(parent.width / (0.7 * Theme.rem));
+                        private property <int> cx: mod(k, per-row);
+                        private property <int> cy: floor(k / per-row);
+                        x: cx * 0.7 * Theme.rem;
+                        y: cy * 0.7 * Theme.rem;
+                        width: 0.7 * Theme.rem;
+                        height: 0.7 * Theme.rem;
+                        background: mod(cx + cy, 2) == 0 ? #171920 : transparent;
+                    }
+                }
+                Image {
+                    x: p.shape == "logo" ? 0.8 * Theme.rem : 0;
+                    y: p.shape == "logo" ? 0.8 * Theme.rem : 0;
+                    width: parent.width - (p.shape == "logo" ? 1.6 * Theme.rem : 0);
+                    height: parent.height - (p.shape == "logo" ? 1.6 * Theme.rem : 0);
+                    source: Art.get(img, self.width);
+                    image-fit: p.shape == "logo" ? contain : cover;
+                }
+                Rectangle {
+                    border-radius: Theme.radius;
+                    border-width: 0.22 * Theme.rem;
+                    border-color: Theme.focus;
+                    opacity: focused ? 1 : 0;
+                    animate opacity { duration: Motion.fast; }
+                }
+                Pointer {
+                    hovered => { if (Input.mode == "mouse") { GameDetail.picker-focus = i; } }
+                    clicked => { GameDetail.picker-done(i); }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Screenshot lightbox (showScreenshot)
+// The screenshot as large as fits, with ‹ n / total › underneath. Left / Right move between the two
+// buttons, A presses; B closes.
+component LightboxBtn inherits Rectangle {
+    in property <bool> focused;
+    in property <bool> flip;
+    callback clicked();
+    callback hovered();
+    width: 1.2 * Theme.rem + 2.2 * Theme.rem;
+    height: 1.2 * Theme.rem + 1.2 * Theme.rem;
+    border-radius: 0.6 * Theme.rem;
+    background: focused ? Theme.focus : Theme.surface-2;
+    transform-scale: focused ? Motion.btn-zoom : 1.0;
+    animate background, transform-scale { duration: Motion.fast; easing: Motion.ease; }
+    Icon {
+        name: "back";
+        size: 1.2 * Theme.rem;
+        tint: focused ? Theme.accent-ink : Theme.text;
+        transform-rotation: flip ? 180deg : 0deg;
+        transform-origin: { x: self.width / 2, y: self.height / 2 };
+    }
+    Pointer {
+        hovered => { root.hovered(); }
+        clicked => { root.clicked(); }
+    }
+}
+
+component LightboxView inherits DialogFrame {
+    private property <int> cursor: GameDetail.lightbox-focus;
+    wide: true;
+    dismissed => { GameDetail.lightbox-close(); }
+    init => { fs.focus(); }
+    function press(i: int) {
+        Input.feedback("select");
+        GameDetail.lightbox-focus = i;
+        GameDetail.lightbox-step(i == 0 ? -1 : 1);
+    }
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == Key.LeftArrow) { if (cursor > 0) { GameDetail.lightbox-focus = 0; Input.feedback("move"); } return accept; }
+            if (e.text == Key.RightArrow) { if (cursor < 1) { GameDetail.lightbox-focus = 1; Input.feedback("move"); } return accept; }
+            if (e.text == Key.Return || e.text == " ") { press(cursor); return accept; }
+            // LB / RB, PageUp / PageDown flick through too.
+            if (e.text == Key.PageUp || e.text == Key.Backtab) { GameDetail.lightbox-step(-1); Input.feedback("move"); return accept; }
+            if (e.text == Key.PageDown || e.text == Key.Tab) { GameDetail.lightbox-step(1); Input.feedback("move"); return accept; }
+            if (e.text == Key.Escape || e.text == Key.Backspace) { Input.feedback("back"); GameDetail.lightbox-close(); return accept; }
+            accept
+        }
+    }
+    VerticalLayout {
+        spacing: 0.8 * Theme.rem;
+        Image {
+            height: Theme.vh * 0.74;
+            source: Art.get(GameDetail.lightbox.image, Theme.vw * 0.88);
+            image-fit: contain;
+        }
+        HorizontalLayout {
+            alignment: center;
+            spacing: 1.5 * Theme.rem;
+            LightboxBtn {
+                focused: cursor == 0;
+                hovered => { if (Input.mode == "mouse") { GameDetail.lightbox-focus = 0; } }
+                clicked => { press(0); }
+            }
+            Text {
+                text: GameDetail.lightbox.count;
+                color: Theme.muted;
+                font-size: 1.1 * Theme.rem;
+                vertical-alignment: center;
+            }
+            LightboxBtn {
+                flip: true;
+                focused: cursor == 1;
+                hovered => { if (Input.mode == "mouse") { GameDetail.lightbox-focus = 1; } }
+                clicked => { press(1); }
+            }
+        }
+    }
+}
+
+// Drawn by app.slint above the page and below the dialog layer.
+export component GameModals inherits Rectangle {
+    if GameDetail.picker.open: PickerView { }
+    if GameDetail.lightbox.open: LightboxView { }
 }

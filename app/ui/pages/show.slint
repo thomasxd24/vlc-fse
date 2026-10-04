@@ -1,18 +1,349 @@
-// STUB — to be replaced by the real screen. Keep the exported names (ShowDetail, ShowDetailView): app.slint and Rust use them.
-import { Theme } from "../theme.slint";
-import { Nav } from "../globals.slint";
-import { PageScope } from "../widgets.slint";
+// A series' page (the renderer's VIEWS.show): poster, title, metaLine, overview, genres, the Play next /
+// Mark show watched / ⋯ buttons, the season chips and the selected season's episodes. Moving along the
+// season chips switches the episode row, like tabs (selectSeason). Rust: app/src/ui/pages/detail/show.rs.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav } from "../globals.slint";
+import { PageScope, Artwork, ProgressBar, Pointer } from "../widgets.slint";
+import { ChipBar, GridChip } from "grid.slint";
+import { MetaBit, DetailAction, DetailHints, DetailPoster, MetaLine, ActionRow, DetailTitle, DetailOverview, DetailGenres, NotFound } from "detail.slint";
+
+// The renderer's episodeCard.
+export struct EpisodeTile {
+    num: string,         // "3" / "3–4" (accent)
+    title: string,
+    subtitle: string,    // "48 min · 2021", or the time left
+    overview: string,
+    art: string,
+    placeholder: string, // "E3", drawn when there's no still
+    tint: color,
+    progress: float,     // < 0 hides the bar
+    watched: bool,
+}
+
+export struct ShowFocus {
+    zone: int,           // 0 = buttons, 1 = season chips, 2 = episodes
+    action: int,
+    chip: int,
+    ep: int,
+}
 
 export global ShowDetail {
-    in-out property <int> focus;
+    in property <bool> found;
+    in property <string> title;
+    in property <string> poster;
+    in property <color> tint;
+    in property <[MetaBit]> meta;
+    in property <string> overview;
+    in property <string> genres;
+    in property <[DetailAction]> actions;
+    in property <[GridChip]> seasons;   // label "Season 1 ✓", on = selected
+    in property <int> season;           // index of the selected season
+    in property <[EpisodeTile]> episodes;
+    in-out property <ShowFocus> focus;
+    callback act(string);               // a DetailAction value
+    callback season-focused(int);       // moving along the chips (debounced in Rust)
+    callback season-pressed(int);       // a chip activated (A / click): select it now
+    callback play(int);                 // an episode of the selected season
+    callback options();                 // the show
+    callback season-options(int);
+    callback episode-options(int);
+}
+
+// `.card.wide` in `.episode-track`: 24rem still, number + title, sublabel, two lines of overview.
+component EpisodeCard inherits VerticalLayout {
+    in property <EpisodeTile> ep;
+    in property <bool> focused;
+    callback clicked();
+    callback hovered();
+    callback options();
+    width: 24 * Theme.rem;
+    spacing: 0;
+    alignment: start;
+    Rectangle {
+        height: root.width * 9 / 16;
+        border-radius: Theme.radius;
+        transform-scale: focused ? Motion.card-zoom : 1.0;
+        animate transform-scale { duration: Motion.normal; easing: Motion.ease; }
+        drop-shadow-blur: focused ? 3 * Theme.rem : 1.6 * Theme.rem;
+        drop-shadow-offset-y: focused ? 1.2 * Theme.rem : 0.6 * Theme.rem;
+        drop-shadow-color: focused ? #000000b3 : #00000073;
+        Artwork {
+            border-radius: Theme.radius;
+            path: ep.art;
+            title: ep.placeholder;
+            tint: ep.tint;
+            big-title: true;
+            // .card.watched .art img: desaturated and darker.
+            if ep.watched && ep.art != "": Rectangle { background: #0000004d; }
+            if ep.progress >= 0: ProgressBar {
+                x: 0.7 * Theme.rem;
+                y: parent.height - self.height - 0.7 * Theme.rem;
+                width: parent.width - 1.4 * Theme.rem;
+                value: ep.progress;
+            }
+            if ep.watched: Rectangle {
+                x: parent.width - self.width - 0.6 * Theme.rem;
+                y: 0.6 * Theme.rem;
+                width: 1.7 * Theme.rem;
+                height: self.width;
+                border-radius: self.width / 2;
+                background: #00000099;
+                Text { text: "✓"; color: Theme.good; font-size: 1 * Theme.rem; font-weight: 800; }
+            }
+        }
+        Rectangle {
+            x: -0.22 * Theme.rem;
+            y: -0.22 * Theme.rem;
+            width: parent.width + 0.44 * Theme.rem;
+            height: parent.height + 0.44 * Theme.rem;
+            border-radius: Theme.radius + 0.22 * Theme.rem;
+            border-width: 0.22 * Theme.rem;
+            border-color: Theme.focus;
+            opacity: focused ? 1 : 0;
+            animate opacity { duration: Motion.fast; }
+        }
+        Pointer {
+            hovered => { root.hovered(); }
+            options => { root.options(); }
+            clicked => {
+                if (!self.consume-long-press()) {
+                    root.clicked();
+                }
+            }
+        }
+    }
+    Rectangle { height: 0.7 * Theme.rem; }
+    HorizontalLayout {
+        spacing: 0.35 * Theme.rem;
+        alignment: start;
+        Text {
+            text: ep.num;
+            color: Theme.accent;
+            font-size: 1.05 * Theme.rem;
+            font-weight: 700;
+        }
+        Text {
+            text: ep.title;
+            color: Theme.text;
+            opacity: focused ? 1 : 0.85;
+            font-size: 1.05 * Theme.rem;
+            font-weight: 600;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+    Text {
+        text: ep.subtitle;
+        color: Theme.muted;
+        font-size: 0.95 * Theme.rem;
+        overflow: elide;
+    }
+    Rectangle { height: 0.4 * Theme.rem; }
+    Text {
+        text: ep.overview;
+        color: Theme.muted;
+        font-size: 0.95 * Theme.rem;
+        wrap: word-wrap;
+        overflow: elide;
+        height: 2.7 * 0.95 * Theme.rem;
+        vertical-alignment: top;
+    }
 }
 
 export component ShowDetailView inherits Rectangle {
-    PageScope {
+    private property <ShowFocus> pos: ShowDetail.focus;
+    private property <int> n-actions: ShowDetail.actions.length;
+    private property <int> n-seasons: ShowDetail.seasons.length;
+    private property <int> n-eps: ShowDetail.episodes.length;
+    private property <length> ep-gap: 1.3 * Theme.rem;
+
+    function store(f: ShowFocus) {
+        ShowDetail.focus = f;
+        DetailHints.set(f.zone == 2 ? T.tr("hint.play") : T.tr("hint.select"));
+        reveal();
+    }
+    function set-action(i: int) { store({ zone: 0, action: i, chip: pos.chip, ep: pos.ep }); }
+    function set-chip(i: int) {
+        store({ zone: 1, action: pos.action, chip: i, ep: pos.ep });
+        if (i != ShowDetail.season) { ShowDetail.season-focused(i); }
+    }
+    function set-ep(i: int) { store({ zone: 2, action: pos.action, chip: pos.chip, ep: i }); }
+    // Keep the focused part on screen: the buttons at the top, the episodes scrolled into view.
+    function reveal() {
+        if (pos.zone == 0) {
+            flick.content-y = 0;
+        } else {
+            let bottom = pos.zone == 1 ? seasons-bar.y + seasons-bar.height + 4 * Theme.rem : track.y + track.height;
+            if (bottom + flick.content-y > flick.height - 2 * Theme.rem) {
+                flick.content-y = -(bottom - flick.height + 2 * Theme.rem);
+            } else if (pos.zone == 1 && seasons-bar.y + flick.content-y < 8 * Theme.rem) {
+                flick.content-y = min(0, -(seasons-bar.y - 8 * Theme.rem));
+            }
+        }
+        track.content-x = -max(0, min(track.content-width - track.width, pos.ep * (24 * Theme.rem + ep-gap)));
+    }
+    init => {
+        if (pos.action >= n-actions) { ShowDetail.focus.action = 0; }
+        if (pos.zone == 2 && n-eps == 0) { ShowDetail.focus.zone = 1; }
+        if (pos.ep >= n-eps) { ShowDetail.focus.ep = max(0, n-eps - 1); }
+        DetailHints.set(pos.zone == 2 ? T.tr("hint.play") : T.tr("hint.select"));
+        reveal();
+    }
+    private property <string> mode: Input.mode;
+    changed mode => { DetailHints.set(pos.zone == 2 ? T.tr("hint.play") : T.tr("hint.select")); }
+    // A new season's episodes: start at the first one.
+    private property <int> selected: ShowDetail.season;
+    changed selected => { reveal(); }
+    changed n-eps => { if (pos.ep >= n-eps) { ShowDetail.focus.ep = max(0, n-eps - 1); } reveal(); }
+
+    scope := PageScope {
         key-pressed(e) => {
-            if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+            if (!ShowDetail.found) {
+                if (e.text == Key.UpArrow) { Nav.focus-top(); return accept; }
+                return reject;
+            }
+            if (pos.zone == 0) {
+                if (e.text == Key.LeftArrow) {
+                    if (pos.action > 0) { set-action(pos.action - 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.RightArrow) {
+                    if (pos.action < n-actions - 1) { set-action(pos.action + 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.UpArrow) { Nav.focus-top(); Input.feedback("move"); return accept; }
+                if (e.text == Key.DownArrow) {
+                    // Into the chips at the selected season ([data-nav-default]).
+                    if (n-seasons > 0) { set-chip(ShowDetail.season); Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.Return || e.text == " ") {
+                    if (n-actions > 0) { Input.feedback("select"); ShowDetail.act(ShowDetail.actions[pos.action].value); }
+                    return accept;
+                }
+                if (e.text == Key.Menu) { ShowDetail.options(); return accept; }
+                return reject;
+            }
+            if (pos.zone == 1) {
+                if (e.text == Key.LeftArrow) {
+                    if (pos.chip > 0) { set-chip(pos.chip - 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.RightArrow) {
+                    if (pos.chip < n-seasons - 1) { set-chip(pos.chip + 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.UpArrow) { set-action(pos.action); Input.feedback("move"); return accept; }
+                if (e.text == Key.DownArrow) {
+                    if (n-eps > 0 && pos.chip == ShowDetail.season) { set-ep(min(pos.ep, n-eps - 1)); Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.Return || e.text == " ") {
+                    Input.feedback("select");
+                    if (pos.chip == ShowDetail.season) {
+                        if (n-eps > 0) { set-ep(min(pos.ep, n-eps - 1)); }
+                    } else {
+                        ShowDetail.season-pressed(pos.chip);
+                    }
+                    return accept;
+                }
+                if (e.text == Key.Menu) { ShowDetail.season-options(pos.chip); return accept; }
+                return reject;
+            }
+            if (e.text == Key.LeftArrow) {
+                if (pos.ep > 0) { set-ep(pos.ep - 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                return accept;
+            }
+            if (e.text == Key.RightArrow) {
+                if (pos.ep < n-eps - 1) { set-ep(pos.ep + 1); Input.feedback("move"); } else { Input.feedback("edge"); }
+                return accept;
+            }
+            if (e.text == Key.UpArrow) { set-chip(ShowDetail.season); Input.feedback("move"); return accept; }
+            if (e.text == Key.DownArrow) { Input.feedback("edge"); return accept; }
+            if (e.text == Key.PageDown) { set-ep(min(n-eps - 1, pos.ep + 3)); Input.feedback("move"); return accept; }
+            if (e.text == Key.PageUp) { set-ep(max(0, pos.ep - 3)); Input.feedback("move"); return accept; }
+            if (e.text == Key.Return || e.text == " ") { Input.feedback("select"); ShowDetail.play(pos.ep); return accept; }
+            if (e.text == Key.Menu) { ShowDetail.episode-options(pos.ep); return accept; }
             reject
         }
     }
-    Text { text: "ShowDetailView"; color: Theme.muted; font-size: 2 * Theme.rem; }
+
+    if !ShowDetail.found: NotFound { }
+
+    flick := Flickable {
+        visible: ShowDetail.found;
+        content-width: self.width;
+        content-height: max(self.height, body.preferred-height);
+        animate content-y { duration: Motion.normal; easing: Motion.ease; }
+        body := VerticalLayout {
+            alignment: start;
+            // .detail-main (min-height: 56vh on a show)
+            HorizontalLayout {
+                min-height: Theme.vh * 0.56;
+                padding-top: 9 * Theme.rem;
+                padding-left: Theme.gutter;
+                padding-right: Theme.gutter;
+                padding-bottom: 2 * Theme.rem;
+                spacing: 3 * Theme.rem;
+                alignment: start;
+                VerticalLayout {
+                    alignment: end;
+                    DetailPoster {
+                        path: ShowDetail.poster;
+                        title: ShowDetail.title;
+                        tint: ShowDetail.tint;
+                    }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    max-width: 62 * Theme.rem;
+                    horizontal-stretch: 1;
+                    spacing: 0;
+                    DetailTitle { text: ShowDetail.title; }
+                    Rectangle { height: 0.9 * Theme.rem; }
+                    MetaLine { bits: ShowDetail.meta; }
+                    if ShowDetail.overview != "": Rectangle { height: 1 * Theme.rem; }
+                    if ShowDetail.overview != "": DetailOverview { text: ShowDetail.overview; }
+                    if ShowDetail.genres != "": Rectangle { height: 0.9 * Theme.rem; }
+                    if ShowDetail.genres != "": DetailGenres { text: ShowDetail.genres; }
+                    Rectangle { height: 2 * Theme.rem; }
+                    ActionRow {
+                        actions: ShowDetail.actions;
+                        focused-index: scope.has-focus && pos.zone == 0 ? pos.action : -1;
+                        clicked(i) => { set-action(i); ShowDetail.act(ShowDetail.actions[i].value); }
+                        hovered(i) => { if (Input.mode == "mouse") { set-action(i); } }
+                    }
+                }
+            }
+            // .seasons
+            seasons-bar := ChipBar {
+                chips: ShowDetail.seasons;
+                focus-index: scope.has-focus && pos.zone == 1 ? pos.chip : -1;
+                clicked(i) => { set-chip(i); ShowDetail.season-pressed(i); }
+                hovered(i) => { if (Input.mode == "mouse") { store({ zone: 1, action: pos.action, chip: i, ep: pos.ep }); } }
+            }
+            // .row > .track.episode-track
+            track := Flickable {
+                height: lay.preferred-height;
+                content-width: lay.preferred-width;
+                animate content-x { duration: Motion.normal; easing: Motion.ease; }
+                lay := HorizontalLayout {
+                    padding-left: Theme.gutter;
+                    padding-right: Theme.gutter;
+                    padding-top: 1.1 * Theme.rem;
+                    padding-bottom: 1.6 * Theme.rem;
+                    spacing: ep-gap;
+                    alignment: start;
+                    for ep[i] in ShowDetail.episodes: EpisodeCard {
+                        ep: ep;
+                        focused: scope.has-focus && pos.zone == 2 && pos.ep == i;
+                        hovered => { if (Input.mode == "mouse") { set-ep(i); } }
+                        clicked => { set-ep(i); ShowDetail.play(i); }
+                        options => { set-ep(i); ShowDetail.episode-options(i); }
+                    }
+                }
+            }
+        }
+    }
 }
