@@ -8,7 +8,7 @@ mod ui;
 
 slint::include_modules!();
 
-const USAGE: &str = "lounge [--demo [--lang fr] [--resume show]] [--script \"go games; shot a.png\"] [--size 1600x1000]";
+const USAGE: &str = "lounge [--demo [--lang fr] [--resume show]] [--script \"go games; shot a.png\" [--intro]] [--size 1600x1000]";
 
 fn main() -> Result<(), slint::PlatformError> {
     let mut demo = None;
