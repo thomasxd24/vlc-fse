@@ -1,12 +1,11 @@
 //! Apps (the renderer's VIEWS.apps / appTile, and openApp plus the `app:` options menu from app.js).
 
 use crate::ui::ctx::{cx, Ctx};
-use crate::ui::dialogs::{self, choice, Choice};
 use crate::ui::i18n::{t, tv};
 use crate::ui::model::{self, b, n, s};
 use crate::ui::pages::remote::err_text;
 use crate::ui::toasts::toast;
-use crate::ui::{fmt, prefs};
+use crate::ui::{actions, fmt, prefs};
 use crate::{AppTile, AppsPage, Backdrop, GridChip};
 use serde_json::Value;
 use slint::ComponentHandle;
@@ -22,7 +21,7 @@ pub fn install(ctx: &Ctx) {
     });
     page.on_options(|i| {
         if let Some(a) = items().get(i as usize) {
-            options(s(a, "id"));
+            actions::options("app", s(a, "id"), "");
         }
     });
     ctx.on_event("state", |_, _| rebuild());
@@ -130,22 +129,3 @@ pub fn open_app(id: &str) {
     });
 }
 
-/// The options menu for an app (X / right-click / long-press): Open, Hide / Unhide.
-pub fn options(id: &str) {
-    let Some(app) = apps().into_iter().find(|a| s(a, "id") == id) else { return };
-    let hidden = b(&app, "hidden");
-    let id = id.to_string();
-    dialogs::choose(
-        s(&app, "name"),
-        "",
-        vec![
-            Choice { icon: "play".into(), primary: true, ..choice(&t("apps.open"), "open") },
-            Choice { icon: if hidden { "show" } else { "hide" }.into(), ..choice(&t(if hidden { "opt.unhide" } else { "opt.hide" }), "hide") },
-        ],
-        move |v| match v.as_deref() {
-            Some("open") => open_app(&id),
-            Some("hide") => cx().call("hide_app", move |b| b.hide_app(&id, !hidden), move |_| toast(&t(if hidden { "apps.unhidden" } else { "apps.hidden" }), "info")),
-            _ => {}
-        },
-    );
-}

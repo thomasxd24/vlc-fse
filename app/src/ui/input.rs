@@ -43,10 +43,11 @@ pub struct PadSnapshot {
 }
 
 type Capture = Box<dyn Fn(&PadSnapshot)>;
+type Feedback = Box<dyn Fn(&str)>;
 
 thread_local! {
     static CAPTURE: RefCell<Option<Capture>> = const { RefCell::new(None) };
-    static FEEDBACK: RefCell<Vec<Box<dyn Fn(&str)>>> = const { RefCell::new(Vec::new()) };
+    static FEEDBACK: RefCell<Vec<Feedback>> = const { RefCell::new(Vec::new()) };
 }
 
 pub fn install(ctx: &Ctx) {

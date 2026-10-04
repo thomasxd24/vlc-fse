@@ -20,7 +20,7 @@ pub fn install(ctx: &Ctx) {
     // Battery and Wi-Fi: the backend's system_get / wifi, every 20 s (and right away).
     poll_status();
     POLL.with(|t| t.start(slint::TimerMode::Repeated, Duration::from_secs(20), poll_status));
-    ctx.on_event("state", |ctx, st| apply_state(ctx, st));
+    ctx.on_event("state", apply_state);
 }
 
 fn tick_clock(ui: &AppWindow) {
