@@ -104,7 +104,7 @@ fn show(info: Option<Info>) {
     p.set_power(i.rate_mw.map(|mw| decimal(mw as f64 / 1000.0, "W")).unwrap_or_default().into());
     let left = i.seconds_left().filter(|s| *s > 0 && *s < 48 * 3600);
     p.set_time_label(t(if charging { "bat.toFull" } else { "bat.left" }).into());
-    p.set_time(left.map(|s| fmt::runtime(((s + 59) / 60) as i64)).unwrap_or_default().into());
+    p.set_time(left.map(|s| fmt::runtime(s.div_ceil(60) as i64)).unwrap_or_default().into());
 
     let mut rows = Vec::new();
     let mut row = |label: &str, value: String| rows.push(BatteryRow { label: t(label).into(), value: value.into() });
