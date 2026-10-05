@@ -8,6 +8,8 @@
 //! - `event NAME JSON` — deliver a backend event, e.g. `event now-playing {"title":"…"}`, or `event now-playing demo`
 //! - `wait MS` — pause
 //! - `shot PATH` — save a PNG of the window (waits for artwork decodes and fades first)
+//! - `intro` — play the startup intro again (then `snap` its frames)
+//! - `snap PATH` — save the window right away as raw RGBA, `PATH.WxH.rgba` (frames of an animation)
 //! - `quit`
 //!
 //! Steps run ~150 ms apart so transitions settle. The run quits after the last step.
@@ -77,6 +79,18 @@ fn step(steps: Rc<Vec<String>>, i: usize) {
             next(GAP * 2);
         }
         "wait" => next(Duration::from_millis(rest.parse().unwrap_or(500))),
+        "intro" => {
+            crate::ui::overlays::intro::replay();
+            next(Duration::ZERO);
+        }
+        // Right now, without waiting for artwork or fades, as raw RGBA (PNG encoding is too slow
+        // in a debug build to catch an animation): PATH.WxH.rgba.
+        "snap" => {
+            if let Ok(buf) = cx().ui().window().take_snapshot() {
+                let _ = std::fs::write(format!("{rest}.{}x{}.rgba", buf.width(), buf.height()), buf.as_bytes());
+            }
+            next(Duration::ZERO);
+        }
         "shot" => {
             let path = rest.to_string();
             wait_for_art(0, move || {

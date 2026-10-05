@@ -1,8 +1,10 @@
-// The startup intro (the renderer's #splash): a band of light sweeps across the dark screen, the mark
-// blooms in with a breathing glow and the name rises letter by letter while the library loads
-// underneath; then the splash lifts. With Settings › Animations › Reduced it's the same intro as a
-// plain fade (the renderer's .intro-calm). Rust (app/src/ui/overlays/intro.rs) runs the timeline:
-// `open` → `playing` (once the window is on screen) → `leaving` → closed.
+// The startup intro: a warm aurora settles in behind the mark, the mark rises into place with a soft
+// halo, the name tracks in (fading in while its letter spacing tightens) and a hairline under it fills
+// while the library loads underneath; then everything zooms gently toward you and lifts. With
+// Settings › Animations › Reduced it's the same intro as a plain fade. Nothing loops: once the
+// entrance has played the splash is still, so it doesn't keep redrawing.
+// Rust (app/src/ui/overlays/intro.rs) runs the timeline: `open` → `playing` (once the window is on
+// screen) → `leaving` → closed.
 
 import { Theme } from "../theme.slint";
 import { Icons } from "../icons.slint";
@@ -13,112 +15,146 @@ export global Intro {
     in property <bool> playing;
     // A plain fade: nothing moves or scales.
     in property <bool> calm;
-    // Lifting off (fades out over 0.6 s).
+    // Lifting off (zooms and fades out over 0.6 s).
     in property <bool> leaving;
 }
 
-// --spring and --out from styles.css.
-component Letter inherits Rectangle {
-    in property <string> letter;
-    in property <int> index;
-    width: txt.preferred-width;
-    height: txt.preferred-height;
-    txt := Text {
-        text: root.letter;
-        font-size: 2.8 * Theme.rem;
-        font-weight: 700;
-        color: Theme.text;
-        // letter-in: 0.55 s --out, from opacity 0 and 0.9rem lower; 280 ms + n × 65 ms in.
-        opacity: Intro.playing ? 1 : 0;
-        y: Intro.playing || Intro.calm ? 0 : 0.9 * Theme.rem;
-        animate opacity, y {
-            delay: 280ms + (root.index + 1) * 65ms;
-            duration: 550ms;
-            easing: cubic-bezier(0.16, 1, 0.3, 1);
-        }
-    }
+// Everything that arrives decelerates smoothly without overshoot: cubic-bezier(0.16, 1, 0.3, 1).
+
+// One soft colour field of the aurora (it shrinks a little as it settles: see the widths below).
+component Glow inherits Rectangle {
+    in property <color> tint;
+    background: @radial-gradient(circle, tint 0%, tint.transparentize(55%) 28%, tint.transparentize(100%) 68%);
 }
 
 export component IntroView inherits Rectangle {
     visible: Intro.open;
     background: Theme.bg;
     clip: true;
-    opacity: Intro.leaving ? 0 : 1;
-    animate opacity { duration: 600ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
 
-    // radial-gradient(55% 55% at 50% 44%, #17121a, var(--bg) 70%)
+    private property <bool> in: Intro.playing;
+    private property <bool> calm: Intro.calm;
+
+    // The whole splash fades as it lifts; the content also zooms toward you.
+    opacity: Intro.leaving ? 0 : 1;
+    animate opacity { duration: 600ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
+    private property <float> zoom: Intro.leaving && !calm ? 1.08 : 1;
+    animate zoom { duration: 600ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
+
+    // ---- The aurora: two warm fields that fade in and drift into place over ~2.4 s.
+    private property <float> settle: in || calm ? 1 : 0;
+    animate settle { duration: 2400ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+    private property <float> aurora: in ? 1 : 0;
+    animate aurora { delay: 50ms; duration: 1400ms; easing: ease-out; }
+    private property <length> span: max(self.width, self.height);
+
+    Glow {
+        tint: #ff8a1e2b;
+        width: 0.85 * root.span * (1.25 - 0.25 * root.settle);
+        height: self.width;
+        x: root.width * (0.42 - 0.06 * (1 - root.settle)) - self.width / 2;
+        y: root.height * (0.42 - 0.05 * (1 - root.settle)) - self.height / 2;
+        opacity: root.aurora;
+    }
+    Glow {
+        tint: #ff4d6d17;
+        width: 0.75 * root.span * (1.25 - 0.25 * root.settle);
+        height: self.width;
+        x: root.width * (0.60 + 0.06 * (1 - root.settle)) - self.width / 2;
+        y: root.height * (0.60 + 0.05 * (1 - root.settle)) - self.height / 2;
+        opacity: root.aurora;
+    }
+    // A vignette that keeps the edges dark and the mark the brightest thing on screen.
     Rectangle {
-        width: 1.1 * max(parent.width, parent.height);
+        width: 1.5 * root.span;
         height: self.width;
         x: (parent.width - self.width) / 2;
-        y: 0.44 * parent.height - self.height / 2;
-        background: @radial-gradient(circle, #17121a 0%, #110e15 35%, #07080c00 70%);
-    }
-
-    // The sweep: a band of light crosses the screen once (1.3 s, from 0.15 s).
-    if !Intro.calm: Rectangle {
-        width: parent.width;
-        height: 1.4 * parent.height;
-        y: -0.2 * parent.height;
-        x: Intro.playing ? parent.width : -parent.width;
-        animate x { delay: 150ms; duration: 1300ms; easing: cubic-bezier(0.2, 0.8, 0.2, 1); }
-        background: @linear-gradient(100deg, #ffbe6e00 35%, #ffbe6e29 47%, #ffffff38 50%, #ffbe6e29 53%, #ffbe6e00 65%);
+        y: (parent.height - self.height) / 2;
+        background: @radial-gradient(circle, #07080c00 22%, #07080cb3 48%, #07080c 66%);
     }
 
     // The splash swallows pointer input until it lifts.
     if !Intro.leaving: TouchArea { }
 
-    VerticalLayout {
+    content := VerticalLayout {
         alignment: center;
-        spacing: 1.6 * Theme.rem;
+        spacing: 1.8 * Theme.rem;
+        transform-origin: { x: self.width / 2, y: self.height / 2 };
+        transform-scale: root.zoom;
 
-        // The mark with its glow (a drop-shadow in the renderer, breathing every 1.6 s from 0.5 s).
+        // ---- The mark: rises 0.8 rem and grows from 0.86 with a steady halo (from 0.15 s).
         HorizontalLayout {
             alignment: center;
             Rectangle {
                 width: 5.5 * Theme.rem;
                 height: 5.5 * Theme.rem;
 
-                // mark-in: 0.85 s --spring from 0.35 s; from opacity 0 (fully in at 55%), scale .35, -30°.
-                private property <bool> in: Intro.playing;
-                private property <float> mark-opacity: in ? 1 : 0;
-                animate mark-opacity { delay: 350ms; duration: Intro.calm ? 850ms : 470ms; easing: ease-out; }
-                private property <float> grow: in || Intro.calm ? 1 : 0;
-                animate grow { delay: 350ms; duration: 850ms; easing: cubic-bezier(0.34, 1.45, 0.64, 1); }
-                private property <float> breathe: Intro.calm ? 0 : (1 - cos(360deg * mod(animation-tick(), 1600ms) / 1600ms)) / 2;
-                private property <float> lift: Intro.leaving ? 1.35 : 1;
-                animate lift { duration: 600ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                private property <float> shown: root.in ? 1 : 0;
+                animate shown { delay: 150ms; duration: 900ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                private property <float> fade: root.in ? 1 : 0;
+                animate fade { delay: 150ms; duration: 500ms; easing: ease-out; }
+                private property <float> grow: root.calm ? 1 : 0.86 + 0.14 * self.shown;
 
-                glow := Rectangle {
-                    private property <length> reach: (1.6 + 1.0 * parent.breathe) * Theme.rem * 2.2;
-                    width: parent.width + 2 * self.reach;
+                halo := Rectangle {
+                    width: parent.width * 3.2;
                     height: self.width;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                    opacity: parent.mark-opacity * (0.55 + 0.25 * parent.breathe) / 0.8;
-                    background: @radial-gradient(circle, #ff8a1eaa 0%, #ff8a1e55 30%, #ff8a1e00 70%);
+                    opacity: 0.6 * parent.fade;
+                    background: @radial-gradient(circle, #ff8a1e80 0%, #ff8a1e26 32%, #ff8a1e00 66%);
                     transform-origin: { x: self.width / 2, y: self.height / 2 };
-                    transform-scale: parent.lift * (0.35 + 0.65 * parent.grow);
+                    transform-scale: parent.grow;
                 }
                 Image {
                     width: parent.width;
                     height: parent.height;
+                    y: root.calm ? 0 : 0.8 * Theme.rem * (1 - parent.shown);
                     source: Icons.logo;
                     image-fit: contain;
-                    opacity: parent.mark-opacity;
+                    opacity: parent.fade;
                     transform-origin: { x: self.width / 2, y: self.height / 2 };
-                    transform-scale: parent.lift * (0.35 + 0.65 * parent.grow);
-                    transform-rotation: -30deg * (1 - parent.grow);
+                    transform-scale: parent.grow;
                 }
             }
         }
 
+        // ---- The name tracks in: fades while its letter spacing tightens (from 0.4 s).
         HorizontalLayout {
             alignment: center;
-            spacing: 0.06 * 2.8 * Theme.rem;
-            for letter[i] in ["L", "o", "u", "n", "g", "e"]: Letter {
-                letter: letter;
-                index: i;
+            Text {
+                private property <float> shown: root.in ? 1 : 0;
+                animate shown { delay: 400ms; duration: 1100ms; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+                private property <float> fade: root.in ? 1 : 0;
+                animate fade { delay: 400ms; duration: 700ms; easing: ease-out; }
+                text: "Lounge";
+                font-size: 2.6 * Theme.rem;
+                font-weight: 700;
+                color: Theme.text;
+                letter-spacing: (root.calm ? 0.04 : 0.04 + 0.5 * (1 - self.shown)) * 2.6 * Theme.rem;
+                opacity: self.fade;
+            }
+        }
+
+        // ---- A hairline that fills while the library loads (from 0.5 s to the end of the intro).
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                private property <float> track: root.in ? 1 : 0;
+                animate track { delay: 500ms; duration: 400ms; easing: ease-out; }
+                private property <float> fill: root.in ? 1 : 0;
+                animate fill { delay: 500ms; duration: 1500ms; easing: cubic-bezier(0.65, 0, 0.35, 1); }
+                width: 7 * Theme.rem;
+                height: 0.16 * Theme.rem;
+                border-radius: self.height / 2;
+                background: #ffffff1a;
+                opacity: self.track;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * parent.fill;
+                    height: parent.height;
+                    border-radius: parent.border-radius;
+                    background: @linear-gradient(90deg, #ff8a1e00 0%, #ff8a1e 60%, #ffc27a 100%);
+                }
             }
         }
     }

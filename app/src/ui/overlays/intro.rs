@@ -54,24 +54,36 @@ pub fn install(ctx: &Ctx) {
     });
 
     let weak = ctx.ui.clone();
-    slint::Timer::single_shot(Duration::from_millis(START_DELAY_MS), move || {
+    slint::Timer::single_shot(Duration::from_millis(START_DELAY_MS), move || play(weak));
+}
+
+/// Run the timeline: play, then lift after [`INTRO_MS`] and close.
+fn play(weak: slint::Weak<crate::AppWindow>) {
+    let Some(ui) = weak.upgrade() else { return };
+    let intro = ui.global::<Intro>();
+    if !intro.get_open() {
+        return;
+    }
+    intro.set_playing(true);
+    input::feedback("boot");
+    slint::Timer::single_shot(Duration::from_millis(INTRO_MS), move || {
         let Some(ui) = weak.upgrade() else { return };
-        let intro = ui.global::<Intro>();
-        if !intro.get_open() {
-            return;
-        }
-        intro.set_playing(true);
-        input::feedback("boot");
-        let weak = weak.clone();
-        slint::Timer::single_shot(Duration::from_millis(INTRO_MS), move || {
-            let Some(ui) = weak.upgrade() else { return };
-            ui.global::<Intro>().set_leaving(true);
-            let weak = weak.clone();
-            slint::Timer::single_shot(Duration::from_millis(OUT_MS), move || {
-                if let Some(ui) = weak.upgrade() {
-                    ui.global::<Intro>().set_open(false);
-                }
-            });
+        ui.global::<Intro>().set_leaving(true);
+        slint::Timer::single_shot(Duration::from_millis(OUT_MS), move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<Intro>().set_open(false);
+            }
         });
     });
+}
+
+/// Play the intro again from its first frame (the `intro` script step, for capturing it).
+pub fn replay() {
+    let ui = super::super::ctx::cx().ui();
+    let intro = ui.global::<Intro>();
+    intro.set_leaving(false);
+    intro.set_playing(false);
+    intro.set_open(true);
+    let weak = ui.as_weak();
+    slint::Timer::single_shot(Duration::from_millis(50), move || play(weak));
 }
