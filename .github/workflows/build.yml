@@ -36,7 +36,11 @@ jobs:
         run: |
           grep -E "^test .* FAILED|panicked at|^error(\[E[0-9]+\])?:|^ +(lounge_core|lounge)::[a-z_:0-9]+$" test-output.log | head -20 | while IFS= read -r line; do
             echo "::error::${line:0:200}"
-          done
+          done || true
+          # Whatever it was (a crash on start doesn't match the patterns above), the log's tail too.
+          # One annotation (GitHub shows at most 10 per step), lines joined with the escaped newline %0A.
+          tail_lines=$(tail -40 test-output.log | sed 's/\x1b\[[0-9;]*m//g; s/%/%25/g' | grep -v '^\s*$' | awk '{printf "%s%%0A", $0}') || true
+          echo "::error title=Rust test log (last 40 lines)::${tail_lines}"
           {
             echo "### Rust test failures (last 150 lines)"
             echo '```'
@@ -62,6 +66,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
+          [ -f clippy.log ] || exit 0  # clippy didn't run (an earlier step failed)
           grep -E "^(error|warning)" -A3 clippy.log | grep -E "^(error|warning)|-->" | head -20 | while IFS= read -r line; do
             echo "::error::${line:0:200}"
           done
