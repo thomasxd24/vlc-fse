@@ -6,3 +6,8 @@ members = ["lounge-core", "app"]
 lto = "thin"
 codegen-units = 4
 strip = true
+
+# Slint's Skia renderer with one change: a 48 MB GPU resource cache instead of Skia's 256 MB default
+# (search the crate for "LOUNGE PATCH"). Drop this when Slint lets apps set the limit.
+[patch.crates-io]
+i-slint-renderer-skia = { path = "vendor/i-slint-renderer-skia" }

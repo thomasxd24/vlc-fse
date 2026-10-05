@@ -21,7 +21,9 @@ export component BackdropView inherits Rectangle {
     for layer in 2: Image {
         width: parent.width;
         height: parent.height;
-        source: Art.get(layer == 0 ? a : b, root.width);
+        // Decoded at most 1024 logical px wide and stretched: it sits under a dark shade, and a
+        // full-width decode costs ~15 MB per backdrop at handheld resolution (plus its GPU copy).
+        source: Art.get(layer == 0 ? a : b, min(root.width, 1024px));
         image-fit: cover;
         vertical-alignment: top;
         opacity: (layer == 0) == on-a ? (Backdrop.dim ? 0.35 : 1) : 0;
