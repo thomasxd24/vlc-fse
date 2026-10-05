@@ -158,6 +158,7 @@ export component RemoteView inherits Rectangle {
     }
 
     flick := Flickable {
+        changed content-y => { Nav.scrolled = self.content-y < -1px; }
         content-width: self.width;
         content-height: body.preferred-height;
         animate content-y { duration: Motion.normal; easing: Motion.ease; }

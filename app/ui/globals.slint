@@ -68,6 +68,9 @@ export global Nav {
     in property <bool> restoring: false;
     // Which part of the screen has keyboard focus: "page" or "top" (the top bar).
     in-out property <string> zone: "page";
+    // The page is scrolled away from its top: the top bar draws a solid backdrop so content passing
+    // under it doesn't collide with the tabs (pages' main Flickable sets it; the router clears it).
+    in-out property <bool> scrolled;
     // Bump to hand keyboard focus to the current page / the top bar (pages and the top bar watch these).
     in-out property <int> page-focus-rev;
     in-out property <int> top-focus-rev;

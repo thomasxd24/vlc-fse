@@ -324,7 +324,7 @@ export component SettingsView inherits Rectangle {
         content-width: self.width;
         content-height: body.preferred-height;
         animate content-y { duration: Motion.normal; easing: Motion.ease; }
-        changed content-y => { SettingsPage.scroll = self.content-y; }
+        changed content-y => { Nav.scrolled = self.content-y < -1px; SettingsPage.scroll = self.content-y; }
         body := VerticalLayout {
             // `.page.settings` + `.settings-grid { max-width: 70rem }`
             padding-top: Theme.page-top;

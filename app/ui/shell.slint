@@ -69,7 +69,12 @@ export global TopBar {
 
 export component TopBarView inherits Rectangle {
     height: 5.5 * Theme.rem;
-    background: @linear-gradient(180deg, Nav.detail ? #07080c99 : #07080cd9 0%, #07080c00 100%);
+    // The renderer's fade over the backdrop; once the page scrolls, nearly solid so passing rows don't
+    // show through the tabs.
+    background: Nav.scrolled
+        ? @linear-gradient(180deg, #07080cf5 0%, #07080cf0 70%, #07080c00 100%)
+        : @linear-gradient(180deg, Nav.detail ? #07080c99 : #07080cd9 0%, #07080c00 100%);
+    animate background { duration: Motion.fast; }
     private property <bool> has-focus: fs.has-focus;
     private property <int> count: TopBar.tabs.length + TopBar.tools.length;
     private property <int> rev: Nav.top-focus-rev;

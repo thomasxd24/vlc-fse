@@ -163,6 +163,7 @@ fn apply(forward: bool) {
     nav.set_detail(depth > 1);
     nav.set_restoring(!forward);
     nav.set_zone("page".into());
+    nav.set_scrolled(false);
     nav.set_route(Route { name: name.clone().into(), id: id.clone().into() });
     ctx.dispatch("route", json!({ "name": name, "id": id, "forward": forward }));
 }

@@ -179,6 +179,7 @@ export component GameDetailView inherits Rectangle {
     if !GameDetail.found: NotFound { }
 
     flick := Flickable {
+        changed content-y => { Nav.scrolled = self.content-y < -1px; }
         visible: GameDetail.found;
         content-width: self.width;
         content-height: max(self.height, body.preferred-height);

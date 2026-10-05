@@ -317,6 +317,7 @@ export component SearchView inherits Rectangle {
 
     // ---- results (scroll under the fixed side column)
     flick := Flickable {
+        changed content-y => { Nav.scrolled = self.content-y < -1px; }
         // Starts 1.5rem left of the column so focused cards can zoom without being clipped.
         x: results-x - 1.5 * Theme.rem;
         width: root.width - results-x + 1.5 * Theme.rem;

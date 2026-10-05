@@ -272,6 +272,7 @@ export component ShowDetailView inherits Rectangle {
     if !ShowDetail.found: NotFound { }
 
     flick := Flickable {
+        changed content-y => { Nav.scrolled = self.content-y < -1px; }
         visible: ShowDetail.found;
         content-width: self.width;
         content-height: max(self.height, body.preferred-height);
