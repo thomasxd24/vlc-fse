@@ -28,10 +28,11 @@ import { NowPlaying, NowPlayingView } from "overlays/nowplaying.slint";
 import { GameLayer, GameLayerView } from "overlays/gamelayer.slint";
 import { UpdateLayer, UpdateLayerView } from "overlays/update.slint";
 import { Intro, IntroView } from "overlays/intro.slint";
+import { BatteryPanel, BatteryPanelView, BatteryRow } from "overlays/battery.slint";
 
 export { T, Art, Input, Nav, Hints, Sys, App, Backdrop, Toasts, Dialog, Util, Icons, TopBar, Theme, MotionPrefs }
 export { Grids, HomePage, WelcomePage, GameDetail, MovieDetail, ShowDetail, SearchPage, SettingsPage, StatsPage, TransfersPage, RemotePage, AppsPage, PadTestPage }
-export { QuickMenu, NowPlaying, GameLayer, UpdateLayer, Intro }
+export { QuickMenu, NowPlaying, GameLayer, UpdateLayer, Intro, BatteryPanel }
 
 export component AppWindow inherits Window {
     title: "Lounge";
@@ -102,6 +103,7 @@ export component AppWindow inherits Window {
             NowPlayingView { }
             GameLayerView { }
             QuickMenuView { }
+            BatteryPanelView { }
             UpdateLayerView { }
             GameModals { }
             DialogLayer { }

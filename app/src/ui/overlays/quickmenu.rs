@@ -228,6 +228,10 @@ fn action(a: &str) {
             router::switch_tab("settings");
             ctx.ui().global::<Nav>().invoke_focus_page();
         }
+        "battery" => {
+            close();
+            super::battery::open();
+        }
         "stats" => {
             close();
             if router::current().0 != "stats" {

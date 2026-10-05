@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod backend;
+mod battery;
 mod demo;
 mod legion_hid;
 mod thumbs;

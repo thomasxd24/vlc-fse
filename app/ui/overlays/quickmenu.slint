@@ -33,7 +33,18 @@ export global QuickMenu {
     in-out property <int> index;
     // Bumped by Rust to hand keyboard focus back to the menu (e.g. after a confirmation closes).
     in-out property <int> focus-rev;
-    out property <[QmAction]> actions: App.platform == "win32"
+    out property <[QmAction]> actions: App.platform == "win32" && Sys.has-battery
+        ? [
+            { value: "desktop", icon: "desktop", label: T.tr("qm.desktop") },
+            { value: "sleep", icon: "moon", label: T.tr("qm.sleep") },
+            { value: "restart", icon: "restart", label: T.tr("qm.restart") },
+            { value: "shutdown", icon: "power", label: T.tr("qm.shutdown") },
+            { value: "battery", icon: "battery", label: T.tr("bat.title") },
+            { value: "stats", icon: "chart", label: T.tr("stats.title") },
+            { value: "settings", icon: "gamepad", label: T.tr("tab.settings") },
+            { value: "quit", icon: "exit", label: T.tr("qm.quit"), danger: true },
+        ]
+        : App.platform == "win32"
         ? [
             { value: "desktop", icon: "desktop", label: T.tr("qm.desktop") },
             { value: "sleep", icon: "moon", label: T.tr("qm.sleep") },

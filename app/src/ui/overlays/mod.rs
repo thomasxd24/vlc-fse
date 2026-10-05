@@ -3,6 +3,7 @@
 
 use super::ctx::Ctx;
 
+pub mod battery;
 pub mod feedback;
 pub mod gamelayer;
 pub mod intro;
@@ -11,6 +12,7 @@ pub mod quickmenu;
 pub mod update;
 
 pub fn install(ctx: &Ctx) {
+    battery::install(ctx);
     feedback::install(ctx);
     gamelayer::install(ctx);
     intro::install(ctx);

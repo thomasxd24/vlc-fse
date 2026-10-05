@@ -215,29 +215,37 @@ export component TopBarView inherits Rectangle {
                 opacity: Sys.wifi > 60 ? 1 : Sys.wifi > 30 ? 0.8 : 0.6;
                 y: (parent.height - self.height) / 2;
             }
-            if Sys.has-battery: HorizontalLayout {
-                spacing: 0.4 * Theme.rem;
-                Rectangle {
-                    width: 2 * Theme.rem;
-                    height: 1 * Theme.rem;
-                    y: (parent.height - self.height) / 2;
-                    border-radius: 0.2 * Theme.rem;
-                    border-width: 0.12 * Theme.rem;
-                    border-color: Sys.battery <= 15 && !Sys.charging ? Theme.danger : Theme.good;
-                    Rectangle {
-                        x: 0.2 * Theme.rem;
-                        width: (parent.width - 0.4 * Theme.rem) * Sys.battery / 100;
-                        height: parent.height - 0.4 * Theme.rem;
-                        border-radius: 0.1 * Theme.rem;
-                        background: Sys.battery <= 15 && !Sys.charging ? Theme.danger : Theme.good;
-                    }
+            // Tap / click for the battery panel (power draw, time left, health).
+            if Sys.has-battery: Rectangle {
+                width: bat.preferred-width;
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { Input.feedback("open"); Sys.battery-clicked(); }
                 }
-                Text {
-                    text: (Sys.charging ? "⚡" : "") + Sys.battery + "%";
-                    color: Sys.battery <= 15 && !Sys.charging ? Theme.danger : Theme.good;
-                    font-size: 1 * Theme.rem;
-                    font-weight: 700;
-                    vertical-alignment: center;
+                bat := HorizontalLayout {
+                    spacing: 0.4 * Theme.rem;
+                    Rectangle {
+                        width: 2 * Theme.rem;
+                        height: 1 * Theme.rem;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 0.2 * Theme.rem;
+                        border-width: 0.12 * Theme.rem;
+                        border-color: Sys.battery <= 15 && !Sys.charging ? Theme.danger : Theme.good;
+                        Rectangle {
+                            x: 0.2 * Theme.rem;
+                            width: (parent.width - 0.4 * Theme.rem) * Sys.battery / 100;
+                            height: parent.height - 0.4 * Theme.rem;
+                            border-radius: 0.1 * Theme.rem;
+                            background: Sys.battery <= 15 && !Sys.charging ? Theme.danger : Theme.good;
+                        }
+                    }
+                    Text {
+                        text: (Sys.charging ? "⚡" : "") + Sys.battery + "%";
+                        color: Sys.battery <= 15 && !Sys.charging ? Theme.danger : Theme.good;
+                        font-size: 1 * Theme.rem;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
                 }
             }
             // Home shows its own big clock.

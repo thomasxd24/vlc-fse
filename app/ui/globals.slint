@@ -112,6 +112,7 @@ export global Sys {
     in property <string> wifi-name;
     in property <bool> busy;          // scanning / enriching (spinner beside the clock)
     in property <string> busy-text;
+    callback battery-clicked();       // the top bar's battery: opens the battery panel
 }
 
 // ---------------------------------------------------------------- App-wide facts

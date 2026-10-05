@@ -1,0 +1,113 @@
+// The battery panel: tap the battery in the top bar for the technical details — what the machine is
+// drawing right now, how long that lasts, and the battery's capacity, health, voltage and cycles.
+// Rust (app/src/ui/overlays/battery.rs) reads the battery every 2 s while it's open.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input } from "../globals.slint";
+import { DialogFrame } from "../shell.slint";
+
+export struct BatteryRow {
+    label: string,
+    value: string,
+}
+
+export global BatteryPanel {
+    in-out property <bool> open;
+    in property <string> percent;     // "64%"
+    in property <string> state;       // "On battery" / "Charging" / …
+    in property <bool> charging;
+    in property <bool> low;
+    in property <string> power;       // "14.3 W" (big), "" when the driver doesn't say
+    in property <string> power-label; // "Power draw" / "Charging at"
+    in property <string> time;        // "2h 11m"
+    in property <string> time-label;  // "Time left" / "Time to full"
+    in property <[BatteryRow]> rows;
+    in property <string> name;
+    callback close();
+}
+
+component Stat inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <color> tint: Theme.text;
+    spacing: 0.3 * Theme.rem;
+    Text { text: root.label; color: Theme.muted; font-size: 0.95 * Theme.rem; font-weight: 600; }
+    Text { text: root.value; color: root.tint; font-size: 2.6 * Theme.rem; font-weight: 800; }
+}
+
+export component BatteryPanelView inherits Rectangle {
+    visible: BatteryPanel.open;
+    if BatteryPanel.open: DialogFrame {
+        min-card-width: 36 * Theme.rem;
+        dismissed => { Input.feedback("back"); BatteryPanel.close(); }
+
+        fs := FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape || e.text == Key.Backspace || e.text == Key.Return || e.text == " ") {
+                    Input.feedback("back");
+                    BatteryPanel.close();
+                }
+                accept
+            }
+        }
+
+        VerticalLayout {
+            spacing: 1.6 * Theme.rem;
+
+            HorizontalLayout {
+                spacing: 1 * Theme.rem;
+                Text {
+                    text: T.tr("bat.title");
+                    color: Theme.text;
+                    font-size: 1.9 * Theme.rem;
+                    font-weight: 800;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: (BatteryPanel.charging ? "⚡ " : "") + BatteryPanel.percent;
+                    color: BatteryPanel.low ? Theme.danger : Theme.good;
+                    font-size: 1.9 * Theme.rem;
+                    font-weight: 800;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                text: BatteryPanel.state + (BatteryPanel.name != "" ? "  ·  " + BatteryPanel.name : "");
+                color: Theme.muted;
+                font-size: 1.05 * Theme.rem;
+            }
+
+            HorizontalLayout {
+                spacing: 3 * Theme.rem;
+                if BatteryPanel.power != "": Stat {
+                    label: BatteryPanel.power-label;
+                    value: BatteryPanel.power;
+                    tint: BatteryPanel.charging ? Theme.good : Theme.text;
+                }
+                if BatteryPanel.time != "": Stat {
+                    label: BatteryPanel.time-label;
+                    value: BatteryPanel.time;
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            VerticalLayout {
+                spacing: 0.5 * Theme.rem;
+                for row in BatteryPanel.rows: Rectangle {
+                    height: 2.8 * Theme.rem;
+                    border-radius: 0.6 * Theme.rem;
+                    background: #ffffff0a;
+                    HorizontalLayout {
+                        padding-left: 1.1 * Theme.rem;
+                        padding-right: 1.1 * Theme.rem;
+                        Text { text: row.label; color: Theme.muted; font-size: 1 * Theme.rem; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: row.value; color: Theme.text; font-size: 1 * Theme.rem; font-weight: 700; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -529,5 +529,20 @@
  "err.gameTimeout": "{title} ne s’est pas lancé (ou Steam ne l’a pas signalé).",
  "err.gameExists": "Ce jeu est déjà dans Lounge.",
  "err.update": "Échec de la mise à jour : {message}",
- "err.updateWhilePlaying": "Terminez d’abord votre partie ; Lounge se mettra à jour ensuite."
+ "err.updateWhilePlaying": "Terminez d’abord votre partie ; Lounge se mettra à jour ensuite.",
+ "bat.title": "Batterie",
+ "bat.draw": "Consommation",
+ "bat.chargeRate": "Charge à",
+ "bat.left": "Autonomie restante",
+ "bat.toFull": "Pleine dans",
+ "bat.charging": "En charge",
+ "bat.discharging": "Sur batterie",
+ "bat.full": "Chargée",
+ "bat.idle": "Branchée, pas en charge",
+ "bat.none": "Aucune information sur la batterie",
+ "bat.charge": "Charge",
+ "bat.design": "Capacité d’origine",
+ "bat.health": "Santé",
+ "bat.voltage": "Tension",
+ "bat.cycles": "Cycles de charge"
 }

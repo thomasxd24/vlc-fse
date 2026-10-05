@@ -529,5 +529,20 @@
  "err.gameTimeout": "{title} didn’t start (or Steam didn’t report it).",
  "err.gameExists": "That game is already in Lounge.",
  "err.update": "Update failed: {message}",
- "err.updateWhilePlaying": "Finish your game first; Lounge will update after."
+ "err.updateWhilePlaying": "Finish your game first; Lounge will update after.",
+ "bat.title": "Battery",
+ "bat.draw": "Power draw",
+ "bat.chargeRate": "Charging at",
+ "bat.left": "Time left",
+ "bat.toFull": "Full in",
+ "bat.charging": "Charging",
+ "bat.discharging": "On battery",
+ "bat.full": "Fully charged",
+ "bat.idle": "Plugged in, not charging",
+ "bat.none": "No battery details available",
+ "bat.charge": "Charge",
+ "bat.design": "Design capacity",
+ "bat.health": "Health",
+ "bat.voltage": "Voltage",
+ "bat.cycles": "Charge cycles"
 }
