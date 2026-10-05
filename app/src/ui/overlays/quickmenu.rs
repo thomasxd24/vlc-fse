@@ -106,7 +106,7 @@ pub fn close() {
 
 /// Battery and Wi-Fi under the date (`.qm-facts`).
 /// The tile grid: Now playing (while VLC plays behind Lounge), then power, Battery / Wi-Fi when the
-/// machine has them, Stats, Settings and Quit.
+/// machine has them, Bluetooth, Stats, Settings and Quit.
 fn actions() -> Vec<QmAction> {
     let ui = cx().ui();
     let sys = ui.global::<Sys>();
@@ -127,6 +127,7 @@ fn actions() -> Vec<QmAction> {
         if sys.get_has_wifi() {
             out.push(a("wifi", "wifi", t("wifi.title")));
         }
+        out.push(a("bluetooth", "bluetooth", t("bt.title")));
     }
     out.push(a("stats", "chart", t("stats.title")));
     out.push(a("settings", "gamepad", t("tab.settings")));
@@ -265,6 +266,10 @@ fn action(a: &str) {
         "wifi" => {
             close();
             super::wifi::open();
+        }
+        "bluetooth" => {
+            close();
+            super::bluetooth::open();
         }
         "nowplaying" => {
             close();

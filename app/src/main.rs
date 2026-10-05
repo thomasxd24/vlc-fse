@@ -3,6 +3,7 @@
 mod backend;
 mod battery;
 mod wifi;
+mod bluetooth;
 mod demo;
 mod legion_hid;
 mod thumbs;

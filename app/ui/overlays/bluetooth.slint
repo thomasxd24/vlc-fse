@@ -1,0 +1,211 @@
+// The Bluetooth panel (Bluetooth in the quick menu): AirPods battery (left, right, case) when a pair is
+// nearby, the sound outputs (pick where sound goes) and the paired Bluetooth audio devices (connect or
+// disconnect). Rust (app/src/ui/overlays/bluetooth.rs) refreshes it while it's open.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav } from "../globals.slint";
+import { Icon } from "../widgets.slint";
+import { DialogFrame } from "../shell.slint";
+
+export struct BtRow {
+    kind: string,     // "output" | "device"
+    title: string,
+    detail: string,   // "Connected" / "Default" / …
+    active: bool,     // the default output / a connected device
+    header: string,   // a section title shown above this row, "" for none
+}
+
+export struct PodLevel {
+    label: string,    // "Left" / "Right" / "Case"
+    value: string,    // "80%", "—"
+    charging: bool,
+    low: bool,
+}
+
+export global BtPanel {
+    in-out property <bool> open;
+    in property <bool> available: true;
+    in property <[BtRow]> rows;
+    in property <string> pods-model;  // "" when no AirPods are heard nearby
+    in property <[PodLevel]> pods;
+    in property <string> message;
+    in-out property <int> index;
+    callback close();
+    callback activate(int);
+}
+
+component Row inherits Rectangle {
+    in property <BtRow> item;
+    in property <bool> focused;
+    callback clicked();
+    height: 3 * Theme.rem;
+    border-radius: 0.6 * Theme.rem;
+    background: focused ? Theme.focus : #ffffff0a;
+    animate background { duration: Motion.fast; easing: Motion.ease; }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 1.1 * Theme.rem;
+        padding-right: 1.1 * Theme.rem;
+        spacing: 0.8 * Theme.rem;
+        Icon {
+            name: item.kind == "output" ? "volume" : "headphones";
+            size: 1.3 * Theme.rem;
+            tint: focused ? Theme.accent-ink : item.active ? Theme.accent : Theme.muted;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: item.title;
+            color: focused ? Theme.accent-ink : Theme.text;
+            font-size: 1.05 * Theme.rem;
+            font-weight: item.active ? 800 : 600;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: item.detail;
+            color: focused ? Theme.accent-ink : item.active ? Theme.good : Theme.muted;
+            font-size: 0.95 * Theme.rem;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component BtPanelView inherits Rectangle {
+    visible: BtPanel.open;
+    if BtPanel.open: DialogFrame {
+        min-card-width: 40 * Theme.rem;
+        dismissed => { Input.feedback("back"); BtPanel.close(); }
+
+        private property <int> n: BtPanel.rows.length;
+        // A dialog closing hands focus to the page; and the quick menu closing as this opens.
+        private property <int> page-rev: Nav.page-focus-rev;
+        changed page-rev => { refocus.running = true; }
+        refocus := Timer {
+            interval: 1ms;
+            running: false;
+            triggered => {
+                self.running = false;
+                fs.focus();
+            }
+        }
+        settle := Timer {
+            interval: 80ms;
+            running: true;
+            triggered => {
+                self.running = false;
+                fs.focus();
+            }
+        }
+
+        fs := FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape || e.text == Key.Backspace) {
+                    Input.feedback("back");
+                    BtPanel.close();
+                    return accept;
+                }
+                if (e.text == Key.UpArrow) {
+                    if (BtPanel.index > 0) { BtPanel.index -= 1; Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.DownArrow) {
+                    if (BtPanel.index < n - 1) { BtPanel.index += 1; Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if ((e.text == Key.Return || e.text == " ") && n > 0) {
+                    Input.feedback("select");
+                    BtPanel.activate(BtPanel.index);
+                    return accept;
+                }
+                accept
+            }
+        }
+
+        VerticalLayout {
+            spacing: 1.2 * Theme.rem;
+
+            Text {
+                text: T.tr("bt.title");
+                color: Theme.text;
+                font-size: 1.9 * Theme.rem;
+                font-weight: 800;
+            }
+
+            // AirPods nearby: left / right / case.
+            if BtPanel.pods-model != "": Rectangle {
+                border-radius: 0.8 * Theme.rem;
+                background: #ffffff0a;
+                height: pods-lay.preferred-height;
+                pods-lay := VerticalLayout {
+                    padding: 1.1 * Theme.rem;
+                    spacing: 0.8 * Theme.rem;
+                    HorizontalLayout {
+                        spacing: 0.6 * Theme.rem;
+                        Icon { name: "headphones"; size: 1.3 * Theme.rem; tint: Theme.accent; y: (parent.height - self.height) / 2; }
+                        Text { text: BtPanel.pods-model; color: Theme.text; font-size: 1.1 * Theme.rem; font-weight: 700; vertical-alignment: center; }
+                    }
+                    HorizontalLayout {
+                        spacing: 3 * Theme.rem;
+                        for p in BtPanel.pods: VerticalLayout {
+                            spacing: 0.2 * Theme.rem;
+                            Text { text: p.label; color: Theme.muted; font-size: 0.95 * Theme.rem; font-weight: 600; }
+                            Text {
+                                text: (p.charging ? "⚡ " : "") + p.value;
+                                color: p.low ? Theme.danger : p.charging ? Theme.good : Theme.text;
+                                font-size: 1.9 * Theme.rem;
+                                font-weight: 800;
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                }
+            }
+
+            if BtPanel.message != "": Text {
+                text: BtPanel.message;
+                color: Theme.text;
+                font-size: 1 * Theme.rem;
+                font-weight: 600;
+                wrap: word-wrap;
+            }
+
+            if !BtPanel.available: Text {
+                text: T.tr("bt.unavailable");
+                color: Theme.muted;
+                font-size: 1 * Theme.rem;
+                wrap: word-wrap;
+            }
+
+            VerticalLayout {
+                spacing: 0.5 * Theme.rem;
+                for row[i] in BtPanel.rows: VerticalLayout {
+                    spacing: 0.5 * Theme.rem;
+                    if row.header != "": Text {
+                        text: row.header;
+                        color: Theme.muted;
+                        font-size: 1 * Theme.rem;
+                        font-weight: 600;
+                        // Space above every section but the first.
+                        height: self.preferred-height + (i > 0 ? 0.7 * Theme.rem : 0);
+                        vertical-alignment: bottom;
+                    }
+                    Row {
+                        item: row;
+                        focused: fs.has-focus && BtPanel.index == i;
+                        clicked => {
+                            BtPanel.index = i;
+                            Input.feedback("select");
+                            BtPanel.activate(i);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
