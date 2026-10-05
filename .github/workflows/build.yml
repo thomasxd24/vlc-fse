@@ -156,6 +156,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          sed -i "0,/^version = \".*\"/s//version = \"$v\"/" app/Cargo.toml
+
       - name: Build Linux app
         run: cargo build --release -p lounge
 
