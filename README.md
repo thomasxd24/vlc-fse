@@ -128,29 +128,31 @@ The package is signed with a certificate made fresh for each build. Only its pub
 
 ## Development
 
+Lounge is Rust: the interface is drawn natively with [Slint](https://slint.dev) (Skia renderer).
+
 ```sh
-npm install
-npm start          # run the app
-npm test           # unit tests (parsers, Steam scanning, game info, i18n, VLC)
-npm run dist       # installer + zip into dist/ (on Windows)
+cargo run -p lounge -- --demo        # a made-up library in a window (any OS)
+cargo test -p lounge-core -p lounge  # unit tests
+cargo build --release -p lounge      # target/release/lounge(.exe), self-contained
+scripts/snap.sh "go games; shot snaps/games.png"   # headless screenshots of the demo (Linux, Xvfb)
 ```
 
 ```
-main.js             Electron main process: window, IPC, view model, VLC & game sessions, suspend while playing
-preload.js          The API exposed to the page
-src/steam.js        Finds Steam, its library folders, installed games, playtime and cached artwork
-src/vdf.js          Parser for Steam's .vdf/.acf files
-src/games.js        Launching and tracking games (Steam via RunningAppID, others by process)
-src/gameinfo.js     Steam store details, Steam CDN and SteamGridDB artwork, cached on disk
-src/system.js       Volume, brightness, Wi-Fi, power and process priority (Windows)
-src/updater.js      Checks GitHub Releases, downloads and verifies updates, hands off to the right installer
-src/library.js      Film & TV folder scanning; src/parse.js name parsing; src/metadata.js TMDB
-src/vlc.js          Finding and driving VLC
-renderer/           The interface: nav.js (controller/touch/keyboard), core.js, views.js, app.js, i18n.js
+lounge-core/        Business logic, no UI: Steam (steam.rs, vdf.rs), games, game info, film & TV
+                    libraries (library.rs, parse.rs, metadata.rs), VLC, remote servers and transfers,
+                    system controls, the updater
+app/src/backend/    Application state and every command; emits events to the UI
+app/src/ui/         The Slint side in Rust: context, router, dialogs, artwork, input, one module per screen
+app/ui/             The .slint files (theme, widgets, shell, pages/, overlays/)
+app/i18n/           UI strings (en, fr)
+app/src/demo.rs     The demo library used by --demo and the screenshots
+build/nsis/         The installer script (per-user; the updater runs it silently)
 build/fse/          MSIX manifest, assets and installer for the full screen experience package
 scripts/build-fse.ps1  Builds the FSE package (CI runs it on Windows)
 ```
 
-CI (`.github/workflows/build.yml`) runs on a Windows runner for every push. It runs the tests, including
-one against real VLC, then builds all three downloads. Pushing a tag like `v2.0.0` publishes a release with
-them attached.
+`app/UI.md` is the guide to the interface code: data flow, focus and keys, strings, dialogs, screenshots.
+
+CI (`.github/workflows/build.yml`) runs for every push. On Windows it runs the tests and clippy, then builds
+the zip, the installer and the full screen experience package; on Linux it builds the app and photographs
+every screen of the demo. Pushing a tag like `v3.0.0` publishes a release with the downloads attached.
