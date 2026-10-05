@@ -6,7 +6,7 @@
 //! Settings › Vibration (`Input.haptics`) and, like the renderer, only happens in pad mode.
 //!
 //! Both outputs are Windows-only in this build, like the controller itself: sounds go out through `cpal`
-//! (WASAPI; on Linux it would need ALSA's development files) and rumble through `gilrs`. The synthesis is
+//! (WASAPI; on Linux it would need ALSA's development files) and rumble through `input::rumble` (XInput). The synthesis is
 //! plain Rust and runs (and is tested) everywhere.
 
 use super::super::ctx::{cx, Ctx};
@@ -16,7 +16,6 @@ use slint::ComponentHandle;
 
 pub fn install(_ctx: &Ctx) {
     let player = out::Player::start();
-    let rumble = out::Rumble::start();
     input::on_feedback(move |kind| {
         let ui = cx().ui();
         let inp = ui.global::<Input>();
@@ -28,7 +27,7 @@ pub fn install(_ctx: &Ctx) {
         }
         if inp.get_haptics() && inp.get_mode() == "pad" {
             if let Some((strength, ms)) = haptic(kind) {
-                rumble.pulse(strength, ms);
+                input::rumble(0.0, strength, ms);
             }
         }
     });
@@ -137,8 +136,8 @@ pub fn mix(voices: &mut Vec<Voice>, frames: usize, mut write: impl FnMut(f32)) {
 
 #[cfg(windows)]
 mod out {
-    //! Windows: sounds through cpal (WASAPI), rumble through gilrs. Each runs on its own thread, fed by
-    //! a channel, so nothing blocks the event loop.
+    //! Windows: sounds through cpal (WASAPI), on their own thread fed by a channel, so nothing blocks the
+    //! event loop.
     use super::{mix, Tone, Voice};
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{FromSample, SampleFormat, SizedSample, Stream};
@@ -253,60 +252,11 @@ mod out {
             )
             .ok()
     }
-
-    pub struct Rumble {
-        tx: Sender<(f32, u32)>,
-    }
-
-    impl Rumble {
-        pub fn start() -> Self {
-            use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Repeat, Replay, Ticks};
-            let (tx, rx) = channel::<(f32, u32)>();
-            let _ = std::thread::Builder::new().name("lounge-rumble".into()).spawn(move || {
-                let Ok(mut gilrs) = gilrs::Gilrs::new() else { return };
-                // Kept alive while it plays (dropping an effect stops it).
-                let mut _current = None;
-                loop {
-                    match rx.recv_timeout(Duration::from_millis(250)) {
-                        Ok((strength, ms)) => {
-                            while gilrs.next_event().is_some() {}
-                            let pads: Vec<_> = gilrs.gamepads().filter(|(_, g)| g.is_connected() && g.is_ff_supported()).map(|(id, _)| id).collect();
-                            if pads.is_empty() {
-                                continue;
-                            }
-                            let ticks = Ticks::from_ms(ms);
-                            let effect = EffectBuilder::new()
-                                .add_effect(BaseEffect {
-                                    kind: BaseEffectType::Weak { magnitude: (strength.clamp(0.0, 1.0) * u16::MAX as f32) as u16 },
-                                    scheduling: Replay { play_for: ticks, ..Default::default() },
-                                    envelope: Default::default(),
-                                })
-                                .repeat(Repeat::For(ticks))
-                                .gamepads(&pads)
-                                .finish(&mut gilrs);
-                            if let Ok(effect) = effect {
-                                let _ = effect.play();
-                                _current = Some(effect);
-                            }
-                        }
-                        // Keep gilrs' gamepad list current.
-                        Err(RecvTimeoutError::Timeout) => while gilrs.next_event().is_some() {},
-                        Err(RecvTimeoutError::Disconnected) => return,
-                    }
-                }
-            });
-            Rumble { tx }
-        }
-
-        pub fn pulse(&self, strength: f32, ms: u32) {
-            let _ = self.tx.send((strength, ms));
-        }
-    }
 }
 
 #[cfg(not(windows))]
 mod out {
-    //! No audio or rumble output outside Windows in this build (see the module docs).
+    //! No audio output outside Windows in this build (see the module docs).
     use super::Tone;
 
     pub struct Player;
@@ -315,14 +265,6 @@ mod out {
             Player
         }
         pub fn play(&self, _tones: Vec<Tone>) {}
-    }
-
-    pub struct Rumble;
-    impl Rumble {
-        pub fn start() -> Self {
-            Rumble
-        }
-        pub fn pulse(&self, _strength: f32, _ms: u32) {}
     }
 }
 

@@ -16,11 +16,13 @@ pub fn apply(ui: &AppWindow, op: WindowOp) {
             // Drop every page and overlay (App.suspended removes the whole tree), free decoded artwork,
             // and get out of the game's way.
             ui.global::<App>().set_suspended(true);
+            super::input::set_paused(true);
             super::art::clear();
             w.set_minimized(true);
         }
         WindowOp::ResumeUi => {
             ui.global::<App>().set_suspended(false);
+            super::input::set_paused(false);
             bring_to_front(ui);
         }
         WindowOp::Quit => {
