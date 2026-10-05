@@ -168,6 +168,7 @@ jobs:
           scripts/snap.sh "go home; shot snaps/home.png; go games; shot snaps/games.png; go game g1; shot snaps/game.png; key Menu; shot snaps/options.png; key Escape; go movies; shot snaps/movies.png; go shows; shot snaps/shows.png; go apps; shot snaps/apps.png; go search; shot snaps/search.png; go settings; shot snaps/settings.png; go transfers; shot snaps/transfers.png"
           scripts/snap.sh "go show sh0; shot snaps/show.png; event now-playing demo; shot snaps/now-playing.png" --resume show
           scripts/snap.sh "go home; shot snaps/home-fr.png" --lang fr --resume show
+          scripts/snap.sh 'go stats; shot snaps/stats.png; go remote srv-nas; wait 500; shot snaps/remote.png; go welcome; shot snaps/welcome.png; go home; key F1; wait 400; shot snaps/quick-menu.png; key Escape; go padtest; event pad-snapshot {"name":"Xbox Controller","buttons":[1,0,0,0,0,0,0.6,0,0,0,0,0,0,0,0,0,0],"axes":[0.4,-0.3,0,0]}; wait 300; shot snaps/padtest.png'
 
       - name: Upload screenshots
         uses: actions/upload-artifact@v4
