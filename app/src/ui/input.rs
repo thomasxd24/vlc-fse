@@ -108,7 +108,16 @@ mod pad {
 
     pub fn start(ui: slint::Weak<crate::AppWindow>) {
         std::thread::spawn(move || {
-            let Ok(mut gilrs) = Gilrs::new() else { return };
+            // Keep trying rather than giving up on controllers for the whole session.
+            let mut gilrs = loop {
+                match Gilrs::new() {
+                    Ok(g) => break g,
+                    Err(e) => {
+                        eprintln!("[input] gamepads unavailable, retrying: {e}");
+                        std::thread::sleep(Duration::from_secs(3));
+                    }
+                }
+            };
             let mut held: [Option<Instant>; 14] = [None; 14];
             let mut last_connected = usize::MAX;
             loop {
