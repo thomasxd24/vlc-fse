@@ -544,5 +544,22 @@
  "bat.design": "Capacité d’origine",
  "bat.health": "Santé",
  "bat.voltage": "Tension",
- "bat.cycles": "Cycles de charge"
+ "bat.cycles": "Cycles de charge",
+ "wifi.title": "Wi-Fi",
+ "wifi.connected": "Connecté",
+ "wifi.saved": "Enregistré",
+ "wifi.notConnected": "Non connecté",
+ "wifi.ip": "Adresse IP",
+ "wifi.networks": "Réseaux à proximité",
+ "wifi.unavailable": "Aucune carte Wi-Fi trouvée.",
+ "wifi.searching": "Recherche de réseaux…",
+ "wifi.join": "Se connecter",
+ "wifi.already": "Vous êtes déjà connecté à {name}.",
+ "wifi.unsupported": "{name} utilise une connexion que Lounge ne sait pas configurer. Connectez-vous depuis les paramètres Wi-Fi de Windows.",
+ "wifi.password": "Mot de passe de {name}",
+ "wifi.connecting": "Connexion à {name}…",
+ "wifi.joined": "Connecté à {name}.",
+ "wifi.failed": "Impossible de se connecter à {name}. Vérifiez le mot de passe et réessayez.",
+ "np.nowPlaying": "En lecture",
+ "np.hide": "Retour à Lounge"
 }

@@ -41,6 +41,16 @@ export component BatteryPanelView inherits Rectangle {
         min-card-width: 36 * Theme.rem;
         dismissed => { Input.feedback("back"); BatteryPanel.close(); }
 
+        // Opened from the quick menu, whose closing hands focus to the page a moment later: take it back.
+        settle := Timer {
+            interval: 80ms;
+            running: true;
+            triggered => {
+                self.running = false;
+                fs.focus();
+            }
+        }
+
         fs := FocusScope {
             init => { self.focus(); }
             key-pressed(e) => {

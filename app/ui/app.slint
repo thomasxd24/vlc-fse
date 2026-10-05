@@ -23,16 +23,17 @@ import { RemotePage, RemoteView } from "pages/remote.slint";
 import { AppsPage, AppsView } from "pages/apps.slint";
 import { PadTestPage, PadTestView } from "pages/padtest.slint";
 
-import { QuickMenu, QuickMenuView } from "overlays/quickmenu.slint";
+import { QuickMenu, QuickMenuView, QmAction } from "overlays/quickmenu.slint";
 import { NowPlaying, NowPlayingView } from "overlays/nowplaying.slint";
 import { GameLayer, GameLayerView } from "overlays/gamelayer.slint";
 import { UpdateLayer, UpdateLayerView } from "overlays/update.slint";
 import { Intro, IntroView } from "overlays/intro.slint";
 import { BatteryPanel, BatteryPanelView, BatteryRow } from "overlays/battery.slint";
+import { WifiPanel, WifiPanelView, WifiNet } from "overlays/wifi.slint";
 
 export { T, Art, Input, Nav, Hints, Sys, App, Backdrop, Toasts, Dialog, Util, Icons, TopBar, Theme, MotionPrefs }
 export { Grids, HomePage, WelcomePage, GameDetail, MovieDetail, ShowDetail, SearchPage, SettingsPage, StatsPage, TransfersPage, RemotePage, AppsPage, PadTestPage }
-export { QuickMenu, NowPlaying, GameLayer, UpdateLayer, Intro, BatteryPanel }
+export { QuickMenu, NowPlaying, GameLayer, UpdateLayer, Intro, BatteryPanel, WifiPanel }
 
 export component AppWindow inherits Window {
     title: "Lounge";
@@ -104,6 +105,7 @@ export component AppWindow inherits Window {
             GameLayerView { }
             QuickMenuView { }
             BatteryPanelView { }
+            WifiPanelView { }
             UpdateLayerView { }
             GameModals { }
             DialogLayer { }

@@ -110,9 +110,13 @@ export global Sys {
     in property <bool> charging;
     in property <int> wifi: -1;       // signal 0..100, -1 = no wifi adapter / disconnected
     in property <string> wifi-name;
+    in property <bool> has-wifi;      // a Wi-Fi adapter exists (the icon shows, crossed out when disconnected)
     in property <bool> busy;          // scanning / enriching (spinner beside the clock)
     in property <string> busy-text;
     callback battery-clicked();       // the top bar's battery: opens the battery panel
+    callback wifi-clicked();          // the top bar's Wi-Fi icon: opens the Wi-Fi panel
+    in property <string> now-playing; // the title while VLC plays with its screen hidden, "" otherwise
+    callback now-playing-clicked();   // the top bar's Now playing button: shows the playback screen
 }
 
 // ---------------------------------------------------------------- App-wide facts

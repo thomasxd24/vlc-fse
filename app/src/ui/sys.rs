@@ -32,7 +32,7 @@ fn tick_clock(ui: &AppWindow) {
     }
 }
 
-fn poll_status() {
+pub(crate) fn poll_status() {
     let ctx = cx();
     if ctx.demo() {
         let ui = ctx.ui();
@@ -40,6 +40,8 @@ fn poll_status() {
         sys.set_has_battery(true);
         sys.set_battery(100);
         sys.set_wifi(80);
+        sys.set_has_wifi(true);
+        sys.set_wifi_name("Maison".into());
         return;
     }
     // Battery level isn't a backend command (the web renderer read navigator.getBattery()), so it's
@@ -60,6 +62,7 @@ fn poll_status() {
         let sys = ui.global::<Sys>();
         let connected = v.get("connected").and_then(Value::as_bool).unwrap_or(false);
         let signal = v.get("signal").and_then(Value::as_f64).unwrap_or(0.0);
+        sys.set_has_wifi(!v.is_null());
         sys.set_wifi(if connected { signal.round() as i32 } else { -1 });
         sys.set_wifi_name(v.get("ssid").and_then(Value::as_str).unwrap_or("").into());
     });

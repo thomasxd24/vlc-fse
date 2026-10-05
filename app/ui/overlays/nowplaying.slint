@@ -1,9 +1,10 @@
-// "Playing in VLC": shown over everything while VLC plays (the renderer's renderNowPlaying and the
+// "Playing in VLC": shown over everything when VLC starts (the renderer's renderNowPlaying and the
 // `now-playing` event). Title, file, progress, transport controls and audio / subtitles / stop.
 // Rust: app/src/ui/overlays/nowplaying.rs.
 //
 // Focus: row 0 = the round transport buttons (back, play/pause, forward, [next]), row 1 = the actions.
-// Back does nothing here (the overlay goes away when playback ends).
+// Back (or "Back to Lounge") hides it while VLC keeps playing; the top bar's "Now playing" button and
+// the quick menu bring it back. It goes away for good when playback ends.
 
 import { Theme, Motion } from "../theme.slint";
 import { T, Input, Nav } from "../globals.slint";
@@ -12,6 +13,7 @@ import { HintBar } from "../shell.slint";
 
 export global NowPlaying {
     in-out property <bool> open;
+    in property <bool> active;         // VLC is playing (the layer may be hidden)
     in property <string> title;
     in property <string> file;         // "Harbor.Lights.S01E04.mkv · Episode 4 of 21 in the queue"
     in property <float> progress;      // 0..1
@@ -21,8 +23,9 @@ export global NowPlaying {
     in-out property <int> row;         // 0 = transport, 1 = actions
     in-out property <int> index: 1;    // starts on play / pause
     in-out property <int> focus-rev;
-    // "back" | "pause" | "forward" | "next" | "audio" | "subs" | "stop"
+    // "back" | "pause" | "forward" | "next" | "audio" | "subs" | "stop" | "hide"
     callback command(string);
+    callback reopen();
 }
 
 // `.np-controls .btn`: round icon-only buttons; the play button is larger and accent-filled.
@@ -55,7 +58,7 @@ component RoundBtn inherits Rectangle {
 
 component NowPlayingLayer inherits Rectangle {
     private property <[string]> controls: NowPlaying.has-next ? ["back", "pause", "forward", "next"] : ["back", "pause", "forward"];
-    private property <[string]> actions: ["audio", "subs", "stop"];
+    private property <[string]> actions: ["hide", "audio", "subs", "stop"];
     private property <int> page-rev: Nav.page-focus-rev;
     private property <int> top-rev: Nav.top-focus-rev;
     private property <int> my-rev: NowPlaying.focus-rev;
@@ -106,7 +109,8 @@ component NowPlayingLayer inherits Rectangle {
                 activate(NowPlaying.row == 0 ? controls[min(i, controls.length - 1)] : actions[i]);
                 return accept;
             }
-            // Everything else (Back, tabs, ☰…) is swallowed while VLC plays.
+            // Back hides the layer (ui::on_close_overlay); everything else (tabs, ☰…) is swallowed.
+            if (e.text == Key.Escape || e.text == Key.Backspace) { return reject; }
             accept
         }
     }
@@ -203,8 +207,8 @@ component NowPlayingLayer inherits Rectangle {
                     alignment: center;
                     spacing: 0.9 * Theme.rem;
                     for a[i] in actions: Btn {
-                        text: a == "audio" ? T.tr("np.audio") : a == "subs" ? T.tr("np.subs") : T.tr("np.stop");
-                        icon: a == "audio" ? "volume" : a;
+                        text: a == "hide" ? T.tr("np.hide") : a == "audio" ? T.tr("np.audio") : a == "subs" ? T.tr("np.subs") : T.tr("np.stop");
+                        icon: a == "hide" ? "back" : a == "audio" ? "volume" : a;
                         danger: a == "stop";
                         focused: fs.has-focus && NowPlaying.row == 1 && NowPlaying.index == i;
                         hovered => { if (Input.mode == "mouse") { NowPlaying.row = 1; NowPlaying.index = i; } }

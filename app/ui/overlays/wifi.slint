@@ -1,0 +1,232 @@
+// The Wi-Fi panel: tap the Wi-Fi icon in the top bar (or Wi-Fi in the quick menu) for this machine's IP
+// address and the networks in range; pick one to join it (a password prompt for new secured networks).
+// Rust (app/src/ui/overlays/wifi.rs) scans and refreshes the list while it's open.
+
+import { Theme, Motion } from "../theme.slint";
+import { T, Input, Nav } from "../globals.slint";
+import { Icon } from "../widgets.slint";
+import { DialogFrame } from "../shell.slint";
+
+export struct WifiNet {
+    ssid: string,
+    signal: int,      // 0..100
+    secured: bool,
+    connected: bool,
+    saved: bool,
+}
+
+export global WifiPanel {
+    in-out property <bool> open;
+    in property <string> ip;          // "192.168.1.23", "" when offline
+    in property <string> current;     // the connected network's name
+    in property <[WifiNet]> networks;
+    in property <string> message;     // "Connecting to …" / an error, "" otherwise
+    in property <bool> busy;          // connecting or scanning
+    in property <bool> available: true;
+    in-out property <int> index;
+    callback close();
+    callback activate(int);
+}
+
+component NetRow inherits Rectangle {
+    in property <WifiNet> net;
+    in property <bool> focused;
+    callback clicked();
+    border-radius: 0.6 * Theme.rem;
+    background: focused ? Theme.focus : #ffffff0a;
+    animate background { duration: Motion.fast; easing: Motion.ease; }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 1.1 * Theme.rem;
+        padding-right: 1.1 * Theme.rem;
+        spacing: 0.8 * Theme.rem;
+        Icon {
+            name: "wifi";
+            size: 1.3 * Theme.rem;
+            tint: focused ? Theme.accent-ink : Theme.text;
+            opacity: net.signal > 60 ? 1 : net.signal > 30 ? 0.75 : 0.5;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: net.ssid;
+            color: focused ? Theme.accent-ink : Theme.text;
+            font-size: 1.05 * Theme.rem;
+            font-weight: net.connected ? 800 : 600;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: net.connected ? T.tr("wifi.connected") : net.saved ? T.tr("wifi.saved") : "";
+            color: focused ? Theme.accent-ink : net.connected ? Theme.good : Theme.muted;
+            font-size: 0.95 * Theme.rem;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        if net.secured: Icon {
+            name: "lock";
+            size: 1.1 * Theme.rem;
+            tint: focused ? Theme.accent-ink : Theme.muted;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: net.signal + "%";
+            color: focused ? Theme.accent-ink : Theme.muted;
+            font-size: 0.95 * Theme.rem;
+            min-width: 2.8 * Theme.rem;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component WifiPanelView inherits Rectangle {
+    visible: WifiPanel.open;
+    if WifiPanel.open: DialogFrame {
+        min-card-width: 40 * Theme.rem;
+        dismissed => { Input.feedback("back"); WifiPanel.close(); }
+
+        private property <int> n: WifiPanel.networks.length;
+        private property <int> rows: 7;
+        private property <length> row-h: 3 * Theme.rem;
+        private property <length> gap: 0.5 * Theme.rem;
+        // The first visible row, keeping the focused one in view.
+        private property <int> first: max(0, min(WifiPanel.index - 3, n - rows));
+        // A dialog (the password prompt) closing hands focus to the page: take it back.
+        private property <int> page-rev: Nav.page-focus-rev;
+        changed page-rev => { refocus.running = true; }
+        refocus := Timer {
+            interval: 1ms;
+            running: false;
+            triggered => {
+                self.running = false;
+                fs.focus();
+            }
+        }
+
+        // Opened from the quick menu, whose closing hands focus to the page a moment later: take it back.
+        settle := Timer {
+            interval: 80ms;
+            running: true;
+            triggered => {
+                self.running = false;
+                fs.focus();
+            }
+        }
+
+        fs := FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape || e.text == Key.Backspace) {
+                    Input.feedback("back");
+                    WifiPanel.close();
+                    return accept;
+                }
+                if (e.text == Key.UpArrow) {
+                    if (WifiPanel.index > 0) { WifiPanel.index -= 1; Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if (e.text == Key.DownArrow) {
+                    if (WifiPanel.index < n - 1) { WifiPanel.index += 1; Input.feedback("move"); } else { Input.feedback("edge"); }
+                    return accept;
+                }
+                if ((e.text == Key.Return || e.text == " ") && n > 0) {
+                    Input.feedback("select");
+                    WifiPanel.activate(WifiPanel.index);
+                    return accept;
+                }
+                accept
+            }
+        }
+
+        VerticalLayout {
+            spacing: 1.4 * Theme.rem;
+
+            HorizontalLayout {
+                spacing: 1 * Theme.rem;
+                Text {
+                    text: T.tr("wifi.title");
+                    color: Theme.text;
+                    font-size: 1.9 * Theme.rem;
+                    font-weight: 800;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: WifiPanel.current != "" ? WifiPanel.current : T.tr("wifi.notConnected");
+                    color: WifiPanel.current != "" ? Theme.good : Theme.muted;
+                    font-size: 1.2 * Theme.rem;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            Rectangle {
+                height: 2.8 * Theme.rem;
+                border-radius: 0.6 * Theme.rem;
+                background: #ffffff0a;
+                HorizontalLayout {
+                    padding-left: 1.1 * Theme.rem;
+                    padding-right: 1.1 * Theme.rem;
+                    Text { text: T.tr("wifi.ip"); color: Theme.muted; font-size: 1 * Theme.rem; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: WifiPanel.ip != "" ? WifiPanel.ip : "—";
+                        color: Theme.text;
+                        font-size: 1.1 * Theme.rem;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 0.6 * Theme.rem;
+                Text {
+                    text: WifiPanel.message != "" ? WifiPanel.message : T.tr("wifi.networks");
+                    color: WifiPanel.message != "" ? Theme.text : Theme.muted;
+                    font-size: 1 * Theme.rem;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+            }
+
+            if !WifiPanel.available: Text {
+                text: T.tr("wifi.unavailable");
+                color: Theme.muted;
+                font-size: 1 * Theme.rem;
+                wrap: word-wrap;
+            }
+            if WifiPanel.available && n == 0: Text {
+                text: T.tr("wifi.searching");
+                color: Theme.muted;
+                font-size: 1 * Theme.rem;
+            }
+
+            // The list: `rows` at a time, scrolled to keep the focused one in view.
+            if n > 0: Rectangle {
+                height: min(n, rows) * (row-h + gap) - gap;
+                clip: true;
+                for net[i] in WifiPanel.networks: NetRow {
+                    x: 0;
+                    y: (i - first) * (row-h + gap);
+                    width: parent.width;
+                    height: row-h;
+                    net: net;
+                    focused: fs.has-focus && WifiPanel.index == i;
+                    clicked => {
+                        WifiPanel.index = i;
+                        Input.feedback("select");
+                        WifiPanel.activate(i);
+                    }
+                }
+            }
+        }
+    }
+}

@@ -544,5 +544,22 @@
  "bat.design": "Design capacity",
  "bat.health": "Health",
  "bat.voltage": "Voltage",
- "bat.cycles": "Charge cycles"
+ "bat.cycles": "Charge cycles",
+ "wifi.title": "Wi-Fi",
+ "wifi.connected": "Connected",
+ "wifi.saved": "Saved",
+ "wifi.notConnected": "Not connected",
+ "wifi.ip": "IP address",
+ "wifi.networks": "Networks in range",
+ "wifi.unavailable": "No Wi-Fi adapter found.",
+ "wifi.searching": "Looking for networks…",
+ "wifi.join": "Connect",
+ "wifi.already": "You're already connected to {name}.",
+ "wifi.unsupported": "{name} uses a login Lounge can't set up. Connect to it from Windows' Wi-Fi settings.",
+ "wifi.password": "Password for {name}",
+ "wifi.connecting": "Connecting to {name}…",
+ "wifi.joined": "Connected to {name}.",
+ "wifi.failed": "Couldn't connect to {name}. Check the password and try again.",
+ "np.nowPlaying": "Now playing",
+ "np.hide": "Back to Lounge"
 }

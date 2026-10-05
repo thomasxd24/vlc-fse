@@ -185,7 +185,7 @@ export component TopBarView inherits Rectangle {
         }
 
         HorizontalLayout {
-            spacing: 1.5 * Theme.rem;
+            spacing: 0.9 * Theme.rem;
             alignment: end;
             if Sys.busy: HorizontalLayout {
                 spacing: 0.6 * Theme.rem;
@@ -202,18 +202,37 @@ export component TopBarView inherits Rectangle {
                     clicked => { Nav.switch-tab(tool.name); Nav.focus-page(); }
                 }
             }
-            if Input.pad-connected: Icon {
-                name: "gamepad";
-                size: 1.6 * Theme.rem;
-                tint: Theme.muted;
+            // VLC playing behind Lounge: back to its controls.
+            if Sys.now-playing != "": Rectangle {
                 y: (parent.height - self.height) / 2;
+                width: 2.4 * Theme.rem;
+                height: self.width;
+                border-radius: self.height / 2;
+                background: np-touch.has-hover ? Theme.surface-2 : Theme.surface;
+                np-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { Input.feedback("open"); Sys.now-playing-clicked(); }
+                }
+                Icon {
+                    name: "play";
+                    size: 1.1 * Theme.rem;
+                    tint: Theme.accent;
+                }
             }
-            if Sys.wifi >= 0: Icon {
-                name: "wifi";
-                size: 1.5 * Theme.rem;
-                tint: Theme.text;
-                opacity: Sys.wifi > 60 ? 1 : Sys.wifi > 30 ? 0.8 : 0.6;
-                y: (parent.height - self.height) / 2;
+            // Tap / click for the Wi-Fi panel (IP address, other networks).
+            if Sys.has-wifi: Rectangle {
+                width: wifi-icon.width;
+                wifi-icon := Icon {
+                    name: Sys.wifi >= 0 ? "wifi" : "wifi-off";
+                    size: 1.5 * Theme.rem;
+                    tint: Sys.wifi >= 0 ? Theme.text : Theme.muted;
+                    opacity: Sys.wifi < 0 || Sys.wifi > 60 ? 1 : Sys.wifi > 30 ? 0.8 : 0.6;
+                    y: (parent.height - self.height) / 2;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { Input.feedback("open"); Sys.wifi-clicked(); }
+                }
             }
             // Tap / click for the battery panel (power draw, time left, health).
             if Sys.has-battery: Rectangle {
@@ -256,7 +275,7 @@ export component TopBarView inherits Rectangle {
                 font-weight: 600;
                 vertical-alignment: center;
             }
-            if Input.mode == "touch" || Input.mode == "mouse": IconBtn {
+            IconBtn {
                 y: (parent.height - self.height) / 2;
                 icon: "menu";
                 clicked => { TopBar.open-quick-menu(); }

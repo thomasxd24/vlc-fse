@@ -4,6 +4,7 @@
 use super::ctx::Ctx;
 
 pub mod battery;
+pub mod wifi;
 pub mod feedback;
 pub mod gamelayer;
 pub mod intro;
@@ -13,6 +14,7 @@ pub mod update;
 
 pub fn install(ctx: &Ctx) {
     battery::install(ctx);
+    wifi::install(ctx);
     feedback::install(ctx);
     gamelayer::install(ctx);
     intro::install(ctx);

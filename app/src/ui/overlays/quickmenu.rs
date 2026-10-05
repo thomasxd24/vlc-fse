@@ -10,7 +10,7 @@ use crate::ui::ctx::{cx, Ctx};
 use crate::ui::dialogs::{self, choice, Choice};
 use crate::ui::i18n::{t, tv};
 use crate::ui::{fmt, input, router};
-use crate::{GameLayer, Hint, Hints, Nav, NowPlaying, QmSlider, QuickMenu, Sys, TopBar};
+use crate::{App, GameLayer, Hint, Hints, Nav, NowPlaying, QmAction, QmSlider, QuickMenu, Sys, TopBar};
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::RefCell;
@@ -74,6 +74,7 @@ pub fn show() {
     qm.set_index(0);
     qm.set_date(capitalize_words(&fmt::long_date()).into());
     qm.set_fact_list(crate::ui::model::model(facts()));
+    qm.set_actions(crate::ui::model::model(actions()));
     rebuild_sliders();
     qm.set_open(true);
     layer_opened();
@@ -104,6 +105,35 @@ pub fn close() {
 }
 
 /// Battery and Wi-Fi under the date (`.qm-facts`).
+/// The tile grid: Now playing (while VLC plays behind Lounge), then power, Battery / Wi-Fi when the
+/// machine has them, Stats, Settings and Quit.
+fn actions() -> Vec<QmAction> {
+    let ui = cx().ui();
+    let sys = ui.global::<Sys>();
+    let win = ui.global::<App>().get_platform() == "win32";
+    let a = |value: &str, icon: &str, label: String| QmAction { value: value.into(), icon: icon.into(), label: label.into(), danger: false };
+    let mut out = Vec::new();
+    if super::nowplaying::is_active() {
+        out.push(a("nowplaying", "play", t("np.nowPlaying")));
+    }
+    out.push(a("desktop", "desktop", t("qm.desktop")));
+    if win {
+        out.push(a("sleep", "moon", t("qm.sleep")));
+        out.push(a("restart", "restart", t("qm.restart")));
+        out.push(a("shutdown", "power", t("qm.shutdown")));
+        if sys.get_has_battery() {
+            out.push(a("battery", "battery", t("bat.title")));
+        }
+        if sys.get_has_wifi() {
+            out.push(a("wifi", "wifi", t("wifi.title")));
+        }
+    }
+    out.push(a("stats", "chart", t("stats.title")));
+    out.push(a("settings", "gamepad", t("tab.settings")));
+    out.push(QmAction { danger: true, ..a("quit", "exit", t("qm.quit")) });
+    out
+}
+
 fn facts() -> Vec<slint::SharedString> {
     let ui = cx().ui();
     let sys = ui.global::<Sys>();
@@ -231,6 +261,14 @@ fn action(a: &str) {
         "battery" => {
             close();
             super::battery::open();
+        }
+        "wifi" => {
+            close();
+            super::wifi::open();
+        }
+        "nowplaying" => {
+            close();
+            super::nowplaying::reopen();
         }
         "stats" => {
             close();
