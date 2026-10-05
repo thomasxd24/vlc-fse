@@ -12,8 +12,10 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex};
 
-/// Decoded-bytes budget. Enough for a few hundred cards plus backdrops at handheld resolution.
-const BUDGET: usize = 320 * 1024 * 1024;
+/// Decoded-bytes budget: about a screenful of grid cards both ways plus a few backdrops at handheld
+/// resolution (a card is ~1.5 MB decoded, a full-width backdrop up to ~15 MB). Least recently used goes
+/// first; anything evicted just fades back in when it's next on screen.
+const BUDGET: usize = 96 * 1024 * 1024;
 /// Widths images are decoded at (physical px): the smallest bucket at least as wide as requested.
 const BUCKETS: [u32; 10] = [128, 256, 384, 512, 768, 1024, 1536, 2048, 2560, 3840];
 const WORKERS: usize = 2;
